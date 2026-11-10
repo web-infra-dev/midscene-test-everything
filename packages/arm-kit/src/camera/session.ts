@@ -383,11 +383,35 @@ export class CameraSession implements CalibrationVision {
       targetHeight: options.height,
     });
   }
-  /**
-   * Rectify one live frame with the correction and target saved for this
-   * camera. Camera-only previews use it; a Device screenshot still goes through
-   * snapshot() so it can validate its vision binding.
-   */
+  /** Older corrections may only store the quad and its rotation. */
+  getRectifiedPreviewTarget(): PerspectiveTarget | undefined {
+    const correction = this.correction;
+    if (!correction) return undefined;
+    if (this.target) return structuredClone(this.target);
+    const { topLeft, topRight, bottomRight, bottomLeft } = correction.points;
+    const width =
+      (Math.hypot(topRight.x - topLeft.x, topRight.y - topLeft.y) +
+        Math.hypot(
+          bottomRight.x - bottomLeft.x,
+          bottomRight.y - bottomLeft.y,
+        )) /
+      2;
+    const height =
+      (Math.hypot(bottomLeft.x - topLeft.x, bottomLeft.y - topLeft.y) +
+        Math.hypot(bottomRight.x - topRight.x, bottomRight.y - topRight.y)) /
+      2;
+    const { rotation } = correction;
+    const sideways = rotation === 90 || rotation === 270;
+    const bounded = (size: number) =>
+      Math.min(4096, Math.max(2, Math.round(size)));
+    return {
+      width: bounded(sideways ? height : width),
+      height: bounded(sideways ? width : height),
+      rotation,
+    };
+  }
+
+  /** Rectify the frame received by the live preview without requesting another. */
   async rectifiedFrame(
     jpeg: Buffer,
     options: {
@@ -397,7 +421,7 @@ export class CameraSession implements CalibrationVision {
     } = {},
   ): Promise<Buffer> {
     const correction = this.correction;
-    const target = this.target;
+    const target = this.getRectifiedPreviewTarget();
     if (!correction || !target)
       throw new RobotArmError(
         'MAPPING_REQUIRED',
@@ -427,9 +451,7 @@ export class CameraSession implements CalibrationVision {
     }
     return this.transformer.transform(jpeg, {
       points: correction.points,
-      // The saved output target owns the preview rotation. Camera-only
-      // corrections store rotation 0 because the phone page already reports the
-      // orientation it is laid out for.
+      // The preview target already describes the intended output orientation.
       rotation: target.rotation,
       targetWidth: width,
       targetHeight: height,

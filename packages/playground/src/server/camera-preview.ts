@@ -93,25 +93,35 @@ async function streamFrames(
   });
 }
 
-/** Share the camera stream; corrected frames use the same accepted mapping as task screenshots. */
+/** Preview the applied perspective directly from the shared camera stream. */
 export async function streamCameraPreview(
   res: ServerResponse,
-  entry: Pick<DeviceEntry, 'camera'> & Partial<Pick<DeviceEntry, 'device'>>,
+  entry: Pick<DeviceEntry, 'camera'>,
   corrected = false,
 ) {
-  const device = corrected ? entry.device : undefined;
-  if (corrected && !device)
-    throw new Error('Connect the arm for corrected previews');
-  if (device) await device.configuration();
-  if (res.destroyed) return;
+  const { camera } = entry;
+  if (corrected && !camera.getRectifiedPreviewTarget())
+    throw Object.assign(
+      new Error('Save perspective correction before viewing it'),
+      { status: 409 },
+    );
   await streamFrames(
     res,
-    entry.camera.stream,
-    device
-      ? async () => Buffer.from(await device.screenshotBase64(), 'base64')
-      : undefined,
+    camera.stream,
+    corrected ? (frame) => rectifyPreviewFrame(camera, frame) : undefined,
     corrected ? 100 : 0,
   );
+}
+
+function rectifyPreviewFrame(
+  camera: DeviceEntry['camera'],
+  frame: CameraFrame,
+) {
+  return camera.rectifiedFrame(frame.jpeg, {
+    maxSide: CORRECTED_PREVIEW_MAX_SIDE,
+    maxPixels: CORRECTED_PREVIEW_MAX_PIXELS,
+    sampling: 'nearest',
+  });
 }
 
 function closedResponse(res: ServerResponse) {
@@ -156,12 +166,7 @@ export async function streamStandalonePreview(
       await streamFrames(
         res,
         camera.stream,
-        (frame) =>
-          camera.rectifiedFrame(frame.jpeg, {
-            maxSide: CORRECTED_PREVIEW_MAX_SIDE,
-            maxPixels: CORRECTED_PREVIEW_MAX_PIXELS,
-            sampling: 'nearest',
-          }),
+        (frame) => rectifyPreviewFrame(camera, frame),
         CORRECTED_PREVIEW_INTERVAL_MS,
       );
     } else {

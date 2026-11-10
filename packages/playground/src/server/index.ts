@@ -712,7 +712,7 @@ export async function startPlaygroundHost({
           const status = await devices.startCalibration(id);
           // A camera-only page can join the calibrated Device without a second scan.
           const preview = [...markerPreviews.values()].find(
-            (p) => p.cameraId === id && !p.screenId,
+            (p) => p.cameraId === id,
           );
           if (preview) {
             const session = devices.entries.get(id)?.calibration;
@@ -852,10 +852,20 @@ export async function startPlaygroundHost({
         const cameras = await listCameras();
         const camera = cameras.find((entry) => entry.id === input.id);
         if (!camera) return send(404, { error: 'Camera not found' });
-        if (!devices) return send(409, { error: 'Connect the arm first' });
-        const { camera: session } = await devices.open(camera.id, true);
-        const stream = session.stream;
-        return send(200, { stream: stream.getInfo() });
+        const activeDevices = devices;
+        if (!activeDevices)
+          return send(409, { error: 'Connect the arm first' });
+        const { camera: session } = await activeDevices.open(camera.id, true);
+        await Promise.allSettled(
+          activeDevices
+            .screens()
+            .filter(
+              (screen) =>
+                screen.cameraId === camera.id && screen.id !== camera.id,
+            )
+            .map((screen) => activeDevices.open(screen.id, true)),
+        );
+        return send(200, { stream: session.stream.getInfo() });
       }
       if (url.pathname === '/api/cameras/lease') {
         if (req.method === 'POST') {

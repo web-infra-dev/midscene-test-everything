@@ -90,7 +90,12 @@ export class PlaygroundDevices {
         hasSavedPerspective: camera?.hasSavedPerspective() ?? false,
         // The stage draws every screen's outline from the saved correction, so
         // the list carries the quad instead of only a yes/no flag.
-        ...(correction ? { correction } : {}),
+        ...(correction
+          ? {
+              correction,
+              perspectiveTarget: camera?.getRectifiedPreviewTarget(),
+            }
+          : {}),
       };
     });
   }

@@ -3,6 +3,7 @@ import {
   type ScreenOutlineEntry,
   usePerspectiveValidity,
 } from '@midscene/arm-calibration-ui';
+import type { PerspectiveTarget } from '@midscene/arm-kit-shared/camera/vision-types';
 import type { CameraCorrection } from '@midscene/arm-kit-shared/contracts';
 import {
   Alert,
@@ -63,7 +64,7 @@ export function DeviceWorkspace() {
     setCalibrationId(deviceId);
   };
   const [transferId, setTransferId] = useState<string>();
-  const [preferredView, setCameraView] = useState<CameraView>('corrected');
+  const [preferredView, setCameraView] = useState<CameraView>('raw');
   const [previewError, setPreviewError] = useState<string>();
   const [previewRevision, setPreviewRevision] = useState(0);
   const {
@@ -96,6 +97,8 @@ export function DeviceWorkspace() {
     const timer = setTimeout(() => void refresh(false), 500);
     return () => clearTimeout(timer);
   }, [cameras, status, refresh]);
+  const selected = cameras.find((camera) => camera.id === selectedId);
+  const streamState = selected?.stream?.state;
   const [screenTargets, setScreenTargets] = useState<
     Array<{
       id: string;
@@ -103,6 +106,7 @@ export function DeviceWorkspace() {
       name: string;
       hasCorrection?: boolean;
       correction?: CameraCorrection;
+      perspectiveTarget?: PerspectiveTarget;
     }>
   >([]);
   const [preferredScreenId, setPreferredScreenId] = useState<string>();
@@ -116,43 +120,32 @@ export function DeviceWorkspace() {
       })
       .catch(() => {});
     return () => abort.abort();
-  }, [configurationRevision, selectedId]);
+  }, [configurationRevision, selectedId, streamState, previewRevision]);
   const availableScreens = screenTargets.filter(
     (s) => s.cameraId === selectedId,
   );
   const activeScreen =
     availableScreens.find((s) => s.id === preferredScreenId) ??
-    availableScreens.find((s) => s.id === selectedId);
-  /*
-   * The stage always works on a screen of the selected camera. Without a saved
-   * screen the camera itself is the device, so the picker would otherwise show
-   * the raw camera id; fall back to the camera's own screen, then the first.
-   */
-  const screenKey = availableScreens.map((screen) => screen.id).join('|');
-  useEffect(() => {
-    if (!screenKey) return;
-    const ids = screenKey.split('|');
-    if (preferredScreenId && ids.includes(preferredScreenId)) return;
-    if (selectedId && ids.includes(selectedId)) return;
-    setPreferredScreenId(ids[0]);
-  }, [screenKey, preferredScreenId, selectedId]);
+    availableScreens.find((s) => s.id === selectedId) ??
+    availableScreens[0];
   const deviceId = activeScreen?.id ?? selectedId ?? undefined;
-  const selected = cameras.find((camera) => camera.id === selectedId);
-  const running = selected?.stream?.state === 'running';
-  const starting = selected?.stream?.state === 'starting';
+  const running = streamState === 'running';
+  const starting = streamState === 'starting';
   const cameraActionLabel = t(
     starting ? 'cameraStarting' : running ? 'stopCamera' : 'startCamera',
   );
   const readiness = useDeviceReadiness(deviceId, configurationRevision);
   const perspective = usePerspectiveValidity(
     `/api/devices/${encodeURIComponent(deviceId ?? '')}/calibration`,
-    Boolean(running && selected?.hasCorrection && !calibrationId),
+    Boolean(running && activeScreen?.correction && !calibrationId),
     `${configurationRevision}`,
   );
   const perspectiveBlocked = perspective.summary?.state === 'invalid';
   const ready = readiness?.status === 'ready';
-  const cameraView = ready ? preferredView : 'raw';
-  const previewKey = `${deviceId}:${cameraView}:${previewRevision}`;
+  const previewTarget = activeScreen?.perspectiveTarget;
+  const cameraView = previewTarget ? preferredView : 'raw';
+  const previewId = cameraView === 'corrected' ? deviceId : selectedId;
+  const previewKey = `${previewId}:${cameraView}:${previewRevision}`;
   /*
    * The raw view draws every screen the camera holds a perspective for, the way
    * the workstation stage did. The corrected view is already rectified, so an
@@ -287,7 +280,7 @@ export function DeviceWorkspace() {
                 >
                   {language === 'zh' ? '识别屏幕标记' : 'Detect screen markers'}
                 </Button>
-                {ready && (
+                {previewTarget && (
                   <Segmented
                     className="rv-segmented"
                     aria-label={language === 'zh' ? '画面类型' : 'Camera view'}
@@ -338,7 +331,11 @@ export function DeviceWorkspace() {
               screenName={activeScreen?.name ?? selected.name}
               onRecalibrate={openCameraCorrection}
             />
-            <CameraStagePreview available={running} outlines={stageOutlines}>
+            <CameraStagePreview
+              available={running}
+              outlines={stageOutlines}
+              frameSize={cameraView === 'corrected' ? previewTarget : undefined}
+            >
               {selected.stream?.state === 'running' &&
               previewError === previewKey ? (
                 <Empty
@@ -352,9 +349,13 @@ export function DeviceWorkspace() {
                 <img
                   key={previewKey}
                   className="stream-preview"
-                  src={cameraPreviewUrl(deviceId!, cameraView)}
+                  src={cameraPreviewUrl(previewId!, cameraView)}
                   onError={() => setPreviewError(previewKey)}
-                  alt={selected.name}
+                  alt={
+                    cameraView === 'corrected'
+                      ? activeScreen?.name
+                      : selected.name
+                  }
                 />
               ) : starting ? (
                 <Spin aria-label={t('cameraStarting')} />

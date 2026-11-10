@@ -33,12 +33,16 @@ function fixture() {
   });
   let calls = 0;
   const entry = {
-    camera: { stream },
-    device: {
-      configuration: async () => ({}),
-      screenshotBase64: async () => {
+    camera: {
+      stream,
+      getRectifiedPreviewTarget: () => ({
+        width: 400,
+        height: 800,
+        rotation: 0,
+      }),
+      rectifiedFrame: async () => {
         calls++;
-        return Buffer.from('corrected').toString('base64');
+        return Buffer.from('corrected');
       },
     },
   };
@@ -62,11 +66,12 @@ test('raw preview keeps camera pixels and respects response backpressure', async
   assert.equal(f.stream.listenerCount('frame'), 0);
 });
 
-test('corrected preview uses accepted device mapping and never queues parallel transforms', async () => {
+test('corrected preview uses the camera session and never queues parallel transforms', async () => {
   const f = fixture();
   let finish;
   let calls = 0;
-  f.entry.device.screenshotBase64 = () => {
+  f.entry.camera.rectifiedFrame = (jpeg) => {
+    assert.equal(jpeg.toString(), 'raw');
     calls++;
     return new Promise((resolve) => {
       finish = resolve;
@@ -76,7 +81,7 @@ test('corrected preview uses accepted device mapping and never queues parallel t
   f.stream.emit('frame', { jpeg: Buffer.from('raw') });
   f.stream.emit('frame', { jpeg: Buffer.from('raw') });
   assert.equal(calls, 1);
-  finish(Buffer.from('corrected').toString('base64'));
+  finish(Buffer.from('corrected'));
   await tick();
   assert.ok(f.res.frames[0].includes('corrected'));
   assert.ok(!f.res.frames[0].includes('raw'));
@@ -85,18 +90,17 @@ test('corrected preview uses accepted device mapping and never queues parallel t
   assert.equal(f.res.writableEnded, true);
 });
 
-test('invalid calibration rejects corrected view before streaming; transform failure never falls back to raw', async () => {
+test('missing perspective rejects corrected view before streaming; transform failure never falls back to raw', async () => {
   const f = fixture();
-  f.entry.device.configuration = async () => {
-    throw new Error('Calibration required');
-  };
+  const getTarget = f.entry.camera.getRectifiedPreviewTarget;
+  f.entry.camera.getRectifiedPreviewTarget = () => undefined;
   await assert.rejects(
     streamCameraPreview(f.res, f.entry, true),
-    /Calibration required/,
+    /Save perspective correction/,
   );
   assert.equal(f.res.headersSent, undefined);
-  f.entry.device.configuration = async () => ({});
-  f.entry.device.screenshotBase64 = async () => {
+  f.entry.camera.getRectifiedPreviewTarget = getTarget;
+  f.entry.camera.rectifiedFrame = async () => {
     throw new Error('Mapping changed');
   };
   await streamCameraPreview(f.res, f.entry, true);
@@ -110,14 +114,14 @@ test('invalid calibration rejects corrected view before streaming; transform fai
 test('closing a preview during correction discards the pending frame', async () => {
   const f = fixture();
   let finish;
-  f.entry.device.screenshotBase64 = () =>
+  f.entry.camera.rectifiedFrame = () =>
     new Promise((resolve) => {
       finish = resolve;
     });
   await streamCameraPreview(f.res, f.entry, true);
   f.stream.emit('frame', { jpeg: Buffer.from('raw') });
   f.res.destroy();
-  finish(Buffer.from('corrected').toString('base64'));
+  finish(Buffer.from('corrected'));
   await tick();
   assert.equal(f.res.frames.length, 0);
 });
