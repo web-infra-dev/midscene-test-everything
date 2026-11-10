@@ -213,9 +213,10 @@ export class MarkerCalibrationDetector {
     return this.detectDecodedFrame(decoded, layout);
   }
 
-  private async decodeFrame(
+  async decodeFrame(
     jpeg: Buffer,
     expectedIds: ReadonlySet<number>,
+    groups: readonly ReadonlySet<number>[] = [expectedIds],
   ): Promise<DecodedMarkerFrame> {
     const prepare = async (enhanced: boolean) => {
       let pipeline = sharp(jpeg, {
@@ -268,8 +269,11 @@ export class MarkerCalibrationDetector {
       return [...byId.values()];
     };
     const enough = (markers: readonly DetectedArUcoMarker[]) =>
-      expectedMarkerCount(markers, expectedIds) >=
-      MARKER_CALIBRATION_MIN_VISIBLE_MARKERS;
+      groups.every(
+        (ids) =>
+          expectedMarkerCount(markers, ids) >=
+          MARKER_CALIBRATION_MIN_VISIBLE_MARKERS,
+      );
     let source = await prepare(false);
     let detected = detectOn(source);
     const baseCount = expectedMarkerCount(detected, expectedIds);
@@ -305,7 +309,7 @@ export class MarkerCalibrationDetector {
     };
   }
 
-  private detectDecodedFrame(
+  detectDecodedFrame(
     decoded: DecodedMarkerFrame,
     layout: MarkerCalibrationLayout,
   ) {

@@ -129,8 +129,10 @@ export function screenBoundsProblem(
 ): string | undefined {
   const { screen, width, height } = layout;
   const gap = screen.height - height;
+  const horizontalGap = screen.width - width;
   if (
-    Math.abs(width - screen.width) > 3 ||
+    horizontalGap < -3 ||
+    horizontalGap > screen.width * 0.25 ||
     gap < -3 ||
     gap > screen.height * 0.25
   )
@@ -151,20 +153,29 @@ function screenCorners(width: number, top: number, bottom: number) {
 export async function recognizeScreenMarkers(
   rawFrame: () => Promise<Buffer>,
   layout: CalibrationPageLayout,
+  shared?: {
+    detector: MarkerCalibrationDetector;
+    frames: readonly (
+      | Awaited<ReturnType<MarkerCalibrationDetector['decodeFrame']>>
+      | undefined
+    )[];
+  },
 ) {
   const problem = screenBoundsProblem(layout);
   if (problem) throw new RobotVisionError('CALIBRATION_MISMATCH', problem);
   const top = -(layout.topInset ?? 0);
   const bottom = top + Math.max(layout.screen.height, layout.height);
   const target = {
-    points: quadFromArray(screenCorners(layout.width, top, bottom)),
+    points: quadFromArray(
+      screenCorners(Math.max(layout.width, layout.screen.width), top, bottom),
+    ),
     markers: layout.markers.map((m) => ({
       id: m.code,
       center: { x: m.x, y: m.y },
       side: m.size,
     })),
   };
-  const detector = new MarkerCalibrationDetector();
+  const detector = shared?.detector ?? new MarkerCalibrationDetector();
   const quads: ScreenQuad[] = [];
   let reference: Awaited<ReturnType<typeof detector.detectFrame>> | undefined;
   let best:
@@ -178,7 +189,11 @@ export async function recognizeScreenMarkers(
   for (let i = 0; i < frameCount; i++) {
     const jpeg = await rawFrame();
     try {
-      const detection = await detector.detectFrame(jpeg, target);
+      const decoded = shared?.frames[i];
+      if (shared && !decoded) continue;
+      const detection = decoded
+        ? detector.detectDecodedFrame(decoded, target)
+        : await detector.detectFrame(jpeg, target);
       if (
         reference &&
         (reference.imageWidth !== detection.imageWidth ||
@@ -218,8 +233,12 @@ export async function recognizeScreenMarkers(
     ),
   );
   if (
+    !shared &&
     jitterPx >
-    Math.max(3, Math.hypot(reference.imageWidth, reference.imageHeight) * 0.002)
+      Math.max(
+        3,
+        Math.hypot(reference.imageWidth, reference.imageHeight) * 0.002,
+      )
   )
     throw new RobotVisionError(
       'CALIBRATION_MISMATCH',
