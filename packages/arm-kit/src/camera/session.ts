@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type {
   CalibrationVision,
@@ -27,6 +27,7 @@ export type { CameraCorrection } from '../contracts.js';
 /** Camera, current image correction and identity used by Device and calibration. */
 export class CameraSession implements CalibrationVision {
   private correction?: CameraCorrection;
+  private savedPerspective = false;
   private target?: PerspectiveTarget;
   private writeChain = Promise.resolve();
   private readonly transformer = new PerspectiveTransformer();
@@ -70,6 +71,8 @@ export class CameraSession implements CalibrationVision {
     if (data.cameraId !== this.camera.id)
       throw new Error('Stored camera identity does not match');
     this.validate(data.correction);
+    this.savedPerspective = true;
+    if (data.applied === false) return;
     this.correction = data.correction;
     if (data.perspectiveTarget) {
       this.validateTarget(data.perspectiveTarget);
@@ -86,6 +89,23 @@ export class CameraSession implements CalibrationVision {
     );
     await scoped.load();
     return scoped;
+  }
+  hasSavedPerspective(): boolean {
+    return this.savedPerspective;
+  }
+  deleteSavedPerspective(): Promise<void> {
+    const operation = this.writeChain.then(async () => {
+      if (this.correction)
+        throw new RobotArmError(
+          'BUSY',
+          'Clear the applied perspective before deleting it.',
+          409,
+        );
+      await rm(this.correctionFile, { force: true });
+      this.savedPerspective = false;
+    });
+    this.writeChain = operation.catch(() => undefined);
+    return operation;
   }
   getCorrection(): CameraCorrection | undefined {
     return this.correction && structuredClone(this.correction);
@@ -131,6 +151,22 @@ export class CameraSession implements CalibrationVision {
     const correction = structuredClone(input);
     return this.writePerspective(correction, this.target);
   }
+  /**
+   * Releases the applied perspective. The screen keeps its identity — name,
+   * page link, marker slot, saved size — so the same glass can be recalibrated;
+   * only the framing the camera was applying is dropped.
+   */
+  async clearCorrection(): Promise<void> {
+    const operation = this.writeChain.then(async () => {
+      if (!this.correction) return;
+      await this.persistPerspective(this.correction, this.target, false);
+      this.correction = undefined;
+      this.target = undefined;
+      await this.perspective.reset();
+    });
+    this.writeChain = operation.catch(() => undefined);
+    return operation;
+  }
   setPerspective(
     input: CameraCorrection,
     target: PerspectiveTarget,
@@ -147,24 +183,33 @@ export class CameraSession implements CalibrationVision {
     target?: PerspectiveTarget,
   ): Promise<void> {
     const operation = this.writeChain.then(async () => {
-      await mkdir(this.directory, { recursive: true });
-      const temporary = `${this.correctionFile}.${randomUUID()}.tmp`;
-      await writeFile(
-        temporary,
-        JSON.stringify({
-          cameraId: this.camera.id,
-          correction,
-          ...(target ? { perspectiveTarget: target } : {}),
-        }),
-        { mode: 0o600 },
-      );
-      await rename(temporary, this.correctionFile);
+      await this.persistPerspective(correction, target, true);
+      this.savedPerspective = true;
       this.correction = correction;
       this.target = target;
       await this.perspective.reset();
     });
     this.writeChain = operation.catch(() => undefined);
     return operation;
+  }
+  private async persistPerspective(
+    correction: CameraCorrection,
+    target: PerspectiveTarget | undefined,
+    applied: boolean,
+  ) {
+    await mkdir(this.directory, { recursive: true });
+    const temporary = `${this.correctionFile}.${randomUUID()}.tmp`;
+    await writeFile(
+      temporary,
+      JSON.stringify({
+        cameraId: this.camera.id,
+        correction,
+        ...(applied ? {} : { applied: false }),
+        ...(target ? { perspectiveTarget: target } : {}),
+      }),
+      { mode: 0o600 },
+    );
+    await rename(temporary, this.correctionFile);
   }
   async rawFrame(): Promise<Buffer> {
     const info = this.stream.getInfo();
@@ -234,7 +279,11 @@ export class CameraSession implements CalibrationVision {
   assertPerspectiveCurrent() {
     return this.perspective.assertCurrent();
   }
-  async checkCorrection(correction: CameraCorrection, jpeg?: Buffer) {
+  async checkCorrection(
+    correction: CameraCorrection,
+    jpeg?: Buffer,
+    allowMismatch = false,
+  ) {
     this.validate(correction);
     const image = jpeg ?? (await this.rawFrame());
     const size = jpegSize(image);
@@ -253,7 +302,7 @@ export class CameraSession implements CalibrationVision {
       sourceWidth: size.width,
       sourceHeight: size.height,
     });
-    if (result.state === 'invalid')
+    if (!allowMismatch && result.state === 'invalid')
       throw new RobotArmError(
         'CALIBRATION_MISMATCH',
         'The saved screen outline no longer matches the camera view. Recalibrate before moving.',
