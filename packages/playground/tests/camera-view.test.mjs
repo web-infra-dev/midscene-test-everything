@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { test } from '@rstest/core';
 import {
+  clearStandaloneCorrection,
   saveStandaloneCorrection,
   streamCameraPreview,
   streamStandalonePreview,
@@ -149,6 +150,114 @@ test('camera-only MJPEG releases its lease when the viewer leaves, including dur
   }
 });
 
+test('camera-only corrected preview rectifies each frame with the saved target', async () => {
+  const f = fixture();
+  const owners = new Set();
+  const rectified = [];
+  const correction = {
+    sourceWidth: 1920,
+    sourceHeight: 1080,
+    rotation: 0,
+    points: {
+      topLeft: { x: 10, y: 10 },
+      topRight: { x: 1000, y: 10 },
+      bottomRight: { x: 1000, y: 500 },
+      bottomLeft: { x: 10, y: 500 },
+    },
+  };
+  const target = { width: 1080, height: 2400, rotation: 0 };
+  const cameras = {
+    async acquire(id, owner) {
+      assert.equal(id, 'camera');
+      owners.add(owner);
+      return {
+        stream: f.stream,
+        getCorrection: () => correction,
+        getPerspectiveTarget: () => target,
+        rectifiedFrame: async (jpeg, options) => {
+          rectified.push({ jpeg: jpeg.toString(), options });
+          return Buffer.from('rectified');
+        },
+      };
+    },
+    async release(id, owner) {
+      assert.equal(id, 'camera');
+      assert.ok(owners.delete(owner));
+    },
+  };
+  const pending = streamStandalonePreview(
+    f.res,
+    cameras,
+    'camera',
+    'corrected',
+  );
+  await tick();
+  f.stream.emit('frame', { jpeg: Buffer.from('raw') });
+  await tick();
+  assert.deepEqual(rectified, [
+    {
+      jpeg: 'raw',
+      options: { maxSide: 900, maxPixels: 450000, sampling: 'nearest' },
+    },
+  ]);
+  assert.ok(f.res.frames[0].includes('rectified'));
+  assert.ok(!f.res.frames[0].includes('raw'));
+  f.stream.emit('stopped');
+  assert.equal(f.res.writableEnded, true);
+  await pending;
+  assert.equal(owners.size, 0);
+});
+
+test('camera-only corrected preview requires a saved target before streaming', async () => {
+  const f = fixture();
+  const owners = new Set();
+  const cameras = {
+    async acquire(id, owner) {
+      owners.add(owner);
+      return {
+        stream: f.stream,
+        getCorrection: () => undefined,
+        getPerspectiveTarget: () => undefined,
+        rectifiedFrame: async () => Buffer.from('rectified'),
+      };
+    },
+    async release(id, owner) {
+      owners.delete(owner);
+    },
+  };
+  await assert.rejects(
+    streamStandalonePreview(f.res, cameras, 'camera', 'corrected'),
+    /Save perspective correction/,
+  );
+  assert.equal(f.res.headersSent, undefined);
+  assert.equal(f.res.frames.length, 0);
+  assert.equal(owners.size, 0);
+});
+
+test('a new camera preview retires the previous multipart response', async () => {
+  const first = fixture();
+  const second = fixture();
+  let owners = 0;
+  const cameras = {
+    async acquire(_id, _owner) {
+      owners++;
+      return first.entry.camera;
+    },
+    async release(_id, _owner) {
+      owners--;
+    },
+  };
+  const pendingFirst = streamStandalonePreview(first.res, cameras, 'camera');
+  await tick();
+  const pendingSecond = streamStandalonePreview(second.res, cameras, 'camera');
+  await tick();
+  assert.equal(first.res.destroyed, true);
+  assert.equal(second.res.destroyed, false);
+  second.res.destroy();
+  await Promise.all([pendingFirst, pendingSecond]);
+  assert.equal(owners, 0);
+});
+
 test('camera-only correction is checked and saved through a released lease', async () => {
   const owners = new Set();
   const checked = [];
@@ -184,4 +293,15 @@ test('camera-only correction is checked and saved through a released lease', asy
   assert.deepEqual(checked, [correction]);
   assert.deepEqual(saved, [{ correction, target }]);
   assert.equal(owners.size, 0);
+});
+
+test('camera-only correction clear does not need a camera lease', async () => {
+  const cleared = [];
+  const cameras = {
+    async clearPerspective(id) {
+      cleared.push(id);
+    },
+  };
+  await clearStandaloneCorrection(cameras, 'camera');
+  assert.deepEqual(cleared, ['camera']);
 });

@@ -6,6 +6,7 @@ import {
   detectScreenFromMarkers,
   markerSvg,
   recognizeScreenMarkers,
+  screenBoundsProblem,
 } from '../src/camera/calibration-markers.js';
 
 const layout = {
@@ -116,6 +117,50 @@ test('independently displaced markers prevent a correction', async () => {
   await expect(
     detectScreenFromMarkers(async () => frame, layout),
   ).rejects.toThrow(/Only 0 of 8 frames passed.*consistent screen plane/);
+});
+
+test('detects a landscape phone page without forcing or swapping its axes', async () => {
+  const landscape = {
+    revision: 1,
+    width: 800,
+    height: 400,
+    screen: { width: 800, height: 400, devicePixelRatio: 2 },
+    markers: calibrationPageMarkers(800, 400),
+  };
+  expect(screenBoundsProblem(landscape)).toBeUndefined();
+  const markers = landscape.markers
+    .map((m) =>
+      markerSvg(m.code).replace(
+        '<svg ',
+        `<svg x="${m.x - m.size / 2}" y="${m.y - m.size / 2}" width="${m.size}" height="${m.size}" `,
+      ),
+    )
+    .join('');
+  const frame = await sharp(
+    Buffer.from(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="600"><rect width="1000" height="600" fill="#ccc"/><g transform="matrix(1,0,0,1,100,100)"><rect width="800" height="400" fill="white"/>${markers}</g></svg>`,
+    ),
+  )
+    .jpeg()
+    .toBuffer();
+  const correction = await detectScreenFromMarkers(
+    async () => frame,
+    landscape,
+  );
+  expect(correction.sourceWidth).toBe(1000);
+  expect(correction.sourceHeight).toBe(600);
+  expect(
+    Math.hypot(
+      correction.points.topLeft.x - 100,
+      correction.points.topLeft.y - 100,
+    ),
+  ).toBeLessThan(3);
+  expect(
+    Math.hypot(
+      correction.points.bottomRight.x - 900,
+      correction.points.bottomRight.y - 500,
+    ),
+  ).toBeLessThan(3);
 });
 
 test('locates one trial disk without a target coordinate and rejects ambiguous frames', async () => {

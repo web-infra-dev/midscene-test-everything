@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { CameraStream, DEFAULT_STARTUP_TIMEOUT_MS } from './camera-stream.js';
+import {
+  CameraStream,
+  DEFAULT_STARTUP_TIMEOUT_MS,
+  DEFAULT_STOP_TIMEOUT_MS,
+} from './camera-stream.js';
 import { RobotVisionError } from './errors.js';
 import type {
   CameraBackend,
@@ -15,6 +19,7 @@ export class CameraStreamManager {
     private readonly backend: CameraBackend,
     private readonly maxStreams = 8,
     private readonly startupTimeoutMs = DEFAULT_STARTUP_TIMEOUT_MS,
+    private readonly stopTimeoutMs = DEFAULT_STOP_TIMEOUT_MS,
   ) {}
 
   async create(options: CameraStreamOptions): Promise<CameraStream> {
@@ -40,6 +45,7 @@ export class CameraStreamManager {
       this.backend,
       resolved,
       this.startupTimeoutMs,
+      this.stopTimeoutMs,
     );
     this.streams.set(stream.id, stream);
     try {

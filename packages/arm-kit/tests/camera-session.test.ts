@@ -137,6 +137,160 @@ it('persists the perspective output target with the camera correction', async ()
   expect(restored.getPerspectiveTarget()).toEqual(target);
 });
 
+it('reads a saved target without opening the camera and rectifies a live frame for preview', async () => {
+  const { manager } = await fixture();
+  const session = await manager.acquire('camera', 'a');
+  const correction = {
+    sourceWidth: 100,
+    sourceHeight: 100,
+    rotation: 0 as const,
+    points: {
+      topLeft: { x: 10, y: 10 },
+      topRight: { x: 90, y: 10 },
+      bottomRight: { x: 90, y: 90 },
+      bottomLeft: { x: 10, y: 90 },
+    },
+  };
+  const target = { width: 40, height: 80, rotation: 0 as const };
+  await session.setPerspective(correction, target);
+  await manager.release('camera', 'a');
+  // The stream is closed now; the list still needs the accepted output shape.
+  expect(await manager.persistedPerspective('camera')).toEqual({
+    correction,
+    target,
+  });
+  expect(await manager.persistedPerspective('missing')).toBeUndefined();
+  const { default: sharp } = await import('sharp');
+  const jpeg = await sharp({
+    create: {
+      width: 100,
+      height: 100,
+      channels: 3,
+      background: { r: 24, g: 120, b: 240 },
+    },
+  })
+    .jpeg()
+    .toBuffer();
+  const restored = await manager.acquire('camera', 'b');
+  const rectified = await restored.rectifiedFrame(jpeg);
+  const metadata = await sharp(rectified).metadata();
+  expect(metadata.width).toBe(40);
+  expect(metadata.height).toBe(80);
+  const preview = await restored.rectifiedFrame(jpeg, { maxSide: 20 });
+  const previewMetadata = await sharp(preview).metadata();
+  expect(previewMetadata.width).toBe(10);
+  expect(previewMetadata.height).toBe(20);
+  // The saved output target owns the preview rotation, so a sideways target
+  // rotates the phone content even though the marker correction itself is 0.
+  const quadrants = await sharp(
+    Buffer.from(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="50" height="50" fill="#ff0000"/><rect x="50" width="50" height="50" fill="#00ff00"/><rect y="50" width="50" height="50" fill="#ffff00"/><rect x="50" y="50" width="50" height="50" fill="#0000ff"/></svg>`,
+    ),
+  )
+    .jpeg({ quality: 100 })
+    .toBuffer();
+  await restored.setPerspective(correction, {
+    width: 80,
+    height: 80,
+    rotation: 90,
+  });
+  const rotated = await sharp(
+    await restored.rectifiedFrame(quadrants, { sampling: 'nearest' }),
+  )
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const offset = (10 * rotated.info.width + 10) * 3;
+  expect(rotated.data[offset]).toBeGreaterThan(150);
+  expect(rotated.data[offset + 1]).toBeGreaterThan(150);
+  expect(rotated.data[offset + 2]).toBeLessThan(100);
+  await expect(
+    restored.rectifiedFrame(
+      await sharp({
+        create: {
+          width: 120,
+          height: 100,
+          channels: 3,
+          background: { r: 0, g: 0, b: 0 },
+        },
+      })
+        .jpeg()
+        .toBuffer(),
+    ),
+  ).rejects.toThrow('dimensions changed');
+});
+
+it('clears a saved perspective, its target and its evidence without opening the camera', async () => {
+  const { manager, backend } = await fixture();
+  const session = await manager.acquire('camera', 'a');
+  const correction = {
+    sourceWidth: 100,
+    sourceHeight: 100,
+    rotation: 0 as const,
+    points: {
+      topLeft: { x: 10, y: 10 },
+      topRight: { x: 90, y: 10 },
+      bottomRight: { x: 90, y: 90 },
+      bottomLeft: { x: 10, y: 90 },
+    },
+  };
+  await session.setPerspective(correction, {
+    width: 40,
+    height: 80,
+    rotation: 0,
+  });
+  await manager.clearPerspective('camera');
+  expect(session.getCorrection()).toBeUndefined();
+  expect(session.getPerspectiveTarget()).toBeUndefined();
+  expect(await manager.persistedPerspective('camera')).toBeUndefined();
+  await manager.release('camera', 'a');
+  expect(backend.openStream).toHaveBeenCalledTimes(1);
+  // Clearing an already-clear camera is idempotent and must not start it.
+  await manager.clearPerspective('camera');
+  expect(backend.openStream).toHaveBeenCalledTimes(1);
+  expect(await manager.persistedPerspective('camera')).toBeUndefined();
+});
+
+it('clears while the camera is still opening instead of queueing behind it', async () => {
+  const { manager, backend } = await fixture();
+  const discovery = gate();
+  backend.listDevices = async () => {
+    await discovery.promise;
+    return [{ id: 'camera', name: 'Camera', backend: 'avfoundation' }];
+  };
+  const acquiring = manager.acquire('camera', 'a');
+  // A serialized clear would wait for acquire; the operator needs it now.
+  await manager.clearPerspective('camera');
+  discovery.resolve();
+  await acquiring;
+});
+
+it('bounds a capture process that never exits and keeps the camera queue usable', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'arm-camera-hang-'));
+  cleanup.push(() => rm(directory, { recursive: true, force: true }));
+  const backend: CameraBackend = {
+    listDevices: async () => [
+      { id: 'camera', name: 'Camera', backend: 'dshow' },
+    ],
+    openStream: rstest.fn(async () => {
+      const source = new EventEmitter() as CameraSource;
+      // ffmpeg can miss its exit notification on a wedged device driver.
+      source.close = rstest.fn(() => new Promise<void>(() => {}));
+      return source;
+    }),
+  };
+  const manager = new CameraSessionManager(backend, directory, 25);
+  cleanup.push(() => manager.close());
+  await manager.acquire('camera', 'a');
+  const started = Date.now();
+  await manager.release('camera', 'a');
+  expect(Date.now() - started).toBeLessThan(1_000);
+  // The next viewer must get a fresh stream instead of the dead session.
+  await manager.acquire('camera', 'b');
+  expect(backend.openStream).toHaveBeenCalledTimes(2);
+  await manager.release('camera', 'b');
+});
+
 it('isolates two screen corrections on one physical camera and restores each independently', async () => {
   const { manager, backend, closes } = await fixture();
   const a = await manager.acquire('camera', 'a', 'left');

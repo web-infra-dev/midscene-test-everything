@@ -47,17 +47,39 @@ export class JpegProcessCameraSource
     if (this.closePromise) return this.closePromise;
     this.intentionalClose = true;
     this.closePromise = new Promise<void>((resolve) => {
-      if (this.child.exitCode !== null || this.child.signalCode !== null) {
+      let settled = false;
+      const timers: NodeJS.Timeout[] = [];
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        for (const timer of timers) clearTimeout(timer);
         resolve();
+      };
+      if (this.child.exitCode !== null || this.child.signalCode !== null) {
+        finish();
         return;
       }
-      const forceTimer = setTimeout(() => this.child.kill('SIGKILL'), 2_000);
+      // SIGTERM should be enough. Escalate to SIGKILL, and still resolve if the
+      // OS never reports an exit so a capture process cannot wedge the camera
+      // manager's serialized queue forever.
+      const forceTimer = setTimeout(() => {
+        try {
+          this.child.kill('SIGKILL');
+        } catch {
+          finish();
+        }
+      }, 2_000);
       forceTimer.unref();
-      this.child.once('exit', () => {
-        clearTimeout(forceTimer);
-        resolve();
-      });
-      this.child.kill('SIGTERM');
+      timers.push(forceTimer);
+      const deadlineTimer = setTimeout(finish, 3_500);
+      deadlineTimer.unref();
+      timers.push(deadlineTimer);
+      this.child.once('exit', finish);
+      try {
+        this.child.kill('SIGTERM');
+      } catch {
+        finish();
+      }
     });
     return this.closePromise;
   }

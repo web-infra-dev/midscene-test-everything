@@ -5,16 +5,17 @@ import {
   App,
   Button,
   Empty,
+  Segmented,
   Spin,
   Tag,
   Tooltip,
   Typography,
 } from 'antd';
-import { RefreshCw } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { cameraPreviewUrl } from '../camera-preview';
+import { Eraser, RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { type CameraView, cameraPreviewUrl } from '../camera-preview';
 import { type CameraEntry, cameraStateLabel, useCameras } from '../cameras';
-import { useT } from '../i18n';
+import { useLanguage, useT } from '../i18n';
 import { CameraRail } from './CameraRail';
 import { CameraStagePreview } from './CameraStagePreview';
 import { PerspectiveCorrectionDialog } from './PerspectiveCorrectionDialog';
@@ -27,12 +28,39 @@ import {
 import { WorkspaceLayout } from './WorkspaceLayout';
 import './CameraStage.less';
 
+/** Detach a multipart image so the browser cancels its long-lived request. */
+function releasePreviewImage(image: HTMLImageElement | null) {
+  if (!image) return;
+  image.removeAttribute('src');
+  image.src = 'data:,';
+}
+
 export function CameraOnlyWorkspace() {
   const t = useT();
-  const { message } = App.useApp();
-  const { cameras, selectedId, status, select, refresh, error } = useCameras();
+  const zh = useLanguage() === 'zh';
+  const { message, modal } = App.useApp();
+  const {
+    cameras,
+    selectedId,
+    status,
+    select,
+    refresh,
+    error,
+    markCorrection,
+    markCorrectionCleared,
+  } = useCameras();
   const [connectionOpen, setConnectionOpen] = useState(false);
   const [detection, setDetection] = useState<CameraMarkerDetection>();
+  const [saved, setSaved] = useState<{
+    correction: CameraCorrection;
+    target: PerspectiveTarget;
+  }>();
+  const [correctionCleared, setCorrectionCleared] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [previewSuspended, setPreviewSuspended] = useState(false);
+  const [leaseReady, setLeaseReady] = useState(false);
+  const [leaseError, setLeaseError] = useState<string>();
+  const [view, setView] = useState<CameraView>('raw');
   const [editorOpen, setEditorOpen] = useState(false);
   const [markerOpenRequest, setMarkerOpenRequest] = useState(0);
   const [revision, setRevision] = useState(0);
@@ -42,12 +70,87 @@ export function CameraOnlyWorkspace() {
     width: number;
     height: number;
   }>();
+  const previewImage = useRef<HTMLImageElement | null>(null);
+  const setPreviewImage = useCallback((node: HTMLImageElement | null) => {
+    if (previewImage.current && previewImage.current !== node)
+      releasePreviewImage(previewImage.current);
+    previewImage.current = node;
+  }, []);
+  useEffect(() => () => releasePreviewImage(previewImage.current), []);
+  useEffect(() => {
+    const abort = () => releasePreviewImage(previewImage.current);
+    window.addEventListener('pagehide', abort);
+    return () => {
+      window.removeEventListener('pagehide', abort);
+      abort();
+    };
+  }, []);
   useEffect(() => {
     void refresh();
   }, [refresh]);
+  // Keep one camera lease for the whole workspace. Preview responses then
+  // come and go without stopping the camera, so clearing a correction or
+  // switching raw/corrected never restarts the device.
+  useEffect(() => {
+    if (!selectedId) {
+      setLeaseReady(false);
+      return;
+    }
+    let cancelled = false;
+    let lease: string | undefined;
+    setLeaseReady(false);
+    setLeaseError(undefined);
+    void fetch('/api/cameras/lease', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: selectedId }),
+      // Camera startup itself is allowed 15s before it is declared failed.
+      signal: AbortSignal.timeout(20000),
+    })
+      .then(async (response) => {
+        const value = await response.json();
+        if (!response.ok)
+          throw new Error(value.error ?? 'Could not start the camera');
+        if (typeof value.lease !== 'string')
+          throw new Error('Invalid camera lease');
+        if (cancelled) {
+          void fetch(
+            `/api/cameras/lease?lease=${encodeURIComponent(value.lease)}`,
+            { method: 'DELETE', keepalive: true },
+          );
+          return;
+        }
+        lease = value.lease;
+        setLeaseReady(true);
+      })
+      .catch((cause) => {
+        if (cancelled) return;
+        setLeaseError(cause instanceof Error ? cause.message : String(cause));
+        // Let the preview request surface any real camera error.
+        setLeaseReady(true);
+      });
+    return () => {
+      cancelled = true;
+      setLeaseReady(false);
+      if (lease)
+        void fetch(`/api/cameras/lease?lease=${encodeURIComponent(lease)}`, {
+          method: 'DELETE',
+          keepalive: true,
+        });
+    };
+  }, [selectedId]);
   const selected = cameras.find((camera) => camera.id === selectedId);
+  const hasCorrection =
+    !correctionCleared && Boolean(saved ?? selected?.hasCorrection);
+  const effectiveView: CameraView =
+    view === 'corrected' && hasCorrection ? 'corrected' : 'raw';
+  const target = hasCorrection
+    ? (saved?.target ?? selected?.perspectiveTarget)
+    : undefined;
   const url =
-    selected && `${cameraPreviewUrl(selected.id)}&revision=${revision}`;
+    previewSuspended || !leaseReady || !selected
+      ? undefined
+      : `${cameraPreviewUrl(selected.id, effectiveView)}&revision=${revision}`;
   // Before robot connection, the preview opens its stream on demand. Use the
   // displayed frame as evidence when no stream metadata is available yet.
   const displayed = frame?.url === url ? frame : undefined;
@@ -67,13 +170,17 @@ export function CameraOnlyWorkspace() {
     },
   };
   const previewFailed = Boolean(url && failedUrl === url);
-  const clearCorrection = () => {
+  const dismissDetection = () => {
     setDetection(undefined);
     setEditorOpen(false);
   };
   const changeCamera = (id: string) => {
     select(id);
-    clearCorrection();
+    dismissDetection();
+    setSaved(undefined);
+    setCorrectionCleared(false);
+    setClearing(false);
+    setView('raw');
   };
   const saveCorrection = async (
     correction: CameraCorrection,
@@ -92,8 +199,57 @@ export function CameraOnlyWorkspace() {
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error?.message ?? result.error);
-    clearCorrection();
+    // Keep the accepted result in the stage: switch to the corrected stream and
+    // frame it with the saved output size instead of leaving the raw camera shot.
+    setSaved({ correction, target });
+    markCorrection(selected.id, target);
+    setCorrectionCleared(false);
+    setDetection(undefined);
+    setEditorOpen(false);
+    setView('corrected');
+    setRevision((value) => value + 1);
     message.success(t('correctionSaved'));
+  };
+  const clearCorrection = async () => {
+    if (!selected || clearing) return;
+    const id = selected.id;
+    setClearing(true);
+    // Unmount the preview entirely while clearing. Switching straight to the
+    // raw view would start another camera lease, and the delete would then
+    // queue behind that camera opening.
+    setPreviewSuspended(true);
+    setView('raw');
+    setRevision((value) => value + 1);
+    try {
+      const response = await fetch(
+        `/api/cameras/correction?id=${encodeURIComponent(id)}`,
+        { method: 'DELETE', signal: AbortSignal.timeout(10000) },
+      );
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok)
+        throw new Error(result.error?.message ?? result.error ?? 'Failed');
+      setSaved(undefined);
+      setDetection(undefined);
+      setEditorOpen(false);
+      setCorrectionCleared(true);
+      markCorrectionCleared(id);
+      message.success(t('correctionCleared'));
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setClearing(false);
+      setPreviewSuspended(false);
+    }
+  };
+  const confirmClearCorrection = () => {
+    modal.confirm({
+      title: t('clearCorrectionTitle'),
+      content: t('clearCorrectionBody'),
+      okText: t('clearCorrection'),
+      okButtonProps: { danger: true },
+      cancelText: zh ? '取消' : 'Cancel',
+      onOk: clearCorrection,
+    });
   };
   return (
     <>
@@ -136,11 +292,40 @@ export function CameraOnlyWorkspace() {
                   id={selected.id}
                   name={selected.name}
                   openRequest={markerOpenRequest}
+                  onOpenChange={(open) => {
+                    if (open) setView('raw');
+                  }}
                   onDetected={(next) => {
+                    // Keep the raw stream (and close the rectified one) while
+                    // the operator edits corners; the corrected view returns on
+                    // Apply.
+                    setView('raw');
                     setDetection(next);
                     setEditorOpen(true);
                   }}
                 />
+              )}
+              {hasCorrection && (
+                <>
+                  <Segmented
+                    className="rv-segmented"
+                    aria-label={t('cameraView')}
+                    value={effectiveView}
+                    onChange={(value) => setView(value as CameraView)}
+                    options={[
+                      { value: 'raw', label: t('rawView') },
+                      { value: 'corrected', label: t('correctedView') },
+                    ]}
+                  />
+                  <Button
+                    danger
+                    icon={<Eraser size={16} />}
+                    loading={clearing}
+                    onClick={confirmClearCorrection}
+                  >
+                    {t('clearCorrection')}
+                  </Button>
+                </>
               )}
               <Tooltip title={t('refresh')}>
                 <Button
@@ -150,7 +335,7 @@ export function CameraOnlyWorkspace() {
                   loading={status === 'loading'}
                   onClick={() => {
                     setRevision((value) => value + 1);
-                    clearCorrection();
+                    dismissDetection();
                     void refresh();
                   }}
                 />
@@ -158,15 +343,31 @@ export function CameraOnlyWorkspace() {
             </div>
           </header>
           {error && <Alert type="error" showIcon message={error} />}
+          {leaseError && <Alert type="error" showIcon message={leaseError} />}
           <CameraStagePreview
             available={Boolean(url && !previewFailed)}
-            outline={selected ? detection?.correction : undefined}
+            outline={
+              effectiveView === 'raw'
+                ? (detection?.correction ??
+                  (hasCorrection ? saved?.correction : undefined))
+                : undefined
+            }
+            frameSize={
+              effectiveView === 'corrected' && target ? target : undefined
+            }
           >
             {url && camera ? (
               previewFailed ? (
-                <Empty description={t('rawPreviewFailed')} />
+                <Empty
+                  description={t(
+                    effectiveView === 'corrected'
+                      ? 'correctedPreviewFailed'
+                      : 'rawPreviewFailed',
+                  )}
+                />
               ) : (
                 <img
+                  ref={setPreviewImage}
                   key={url}
                   src={url}
                   className="stream-preview"
@@ -186,6 +387,10 @@ export function CameraOnlyWorkspace() {
                   }}
                 />
               )
+            ) : !leaseReady ? (
+              <Spin aria-label={t('cameraStarting')} />
+            ) : clearing ? (
+              <Spin aria-label={t('clearCorrection')} />
             ) : status === 'loading' ? (
               <Spin aria-label={t('loadingCameras')} />
             ) : (
@@ -198,7 +403,6 @@ export function CameraOnlyWorkspace() {
                 camera && entry.id === camera.id ? camera : entry,
               )}
               selectedId={selectedId}
-              selectedPreviewUrl={url}
               onSelect={changeCamera}
             />
           )}

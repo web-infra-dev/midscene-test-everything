@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type {
   CalibrationVision,
@@ -13,6 +13,10 @@ import {
 } from '../contracts.js';
 import { detectCalibrationMarkers } from './calibration-markers.js';
 import { CameraStreamManager } from './camera-stream-manager.js';
+import {
+  DEFAULT_STARTUP_TIMEOUT_MS,
+  DEFAULT_STOP_TIMEOUT_MS,
+} from './camera-stream.js';
 import type { CameraStream } from './camera-stream.js';
 import { cameraBackend } from './index.js';
 import { jpegSize } from './jpeg-size.js';
@@ -24,6 +28,88 @@ import { validateQuad } from './vision-geometry.js';
 import type { PerspectiveTarget } from './vision-types.js';
 
 export type { CameraCorrection } from '../contracts.js';
+
+export interface StoredCameraPerspective {
+  correction: CameraCorrection;
+  target?: PerspectiveTarget;
+}
+
+/** Camera-only previews read the same file the Device later restores. */
+export function cameraPerspectiveFile(
+  directory: string,
+  cameraId: string,
+  screenId?: string,
+): string {
+  return path.join(
+    directory,
+    `${createHash('sha256')
+      .update(screenId ? JSON.stringify([cameraId, screenId]) : cameraId)
+      .digest('hex')}.json`,
+  );
+}
+
+export function validateCameraCorrection(correction: CameraCorrection): void {
+  if (
+    !correction ||
+    !Number.isInteger(correction.sourceWidth) ||
+    !Number.isInteger(correction.sourceHeight) ||
+    correction.sourceWidth < 1 ||
+    correction.sourceHeight < 1 ||
+    ![0, 90, 180, 270].includes(correction.rotation)
+  )
+    throw new Error('Invalid camera correction');
+  validateQuad(correction.points);
+  for (const point of Object.values(correction.points))
+    if (
+      point.x < 0 ||
+      point.x >= correction.sourceWidth ||
+      point.y < 0 ||
+      point.y >= correction.sourceHeight
+    )
+      throw new Error('Camera corner lies outside the source image');
+}
+
+export function validatePerspectiveTarget(target: PerspectiveTarget): void {
+  if (
+    !target ||
+    !Number.isInteger(target.width) ||
+    !Number.isInteger(target.height) ||
+    target.width < 1 ||
+    target.height < 1 ||
+    target.width > 7680 ||
+    target.height > 7680 ||
+    ![0, 90, 180, 270].includes(target.rotation)
+  )
+    throw new Error('Invalid perspective target');
+}
+
+/** Read a correction without opening the camera, for list responses. */
+export async function readCameraPerspective(
+  directory: string,
+  cameraId: string,
+  screenId?: string,
+): Promise<StoredCameraPerspective | undefined> {
+  let raw: string;
+  try {
+    raw = await readFile(
+      cameraPerspectiveFile(directory, cameraId, screenId),
+      'utf8',
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+  const data = JSON.parse(raw);
+  if (data.cameraId !== cameraId)
+    throw new Error('Stored camera identity does not match');
+  validateCameraCorrection(data.correction);
+  if (data.perspectiveTarget) validatePerspectiveTarget(data.perspectiveTarget);
+  return {
+    correction: data.correction,
+    ...(data.perspectiveTarget ? { target: data.perspectiveTarget } : {}),
+  };
+}
+
 /** Camera, current image correction and identity used by Device and calibration. */
 export class CameraSession implements CalibrationVision {
   private correction?: CameraCorrection;
@@ -47,34 +133,17 @@ export class CameraSession implements CalibrationVision {
     private readonly screenId?: string,
   ) {}
   private get correctionFile() {
-    return path.join(
-      this.directory,
-      `${createHash('sha256')
-        .update(
-          this.screenId
-            ? JSON.stringify([this.camera.id, this.screenId])
-            : this.camera.id,
-        )
-        .digest('hex')}.json`,
-    );
+    return cameraPerspectiveFile(this.directory, this.camera.id, this.screenId);
   }
   async load(): Promise<void> {
-    let raw: string;
-    try {
-      raw = await readFile(this.correctionFile, 'utf8');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
-      throw error;
-    }
-    const data = JSON.parse(raw);
-    if (data.cameraId !== this.camera.id)
-      throw new Error('Stored camera identity does not match');
-    this.validate(data.correction);
-    this.correction = data.correction;
-    if (data.perspectiveTarget) {
-      this.validateTarget(data.perspectiveTarget);
-      this.target = data.perspectiveTarget;
-    }
+    const stored = await readCameraPerspective(
+      this.directory,
+      this.camera.id,
+      this.screenId,
+    );
+    if (!stored) return;
+    this.correction = stored.correction;
+    if (stored.target) this.target = stored.target;
     await this.perspective.load();
   }
   async forScreen(screenId: string): Promise<CameraSession> {
@@ -93,41 +162,8 @@ export class CameraSession implements CalibrationVision {
   getPerspectiveTarget(): PerspectiveTarget | undefined {
     return this.target && structuredClone(this.target);
   }
-  private validate(correction: CameraCorrection): void {
-    if (
-      !correction ||
-      !Number.isInteger(correction.sourceWidth) ||
-      !Number.isInteger(correction.sourceHeight) ||
-      correction.sourceWidth < 1 ||
-      correction.sourceHeight < 1 ||
-      ![0, 90, 180, 270].includes(correction.rotation)
-    )
-      throw new Error('Invalid camera correction');
-    validateQuad(correction.points);
-    for (const point of Object.values(correction.points))
-      if (
-        point.x < 0 ||
-        point.x >= correction.sourceWidth ||
-        point.y < 0 ||
-        point.y >= correction.sourceHeight
-      )
-        throw new Error('Camera corner lies outside the source image');
-  }
-  private validateTarget(target: PerspectiveTarget): void {
-    if (
-      !target ||
-      !Number.isInteger(target.width) ||
-      !Number.isInteger(target.height) ||
-      target.width < 1 ||
-      target.height < 1 ||
-      target.width > 7680 ||
-      target.height > 7680 ||
-      ![0, 90, 180, 270].includes(target.rotation)
-    )
-      throw new Error('Invalid perspective target');
-  }
   setCorrection(input: CameraCorrection): Promise<void> {
-    this.validate(input);
+    validateCameraCorrection(input);
     const correction = structuredClone(input);
     return this.writePerspective(correction, this.target);
   }
@@ -135,8 +171,8 @@ export class CameraSession implements CalibrationVision {
     input: CameraCorrection,
     target: PerspectiveTarget,
   ): Promise<void> {
-    this.validate(input);
-    this.validateTarget(target);
+    validateCameraCorrection(input);
+    validatePerspectiveTarget(target);
     return this.writePerspective(
       structuredClone(input),
       structuredClone(target),
@@ -165,6 +201,20 @@ export class CameraSession implements CalibrationVision {
     });
     this.writeChain = operation.catch(() => undefined);
     return operation;
+  }
+  /** Remove the saved correction, output target and outline evidence. */
+  clearPerspective(): Promise<void> {
+    // Never queue this behind a camera operation or a pending perspective
+    // write. Clearing is the operator's escape hatch, and a busy stream must
+    // not make it look like the service died.
+    this.correction = undefined;
+    this.target = undefined;
+    this.perspective.forget();
+    const file = this.correctionFile;
+    return Promise.all([
+      rm(file, { force: true }),
+      rm(`${file}.validity.json`, { force: true }),
+    ]).then(() => undefined);
   }
   async rawFrame(): Promise<Buffer> {
     const info = this.stream.getInfo();
@@ -235,7 +285,7 @@ export class CameraSession implements CalibrationVision {
     return this.perspective.assertCurrent();
   }
   async checkCorrection(correction: CameraCorrection, jpeg?: Buffer) {
-    this.validate(correction);
+    validateCameraCorrection(correction);
     const image = jpeg ?? (await this.rawFrame());
     const size = jpegSize(image);
     if (
@@ -265,7 +315,7 @@ export class CameraSession implements CalibrationVision {
     correction: CameraCorrection,
     options: { width: number; height: number },
   ) {
-    this.validate(correction);
+    validateCameraCorrection(correction);
     const jpeg = await this.rawFrame();
     const size = jpegSize(jpeg);
     if (
@@ -281,6 +331,59 @@ export class CameraSession implements CalibrationVision {
       rotation: correction.rotation,
       targetWidth: options.width,
       targetHeight: options.height,
+    });
+  }
+  /**
+   * Rectify one live frame with the correction and target saved for this
+   * camera. Camera-only previews use it; a Device screenshot still goes through
+   * snapshot() so it can validate its vision binding.
+   */
+  async rectifiedFrame(
+    jpeg: Buffer,
+    options: {
+      maxSide?: number;
+      maxPixels?: number;
+      sampling?: 'bilinear' | 'nearest';
+    } = {},
+  ): Promise<Buffer> {
+    const correction = this.correction;
+    const target = this.target;
+    if (!correction || !target)
+      throw new RobotArmError(
+        'MAPPING_REQUIRED',
+        'Save perspective correction before viewing the corrected preview',
+        409,
+      );
+    const size = jpegSize(jpeg);
+    if (
+      size.width !== correction.sourceWidth ||
+      size.height !== correction.sourceHeight
+    )
+      throw new RobotArmError(
+        'VISION_BINDING_CHANGED',
+        'Camera image dimensions changed; repeat correction',
+        409,
+      );
+    let width = target.width;
+    let height = target.height;
+    let scale = 1;
+    if (options.maxSide)
+      scale = Math.min(scale, options.maxSide / Math.max(width, height));
+    if (options.maxPixels)
+      scale = Math.min(scale, Math.sqrt(options.maxPixels / (width * height)));
+    if (scale < 1) {
+      width = Math.max(1, Math.round(width * scale));
+      height = Math.max(1, Math.round(height * scale));
+    }
+    return this.transformer.transform(jpeg, {
+      points: correction.points,
+      // The saved output target owns the preview rotation. Camera-only
+      // corrections store rotation 0 because the phone page already reports the
+      // orientation it is laid out for.
+      rotation: target.rotation,
+      targetWidth: width,
+      targetHeight: height,
+      sampling: options.sampling,
     });
   }
   async snapshot(options: CalibrationVisionOptions): Promise<VisionSnapshot> {
@@ -319,8 +422,14 @@ export class CameraSessionManager {
       process.env.MIDSCENE_ARM_DATA_DIR || '.midscene/arm-kit',
       'cameras',
     ),
+    streamStopTimeoutMs = DEFAULT_STOP_TIMEOUT_MS,
   ) {
-    this.streams = new CameraStreamManager(backend);
+    this.streams = new CameraStreamManager(
+      backend,
+      8,
+      DEFAULT_STARTUP_TIMEOUT_MS,
+      streamStopTimeoutMs,
+    );
   }
   private serialize<T>(
     cameraId: string,
@@ -338,6 +447,28 @@ export class CameraSessionManager {
       .catch(() => undefined);
     return pending;
   }
+  /** List responses need the saved target without opening the camera. */
+  async persistedPerspective(
+    cameraId: string,
+  ): Promise<StoredCameraPerspective | undefined> {
+    try {
+      return await readCameraPerspective(this.directory, cameraId);
+    } catch {
+      return undefined;
+    }
+  }
+  /** Clear a camera-only correction without starting the camera. */
+  clearPerspective(cameraId: string): Promise<void> {
+    // Deliberately outside serialize(): a camera that is still opening or
+    // closing must not delay a clear, nor block the next acquire behind it.
+    const session = this.sessions.get(cameraId);
+    if (session) return session.clearPerspective();
+    const file = cameraPerspectiveFile(this.directory, cameraId);
+    return Promise.all([
+      rm(file, { force: true }),
+      rm(`${file}.validity.json`, { force: true }),
+    ]).then(() => undefined);
+  }
   acquire(
     cameraId: string,
     ownerId: string,
@@ -349,6 +480,19 @@ export class CameraSessionManager {
       if (owners.has(ownerId))
         throw new Error('Device already owns this camera');
       let session = this.sessions.get(cameraId);
+      if (session) {
+        const state = session.stream.getInfo().state;
+        // A previous release may have timed out while the capture process was
+        // still shutting down. Never hand that dead session to a new viewer.
+        if (state === 'stopped' || state === 'failed') {
+          await this.streams.delete(session.stream.id).catch(() => undefined);
+          this.sessions.delete(cameraId);
+          for (const key of this.screenSessions.keys())
+            if (JSON.parse(key)[0] === cameraId)
+              this.screenSessions.delete(key);
+          session = undefined;
+        }
+      }
       if (!session) {
         session = await this.open(cameraId);
         if (this.closed) {
@@ -403,11 +547,17 @@ export class CameraSessionManager {
       const owners = this.owners.get(cameraId);
       if (!owners?.delete(ownerId) || owners.size) return;
       const session = this.sessions.get(cameraId);
-      if (session) await this.streams.delete(session.stream.id);
-      this.owners.delete(cameraId);
-      this.sessions.delete(cameraId);
-      for (const key of this.screenSessions.keys())
-        if (JSON.parse(key)[0] === cameraId) this.screenSessions.delete(key);
+      try {
+        if (session)
+          await this.streams.delete(session.stream.id).catch(() => undefined);
+      } finally {
+        // Clear the ownership records even when the capture process refused to
+        // exit, so the next acquire can open a fresh stream.
+        this.owners.delete(cameraId);
+        this.sessions.delete(cameraId);
+        for (const key of this.screenSessions.keys())
+          if (JSON.parse(key)[0] === cameraId) this.screenSessions.delete(key);
+      }
     });
   }
   close(): Promise<void> {

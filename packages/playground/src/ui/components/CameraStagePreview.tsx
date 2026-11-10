@@ -1,7 +1,13 @@
 import type { CameraCorrection } from '@midscene/arm-kit-shared/contracts';
 import { Button } from 'antd';
 import { Maximize, Minimize } from 'lucide-react';
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import {
+  type CSSProperties,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { useLanguage } from '../i18n';
 
 /** Keep the current stream attached while the operator inspects it full screen. */
@@ -9,7 +15,14 @@ export function CameraStagePreview({
   children,
   available = true,
   outline,
-}: { children: ReactNode; available?: boolean; outline?: CameraCorrection }) {
+  frameSize,
+}: {
+  children: ReactNode;
+  available?: boolean;
+  outline?: CameraCorrection;
+  /** Crop frame dimensions (a rectified screen) instead of the camera frame. */
+  frameSize?: { width: number; height: number };
+}) {
   const frame = useRef<HTMLDivElement>(null);
   const [native, setNative] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -49,10 +62,17 @@ export function CameraStagePreview({
       }
     } else setExpanded(true);
   };
+  const ratio = frameSize ? frameSize.width / frameSize.height : undefined;
+  const fittedStyle = ratio
+    ? ({
+        '--rv-preview-aspect': String(ratio),
+      } as CSSProperties)
+    : undefined;
   return (
     <div
       ref={frame}
-      className={`camera-stage-preview${expanded ? ' is-expanded' : ''}`}
+      className={`camera-stage-preview${expanded ? ' is-expanded' : ''}${ratio ? ' is-framed' : ''}`}
+      style={fittedStyle}
     >
       {children}
       {outline && available && (
@@ -71,9 +91,10 @@ export function CameraStagePreview({
             ]
               .map((p) => `${p.x},${p.y}`)
               .join(' ')}
-            fill="none"
-            stroke="#f43f5e"
-            strokeWidth="3"
+            fill="rgb(22 196 127 / 12%)"
+            stroke="#16c47f"
+            strokeWidth="4"
+            strokeLinejoin="round"
             vectorEffect="non-scaling-stroke"
           />
         </svg>

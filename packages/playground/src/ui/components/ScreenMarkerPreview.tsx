@@ -50,28 +50,37 @@ export function ScreenMarkerPreview({
   name,
   onDetected,
   openRequest = 0,
+  onOpenChange,
 }: {
   id: string;
   name: string;
   onDetected(result: CameraMarkerDetection): void;
   openRequest?: number;
+  onOpenChange?(open: boolean): void;
 }) {
   const [open, setOpen] = useState(false);
+  const changeOpen = (value: boolean) => {
+    setOpen(value);
+    onOpenChange?.(value);
+  };
   useEffect(() => {
-    if (openRequest > 0) setOpen(true);
+    if (openRequest > 0) {
+      setOpen(true);
+      onOpenChange?.(true);
+    }
   }, [openRequest]);
   const title =
     useLanguage() === 'zh' ? '识别屏幕标记' : 'Detect screen markers';
   return (
     <>
-      <Button icon={<ScanLine size={16} />} onClick={() => setOpen(true)}>
+      <Button icon={<ScanLine size={16} />} onClick={() => changeOpen(true)}>
         {title}
       </Button>
       {open && (
         <Modal
           open
           title={`${title} · ${name}`}
-          onCancel={() => setOpen(false)}
+          onCancel={() => changeOpen(false)}
           footer={null}
           width={900}
         >
@@ -81,7 +90,7 @@ export function ScreenMarkerPreview({
             name={name}
             onDetected={(result) => {
               onDetected(result);
-              setOpen(false);
+              changeOpen(false);
             }}
           />
         </Modal>

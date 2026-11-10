@@ -4,6 +4,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { type CameraEntry, useCameras } from '../src/ui/cameras';
 import { CameraRail } from '../src/ui/components/CameraRail';
+import { CameraStagePreview } from '../src/ui/components/CameraStagePreview';
 
 const globals = globalThis as typeof globalThis & { React?: typeof React };
 const previousReact = globals.React;
@@ -24,11 +25,11 @@ const camera: CameraEntry = {
 };
 
 test('thumbnail uses the running camera preview and stops showing it when stopped', () => {
-  const render = (entry: CameraEntry) =>
+  const render = (entry: CameraEntry, selectedId = 'other') =>
     renderToStaticMarkup(
       React.createElement(CameraRail, {
         entries: [entry],
-        selectedId: entry.id,
+        selectedId,
         onSelect: () => {},
       }),
     );
@@ -39,6 +40,11 @@ test('thumbnail uses the running camera preview and stops showing it when stoppe
   );
   assert.ok(running.includes('运行中'));
   assert.ok(!running.includes('未启动'));
+  // The stage owns the selected camera's stream; the rail must not open a
+  // second one.
+  const selected = render(camera, camera.id);
+  assert.ok(!selected.includes('/api/cameras/preview'));
+  assert.ok(selected.includes('运行中'));
   const stopped = render({ ...camera, stream: undefined });
   assert.ok(!stopped.includes('<img'));
   assert.ok(stopped.includes('未启动'));
@@ -65,4 +71,21 @@ test('a failed list refresh preserves the selected stream and reports the error'
   assert.equal(useCameras.getState().selectedId, null);
   assert.deepEqual(useCameras.getState().cameras, []);
   assert.equal(useCameras.getState().error, undefined);
+});
+
+test('a corrected preview is framed by the saved target instead of the camera frame', () => {
+  const render = (frameSize?: { width: number; height: number }) =>
+    renderToStaticMarkup(
+      React.createElement(
+        CameraStagePreview,
+        { frameSize },
+        React.createElement('img', { src: 'preview.jpg', alt: '' }),
+      ),
+    );
+  const corrected = render({ width: 1080, height: 2400 });
+  assert.ok(corrected.includes('camera-stage-preview is-framed'));
+  assert.ok(corrected.includes('--rv-preview-aspect:0.45'));
+  const raw = render();
+  assert.ok(!raw.includes('is-framed'));
+  assert.ok(!raw.includes('--rv-preview-aspect'));
 });

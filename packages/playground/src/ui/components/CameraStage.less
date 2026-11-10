@@ -69,6 +69,20 @@
   background: var(--rv-preview-bg);
 }
 
+/* A saved perspective result is framed by the phone screen, not the camera. */
+.camera-stage-preview.is-framed {
+  width: min(100%, calc(64vh * var(--rv-preview-aspect, 16 / 9)));
+  aspect-ratio: var(--rv-preview-aspect, 16 / 9);
+  border: 1px solid var(--rv-border, rgb(0 0 0 / 12%));
+}
+
+.camera-stage-preview.is-framed:fullscreen,
+.camera-stage-preview.is-framed.is-expanded {
+  width: 100vw;
+  height: 100vh;
+  aspect-ratio: auto;
+}
+
 .camera-stage-preview .stream-preview {
   display: block;
   width: 100%;

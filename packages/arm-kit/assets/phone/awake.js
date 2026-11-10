@@ -19,6 +19,16 @@
       ? document.visibilityState === 'visible'
       : !document.hidden;
 
+  // Some Android browsers open their own player for any video element, even an
+  // inline, muted one. On the calibration page that replaces the document with
+  // a player surface and forces landscape, so Android only gets the Screen Wake
+  // Lock API (secure contexts) and no video fallback. HarmonyOS browsers report
+  // "Android" for compatibility but keep inline playback, so they are exempt.
+  const userAgent = `${navigator?.userAgent ?? ''}`;
+  const videoFallback =
+    !/Android/i.test(userAgent) ||
+    /HarmonyOS|OpenHarmony|ArkWeb/i.test(userAgent);
+
   function pauseVideo() {
     try {
       video?.pause?.();
@@ -58,6 +68,7 @@
   }
 
   function playVideo() {
+    if (!videoFallback) return;
     if (!video) {
       video = document.createElement('video');
       video.src = VIDEO_SOURCE;

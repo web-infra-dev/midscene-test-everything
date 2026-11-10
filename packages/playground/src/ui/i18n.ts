@@ -27,6 +27,13 @@ export const usePreferences = create<{
 }));
 const messages = {
   correctionSaved: ['透视校正已保存', 'Perspective correction saved'],
+  correctionCleared: ['透视校正已清除', 'Perspective correction cleared'],
+  clearCorrection: ['清除透视校正', 'Clear perspective correction'],
+  clearCorrectionTitle: ['清除透视校正？', 'Clear perspective correction?'],
+  clearCorrectionBody: [
+    '将删除这台相机已保存的屏幕轮廓、输出尺寸和旋转。清除后预览回到原始画面，需要重新识别屏幕标记才能再次校正。',
+    'This removes the saved screen outline, output size and rotation for this camera. The preview returns to the original view, and you must detect the screen markers again to correct it.',
+  ],
   transferTitle: ['设备切换路径', 'Device transfer route'],
   transferIntro: [
     '配置从当前设备到另一台设备的安全通道。先完成两台设备的标定，再验证路径；验证过程不会移动机械臂。',
@@ -124,6 +131,13 @@ const messages = {
     '无法读取相机画面，请检查相机权限或刷新重试。',
     'Camera preview unavailable. Check camera access or refresh to retry.',
   ],
+  correctedPreviewFailed: [
+    '无法读取校正画面，请重新识别屏幕标记。',
+    'Corrected preview unavailable. Detect the screen markers again.',
+  ],
+  cameraView: ['画面类型', 'Camera view'],
+  rawView: ['原始画面', 'Original'],
+  correctedView: ['校正画面', 'Corrected'],
   playground: ['机械臂 Playground', 'Arm Playground'],
   preview: ['交互预览 · 未接入真实设备', 'UI preview · No physical device'],
   disconnected: ['未连接', 'Disconnected'],
