@@ -488,7 +488,7 @@ export class CalibrationWorkflow {
         wakeState: this.phone.update.wakeState,
         fullscreen: this.phone.update.fullscreen,
         pageId: this.phone.update.pageId,
-        receivedAt: this.phone.lastSeen,
+        receivedAt: this.phone.lastUpdateAt,
         updateSequence: this.phone.update.sequence,
         contact: Boolean(this.phone.update.contact),
         feedback: this.phone.update.stepFeedback,
@@ -644,6 +644,7 @@ export class CalibrationWorkflow {
         ? this.runtime.getSession(s.calibration.id).progress
         : undefined;
     const imageToWeb = progress?.guide && invertMapping(s.mapping!.webToImage);
+    const measurements = this.measurements?.snapshot();
     return {
       boundaryGuide:
         progress?.guide && imageToWeb
@@ -674,11 +675,11 @@ export class CalibrationWorkflow {
                     : s.stage,
       imageTrial: Boolean(s.imageTrial && s.stage === 'verifying'),
       capture: ['collecting', 'reprobing', 'interrupted'].includes(s.stage)
-        ? this.measurements?.snapshot().capture
+        ? measurements?.capture
         : undefined,
-      automaticPhase: this.measurements?.snapshot().automaticPhase,
+      automaticPhase: measurements?.automaticPhase,
       error: s.error,
-      anchors: this.measurements?.snapshot().anchors ?? [],
+      anchors: measurements?.anchors ?? [],
       target: s.target,
     };
   }
@@ -705,6 +706,7 @@ export class CalibrationWorkflow {
         explorationMode: s.explorationMode,
         phoneConnected: this.phone.connected(),
         phoneDiagnostics: this.phoneStatus().diagnostics,
+        phoneObservations: this.measurements?.phoneObservations,
         capture: snapshot?.capture,
         points: snapshot?.points,
         verificationAttempts: s.verificationAttempts,

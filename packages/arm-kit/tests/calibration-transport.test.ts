@@ -96,6 +96,15 @@ it('streams the initial snapshot, page handoff and disconnect over the real tran
       expect(host.service.phoneStatus().diagnostics?.updateSequence).toBe(2),
     );
     expect(host.service.markerObservation(request)).toBeUndefined();
+    // A repeated or superseded update must not replace the last observation or close the socket.
+    const receivedAt = host.service.phoneStatus().diagnostics?.receivedAt;
+    first.send(JSON.stringify({ ...report, sequence: 2, visible: false }));
+    first.send(JSON.stringify({ ...report, sequence: 1, visible: false }));
+    first.send('ping');
+    expect(String((await once(first, 'message'))[0])).toBe('pong');
+    expect(host.service.phoneStatus().diagnostics?.updateSequence).toBe(2);
+    expect(host.service.phoneStatus().diagnostics?.receivedAt).toBe(receivedAt);
+    expect(host.service.phoneStatus().state).toBe('connected');
     first.send(
       JSON.stringify({
         ...report,

@@ -36,6 +36,7 @@ export class PhoneSocketServer {
     }
     this.server.handleUpgrade(req, stream, head, (socket) => {
       let pageId: string | undefined;
+      let acceptedSequence = 0;
       let previous: string | undefined;
       const expire = setTimeout(
         () => socket.terminate(),
@@ -67,8 +68,18 @@ export class PhoneSocketServer {
             (pageId && (pageId !== update.pageId || this.active !== socket))
           )
             throw new Error('Invalid phone session');
+          // An already processed report on this live connection carries no new observation.
+          // Ignore it without refreshing freshness or disconnecting a healthy page.
+          if (
+            pageId &&
+            Number.isSafeInteger(update.sequence) &&
+            update.sequence > 0 &&
+            update.sequence <= acceptedSequence
+          )
+            return;
           this.service.receivePhone(update);
           pageId = update.pageId;
+          acceptedSequence = update.sequence;
           const old = this.active;
           this.active = socket;
           if (old && old !== socket) old.close(4410, 'Page replaced');

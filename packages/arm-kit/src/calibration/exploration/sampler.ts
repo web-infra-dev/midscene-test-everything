@@ -3,6 +3,7 @@
 // Phone transport, persistence and motion ownership
 // are supplied by the Arm Kit bridge; boundary verification remains in its workflow.
 import { randomUUID } from 'node:crypto';
+import { CALIBRATION_PHONE_POLICY } from '../../assisted-contracts.js';
 import { RobotArmError } from '../../contracts.js';
 import { contactPoint, flangePose } from '../../domain.js';
 import {
@@ -21,6 +22,7 @@ import {
   type AutoExplorationHost,
   type AutoExplorationOptions,
   type CalibrationSession,
+  type ProbePurpose,
   type ScreenCalibTarget,
   assertSameScreenPage,
 } from './types.js';
@@ -55,7 +57,6 @@ const TRAVERSE_CLEARANCE_MM = 10;
 const PRESS_MM = 0.5;
 const DWELL_MS = 250;
 const ACK_POLL_MS = 25;
-const ACK_POLL_ATTEMPTS = 100;
 const STANDARD_MOTION_FACTOR = 0.1;
 const FAST_MOTION_FACTOR = 0.25;
 const STANDARD_PRESS_FACTOR = 0.25;
@@ -274,11 +275,12 @@ export async function runAutoExploration(
       await save(host, session);
     }
   };
-  const prepareSample = async () => {
+  const observe = async (purpose: ProbePurpose, settleMs = searchWaitMs) => {
     await assertPage();
     const sampleId = `auto-${randomUUID()}`;
-    await host.screenCalib.setSample(page.id, sampleId);
-    for (let attempt = 0; attempt < ACK_POLL_ATTEMPTS; attempt++) {
+    const started = performance.now();
+    await host.screenCalib.setSample(page.id, sampleId, purpose, settleMs);
+    for (;;) {
       host.check();
       const current = await assertPage();
       const snapshot = current.sampleSnapshot;
@@ -298,17 +300,22 @@ export async function runAutoExploration(
           );
         return { sampleId, screen: snapshot.screen };
       }
+      if (
+        performance.now() - started >=
+        CALIBRATION_PHONE_POLICY.stepAcknowledgementMs
+      )
+        throw new RobotArmError(
+          'PHONE_STEP_TIMEOUT',
+          'Phone step acknowledgement timed out. Touch at this position is unknown.',
+          409,
+          {
+            sampleId,
+            purpose,
+            elapsedMs: Math.round(performance.now() - started),
+          },
+        );
       await delay(ACK_POLL_MS);
     }
-    throw new RobotArmError(
-      'SCREEN_PAGE_REQUIRED',
-      'The phone did not confirm the current touch state; refresh its calibration page and retry',
-      409,
-    );
-  };
-  const observe = async (waitMs = searchWaitMs) => {
-    if (waitMs) await host.hold(waitMs);
-    return prepareSample();
   };
   const touchAt = async (
     x: number,
@@ -363,7 +370,7 @@ export async function runAutoExploration(
     ) {
       if (attempt > 0) await moveTo({ x, y, z: zHigh });
       // A held pointer must release before another descent, even on retry.
-      if ((await observe()).screen)
+      if ((await observe('release')).screen)
         throw new RobotArmError(
           'TOUCH_NOT_RELEASED',
           'The touch did not release at the approach height',
@@ -414,6 +421,7 @@ export async function runAutoExploration(
         await preflight({ x, y, z }, `${label} search`);
         await moveTo({ x, y, z });
         const touched = await observe(
+          z === heights.at(-1) ? 'search-limit' : 'search',
           directZ !== undefined ? dwellMs : searchWaitMs,
         );
         reportProbe('search', z, touched);
@@ -439,7 +447,7 @@ export async function runAutoExploration(
           checkDepth(pressedZ);
           await preflight({ x, y, z: zHigh }, `${label} adaptive release`);
           await moveTo({ x, y, z: zHigh });
-          if ((await observe()).screen)
+          if ((await observe('release')).screen)
             throw new RobotArmError(
               'TOUCH_NOT_RELEASED',
               'Adaptive height probe did not release',
@@ -447,7 +455,7 @@ export async function runAutoExploration(
             );
           await preflight({ x, y, z: pressedZ }, `${label} adaptive press`);
           await moveTo({ x, y, z: pressedZ });
-          const confirmed = await observe(dwellMs);
+          const confirmed = await observe('press', dwellMs);
           if (!confirmed.screen)
             throw new RobotArmError(
               'TOUCH_CONTACT_LOST',
@@ -472,7 +480,7 @@ export async function runAutoExploration(
           ) {
             await preflight({ x, y, z: upZ }, `${label} release`);
             await moveTo({ x, y, z: upZ });
-            const snapshot = await observe();
+            const snapshot = await observe('release');
             reportProbe('release', upZ, snapshot);
             if (!snapshot.screen) return;
           }
@@ -495,7 +503,7 @@ export async function runAutoExploration(
           checkDepth(midZ);
           await preflight({ x, y, z: midZ }, `${label} refine`);
           await moveTo({ x, y, z: midZ });
-          const snapshot = await observe();
+          const snapshot = await observe('refine');
           reportProbe('refine', midZ, snapshot);
           pointerHeld = Boolean(snapshot.screen);
           heldZ = midZ;
@@ -522,7 +530,7 @@ export async function runAutoExploration(
           }
           await preflight(pressTarget, `${label} press`, pressOptions);
           await moveTo(pressTarget, pressOptions);
-          pressed = await observe(dwellMs);
+          pressed = await observe('press', dwellMs);
           reportProbe('press', pressedZ, pressed);
           if (pressed.screen) break;
         }
@@ -563,7 +571,7 @@ export async function runAutoExploration(
     message: 'Finding the screen',
   });
   // Require the current phone protocol before submitting the first motion.
-  await prepareSample();
+  await observe('preflight', 0);
   const startContact = contactPoint(start, tool.offsetMm);
   let first: TouchPoint | undefined;
   try {
@@ -683,7 +691,7 @@ export async function runAutoExploration(
     await moveTo(contact);
     // Change the sample ID only after stopping. The page snapshots the active
     // pointer under this new ID, so no moving coordinate is paired with an endpoint.
-    const { screen: touched } = await observe(dwellMs);
+    const { screen: touched } = await observe('slide', dwellMs);
     if (!touched)
       throw new RobotArmError(
         'TOUCH_CONTACT_LOST',

@@ -54,6 +54,7 @@ function openPhone(
     { callback: (event: unknown) => void; options: unknown }
   >();
   const microtasks: Array<() => void> = [];
+  const frames: Array<() => void> = [];
   const surfaceListeners = new Map<string, (event: unknown) => void>();
   const element = () => ({
     textContent: '',
@@ -111,7 +112,9 @@ function openPhone(
     WebSocket: Socket,
     crypto: { randomUUID: () => 'test' },
     performance,
-    requestAnimationFrame() {},
+    requestAnimationFrame(callback: () => void) {
+      frames.push(callback);
+    },
     queueMicrotask(callback: () => void) {
       microtasks.push(callback);
     },
@@ -228,6 +231,9 @@ function openPhone(
     documentListeners,
     flushEvents: () => {
       while (microtasks.length) microtasks.shift()!();
+    },
+    paint: () => {
+      for (let i = 0; i < 2; i++) for (const frame of frames.splice(0)) frame();
     },
     elements,
     receive: (value: unknown) =>
@@ -567,6 +573,76 @@ test('retains ordered touch events after release and bounds history without crea
   expect(phone.last().touchEvents!.at(-1)!.kind).toBe('pointercancel');
   expect(phone.last().contact).toBeUndefined();
 });
+
+test('retains a complete touch between receiving a stationary request and painting its first reply', () => {
+  const phone = openPhone(699, 0, 0);
+  const target = { id: 'grid-1', point: { x: 100, y: 130 } };
+  const step = { id: 'probe', phase: 'prepare', contactMode: 'current' };
+  const capture = { target, index: 1, total: 3, phase: 'waiting', step };
+  phone.receive({ view: 'collect', anchors: [], capture });
+  const event = {
+    pointerId: 4,
+    pointerType: 'touch',
+    clientX: 100,
+    clientY: 130,
+    preventDefault() {},
+  };
+  phone.surfaceListeners.get('pointerdown')!(event);
+  phone.surfaceListeners.get('pointerup')!(event);
+  phone.paint();
+  expect(phone.last().stepFeedback).toMatchObject({
+    outcome: 'ready',
+    releasedBeforeAck: true,
+  });
+  phone.receive({
+    view: 'collect',
+    anchors: [],
+    capture: { ...capture, step: { ...step, phase: 'result' } },
+  });
+  phone.paint();
+  expect(phone.last().stepFeedback?.releasedBeforeAck).toBeUndefined();
+});
+
+test.each(['pointercancel', 'lostpointercapture', 'pointerup'])(
+  'reports %s with its actual stationary probe outcome',
+  (ending) => {
+    const phone = openPhone(699, 0, 0);
+    const target = { id: 'grid-1', point: { x: 100, y: 130 } };
+    const capture = { target, index: 1, total: 3, phase: 'waiting' };
+    const step = { id: 'probe', phase: 'prepare', contactMode: 'current' };
+    const event = {
+      pointerId: 4,
+      pointerType: 'touch',
+      clientX: 100,
+      clientY: 130,
+      preventDefault() {},
+    };
+    phone.receive({
+      view: 'collect',
+      anchors: [],
+      capture: { ...capture, step },
+    });
+    phone.paint();
+    expect(phone.last().stepFeedback?.outcome).toBe('ready');
+    phone.surfaceListeners.get('pointerdown')!(event);
+    expect(phone.last().stepFeedback?.outcome).toBe('touched');
+    phone.surfaceListeners.get(ending)!(event);
+    phone.surfaceListeners.get('lostpointercapture')!(event);
+    phone.receive({
+      view: 'collect',
+      anchors: [],
+      capture: { ...capture, step: { ...step, phase: 'result' } },
+    });
+    phone.paint();
+    if (ending === 'pointerup')
+      expect(phone.last().stepFeedback?.outcome).toBe('no_touch');
+    else
+      expect(phone.last().stepFeedback).toMatchObject({
+        outcome: 'unknown',
+        reason: 'pointer_cancelled',
+      });
+  },
+);
 
 test('captures Touch events outside the surface without inventing a Pointer contact', () => {
   const phone = openPhone(699, 0, 0);

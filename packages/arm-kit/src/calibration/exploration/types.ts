@@ -68,6 +68,14 @@ export interface AutoCalibrationProgress {
   probeZMm?: number;
   touching?: boolean;
 }
+export type ProbePurpose =
+  | 'preflight'
+  | 'release'
+  | 'search'
+  | 'search-limit'
+  | 'refine'
+  | 'press'
+  | 'slide';
 export interface CollectedSample {
   robot: { x: number; y: number; z: number };
   pressedZMm: number;
@@ -115,7 +123,6 @@ export interface AutoExplorationHost {
     steps: Array<{ name: string; pose: CartesianPose; options: MotionOptions }>,
     ctx: ApplicationContext,
   ): Promise<void>;
-  hold(ms: number): Promise<void>;
   check(): void;
   stop?(): Promise<void>;
   progress?(session: CalibrationSession): void;
@@ -131,7 +138,12 @@ export interface AutoExplorationHost {
       target?: ApplicationContext['screen']['visionTarget'],
     ): Promise<ScreenCalibSessionSummary>;
     session(id: string): Promise<ScreenCalibSessionSummary>;
-    setSample(id: string, sampleId: string): Promise<void>;
+    setSample(
+      id: string,
+      sampleId: string,
+      purpose: ProbePurpose,
+      settleMs: number,
+    ): Promise<void>;
     targets(
       id: string,
     ): Promise<{ mappingVersion: number; targets: ScreenCalibTarget[] }>;

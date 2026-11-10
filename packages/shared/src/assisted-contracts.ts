@@ -19,6 +19,7 @@ export const CALIBRATION_CLICK_REQUIRED = 15;
 export const CALIBRATION_PHONE_PATH = '/phone-calibration';
 export const CALIBRATION_PHONE_POLICY = {
   heartbeatMs: 750,
+  stepAcknowledgementMs: 5000,
   measurementFreshMs: 10000,
   displayFreshMs: 10000,
 } as const;
@@ -250,7 +251,9 @@ export interface CalibrationPageUpdate {
     outcome: 'ready' | 'no_touch' | 'touched' | 'unknown';
     /** Echoed only when the phone supports a fresh held-contact snapshot. */
     contactMode?: 'current';
-    reason?: 'multiple_contacts';
+    /** A pointer ended after this request arrived but before the browser's first painted reading. */
+    releasedBeforeAck?: boolean;
+    reason?: 'multiple_contacts' | 'pointer_cancelled';
     point?: WebPoint;
   };
   captureAck?: string;

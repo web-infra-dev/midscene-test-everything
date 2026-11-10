@@ -135,6 +135,18 @@ export function mountCalibrationPhonePage(
     ],
   };
   const label = (key: keyof typeof text) => text[key][zh ? 0 : 1];
+  const phoneErrorsZh: Record<string, string> = {
+    'No touch before the safe descent limit; collected points are retained':
+      '安全下探范围内仍未接触屏幕，采样已停止。',
+    'Touch recovery budget exhausted; collected points are retained':
+      '本轮补探次数已用完，采样已停止。',
+    'Phone step acknowledgement timed out. Touch at this position is unknown.':
+      '手机未在时限内确认本步，当前位置的接触状态未知。请检查标定页和连接后重试。',
+    'The phone cancelled the active pointer. Touch at this position is unknown.':
+      '手机浏览器取消了当前触点，当前位置的接触状态未知。',
+    'Phone contact changed while the robot was stationary. This position could not be measured.':
+      '机械臂静止期间，手机回报的触点未稳定，本次位置未计入测量。',
+  };
   const element = (id: string) => {
     const value = document.getElementById(id);
     if (!value) throw new Error(`Missing calibration element: ${id}`);
@@ -212,13 +224,16 @@ export function mountCalibrationPhonePage(
   let activePointer: number | undefined;
   const pointers = new Map<number, { id: string; point: WebPoint }>();
   let ambiguousPointers = false;
-  let probeUnknown: 'multiple_contacts' | undefined;
+  let probeUnknown: NonNullable<
+    CalibrationPageUpdate['stepFeedback']
+  >['reason'];
   let downAt = 0;
   let travelPx = 0;
   let contact: WebPoint | undefined;
   let contactId: string | undefined;
   let contactStart: CalibrationPageUpdate['contactStart'];
   let phoneStep: NonNullable<CalibrationPageReply['capture']>['step'];
+  let releasedBeforeAck = false;
   let motionRevision = 0;
   let stabilityOrigin: WebPoint;
   let downPoint: WebPoint;
@@ -633,20 +648,14 @@ export function mountCalibrationPhonePage(
       ? next.capture
       : undefined;
     renderCaptureGrid(capture);
+    const error =
+      next.error === 'No touch within the fast local recovery range'
+        ? label('recoveryFailed')
+        : next.error && zh
+          ? (phoneErrorsZh[next.error] ?? next.error)
+          : next.error;
     message.textContent =
-      (next.error ===
-      'No touch before the safe descent limit; collected points are retained'
-        ? zh
-          ? '安全下探范围内仍未接触屏幕，采样已停止。'
-          : next.error
-        : next.error ===
-            'Touch recovery budget exhausted; collected points are retained'
-          ? zh
-            ? '本轮补探次数已用完，采样已停止。'
-            : next.error
-          : next.error === 'No touch within the fast local recovery range'
-            ? label('recoveryFailed')
-            : next.error) ||
+      error ||
       label(
         capture?.phase === 'captured'
           ? 'recorded'
@@ -663,7 +672,7 @@ export function mountCalibrationPhonePage(
     connection.textContent = capture
       ? `${capture.mode === 'slide' ? (zh ? '快速' : 'Fast') : capture.mode === 'fast' ? (zh ? '快速探测' : 'Fast probing') : (zh ? '普通' : 'Regular')} · ${next.automaticPhase === 'local' ? (zh ? '方向探点' : 'Direction probe') : zh ? '网格点' : 'Grid point'} ${capture.index} / ${capture.total}`
       : next.view === 'capture-failed'
-        ? (next.error ?? '')
+        ? (error ?? '')
         : '';
     if (next.view === 'capture-failed') message.textContent = label('retry');
     const visibleTarget =
@@ -691,7 +700,10 @@ export function mountCalibrationPhonePage(
       requestedStep?.phase === 'prepare' ||
       requestedStep?.contactMode === 'current' ||
       (requestedStep && phoneStep?.id === requestedStep.id);
-    if (stepChanged || !requestedStep) phoneStep = undefined;
+    if (stepChanged || !requestedStep) {
+      phoneStep = undefined;
+      releasedBeforeAck = false;
+    }
     const probe = capture?.probe?.id;
     if (
       stepChanged ||
@@ -964,6 +976,7 @@ export function mountCalibrationPhonePage(
         phoneStep && state?.capture?.step?.id === phoneStep.id
           ? {
               ...phoneStep,
+              releasedBeforeAck: releasedBeforeAck || undefined,
               outcome: probeUnknown
                 ? 'unknown'
                 : stepPoint
@@ -1328,6 +1341,12 @@ export function mountCalibrationPhonePage(
     e.preventDefault();
     showMappingTouch(point, 'up');
     if (
+      state?.view === 'collect' &&
+      state.capture?.step?.contactMode === 'current' &&
+      !phoneStep
+    )
+      releasedBeforeAck = true;
+    if (
       contact &&
       downTarget &&
       state?.view === 'verify' &&
@@ -1364,6 +1383,7 @@ export function mountCalibrationPhonePage(
         void send();
         return;
       }
+      if (state?.view === 'collect') probeUnknown ??= 'pointer_cancelled';
     } else pointers.clear();
     retainRemainingPointer();
     downTarget = undefined;

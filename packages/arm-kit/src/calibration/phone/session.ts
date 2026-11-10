@@ -100,6 +100,7 @@ export class CalibrationPhoneSession {
   private sequence = -1;
   private pageLayoutRevision = 0;
   lastSeen = 0;
+  lastUpdateAt = 0;
   update?: CalibrationPageUpdate;
   receive(input: CalibrationPageUpdate, now = Date.now()): boolean {
     if (
@@ -197,8 +198,10 @@ export class CalibrationPhoneSession {
         !['prepare', 'result'].includes(r.phase) ||
         !['ready', 'no_touch', 'touched', 'unknown'].includes(r.outcome) ||
         (r.contactMode !== undefined && r.contactMode !== 'current') ||
+        (r.releasedBeforeAck !== undefined &&
+          typeof r.releasedBeforeAck !== 'boolean') ||
         (r.outcome === 'unknown'
-          ? r.reason !== 'multiple_contacts'
+          ? r.reason !== 'multiple_contacts' && r.reason !== 'pointer_cancelled'
           : r.reason !== undefined) ||
         (r.outcome === 'ready' && r.phase !== 'prepare') ||
         (r.outcome === 'no_touch' && r.phase !== 'result') ||
@@ -270,6 +273,7 @@ export class CalibrationPhoneSession {
     this.pageId = input.pageId;
     this.sequence = input.sequence;
     this.lastSeen = now;
+    this.lastUpdateAt = now;
     this.update = structuredClone(input);
     if (previousLayout)
       this.update.layout.revision = previousLayout.revision + (changed ? 1 : 0);

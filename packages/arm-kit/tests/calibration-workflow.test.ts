@@ -477,6 +477,67 @@ describe('phone-assisted calibration coordinator', () => {
       await f.dispose();
     }
   });
+  it('audits a missing result on a live phone and holds the last probe position', async () => {
+    const f = await setup();
+    const audit = rstest.spyOn(f.auditStore, 'record');
+    const timer = setInterval(() => {
+      const capture = f.service.phoneView().capture;
+      const step = capture?.step;
+      void f.send({
+        targetReady: capture?.target.id,
+        stepFeedback:
+          step && (f.adapter.movements.length === 0 || step.phase === 'prepare')
+            ? {
+                ...step,
+                outcome: step.phase === 'prepare' ? 'ready' : 'no_touch',
+              }
+            : undefined,
+      });
+    }, 30);
+    try {
+      await f.recordReference();
+      await f.service.command(f.state.id, 'start-fast', true);
+      await rstest.waitFor(
+        () =>
+          expect(f.service.status()).toMatchObject({
+            stage: 'interrupted',
+            errorDetails: { code: 'PHONE_STEP_TIMEOUT' },
+          }),
+        { timeout: 10000 },
+      );
+      expect(f.adapter.movements).toHaveLength(1);
+      expect(audit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          outcome: 'failed',
+          errorDetails: expect.objectContaining({
+            code: 'PHONE_STEP_TIMEOUT',
+            details: expect.objectContaining({
+              phase: 'result',
+              purpose: 'search',
+            }),
+          }),
+          detail: expect.objectContaining({
+            phoneConnected: true,
+            phoneObservations: expect.arrayContaining([
+              expect.objectContaining({
+                purpose: 'search',
+                outcome: 'PHONE_STEP_TIMEOUT',
+                replies: [
+                  expect.objectContaining({
+                    phase: 'prepare',
+                    outcome: 'ready',
+                  }),
+                ],
+              }),
+            ]),
+          }),
+        }),
+      );
+    } finally {
+      clearInterval(timer);
+      await f.dispose();
+    }
+  }, 15000);
   it.each(['stop', 'unreachable'] as const)(
     'leaves the failed probe stationary when its reference return is blocked (%s)',
     async (reason) => {

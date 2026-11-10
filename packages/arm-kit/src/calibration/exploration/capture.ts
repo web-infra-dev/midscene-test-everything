@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import type {
-  AutomaticCaptureHost,
-  AutomaticExplorationMode,
-  CalibrationPageLayout,
-  CalibrationPageUpdate,
-  CalibrationPointProgress,
-  CapturedCalibrationPoint,
-  WebPoint,
+import {
+  type AutomaticCaptureHost,
+  type AutomaticExplorationMode,
+  CALIBRATION_PHONE_POLICY,
+  type CalibrationPageLayout,
+  type CalibrationPageUpdate,
+  type CalibrationPointProgress,
+  type CapturedCalibrationPoint,
+  type WebPoint,
 } from '../../assisted-contracts.js';
 import {
   type CartesianPose,
@@ -15,8 +16,12 @@ import {
   type Vector3,
 } from '../../contracts.js';
 import type { ScreenProfile, ToolProfile } from '../../contracts.js';
-import { flangePose } from '../../domain.js';
+import { contactPoint, flangePose } from '../../domain.js';
 import { invertMapping, project } from '../phone/geometry.js';
+import {
+  type PhoneProbeEvidence,
+  StationaryPhoneObservation,
+} from './phone-observation.js';
 import { runAutoExploration } from './sampler.js';
 import { explorationTargets, mappedExplorationTargets } from './targets.js';
 import type {
@@ -24,8 +29,6 @@ import type {
   ScreenCalibSessionSummary,
   CalibrationSession as UpstreamSession,
 } from './types.js';
-
-const PHONE_REPLY_TIMEOUT_MS = 10000;
 
 const fail = (message: string): never => {
   throw new RobotArmError('AUTOMATIC_CAPTURE_FAILED', message, 409);
@@ -40,7 +43,13 @@ export class AutomaticCapture {
   }
   reference?: CartesianPose;
   private target?: { id: string; point: WebPoint };
-  private step?: CalibrationPointProgress['step'];
+  private observation?: StationaryPhoneObservation;
+  private readonly recentObservations: PhoneProbeEvidence[] = [];
+  get phoneObservations() {
+    return this.observation
+      ? [...this.recentObservations.slice(-23), this.observation.diagnostics()]
+      : this.recentObservations;
+  }
   private captured = false;
   private latest?: CalibrationPageUpdate;
   private lastSeen = 0;
@@ -96,7 +105,7 @@ export class AutomaticCapture {
                 : ('waiting' as const),
             progress: this.captured ? 1 : 0,
             readings: this.captured ? 1 : 0,
-            step: this.step,
+            step: this.observation?.step,
             probe: this.challenge
               ? { id: this.challenge, contactId: '' }
               : undefined,
@@ -110,16 +119,22 @@ export class AutomaticCapture {
   }
   receive(update: CalibrationPageUpdate) {
     if (this.pageId && this.pageId !== update.pageId) this.resetStability();
+    if (
+      this.latest?.pageId === update.pageId &&
+      update.sequence <= this.latest.sequence
+    )
+      return;
     this.pageId = update.pageId;
     this.latest = structuredClone(update);
     this.lastSeen = performance.now();
+    this.observation?.receive(update);
     if (
       update.contact ||
       (update.contactStart && update.contactStart.targetId === this.target?.id)
     )
       this.contactSeen = true;
     if (
-      update.stepFeedback?.id === this.step?.id &&
+      update.stepFeedback?.id === this.observation?.step?.id &&
       update.stepFeedback?.outcome === 'touched'
     )
       this.contactSeen = true;
@@ -129,25 +144,14 @@ export class AutomaticCapture {
     if (this.invalid) fail(this.invalid);
     if (
       !this.latest?.visible ||
-      performance.now() - this.lastSeen > PHONE_REPLY_TIMEOUT_MS
+      performance.now() - this.lastSeen >
+        CALIBRATION_PHONE_POLICY.measurementFreshMs
     )
-      fail(
+      throw new RobotArmError(
+        'PHONE_DISCONNECTED',
         'Fresh visible phone feedback is required; automatic collection stopped',
+        409,
       );
-  }
-  private async wait(
-    host: AutomaticCaptureHost,
-    test: () => boolean,
-    timeout = PHONE_REPLY_TIMEOUT_MS as number,
-  ) {
-    const start = performance.now();
-    while (!test()) {
-      this.check(host);
-      if (performance.now() - start > timeout)
-        fail('Phone step acknowledgement timed out; result is unknown');
-      await delay(20, undefined, { signal: host.signal });
-    }
-    this.check(host);
   }
   private async move(
     host: AutomaticCaptureHost,
@@ -175,6 +179,8 @@ export class AutomaticCapture {
     this.localPoints.length = 0;
     this.invalid = undefined;
     this.upstreamResult = undefined;
+    this.recentObservations.length = 0;
+    let requestedTipZMm = contactPoint(home, this.offset).z;
     this.target = {
       id: randomUUID(),
       point: { x: this.layout.width / 2, y: this.layout.height / 2 },
@@ -185,8 +191,15 @@ export class AutomaticCapture {
     const first = performance.now();
     while (!this.latest) {
       host.check();
-      if (performance.now() - first > PHONE_REPLY_TIMEOUT_MS)
-        fail('Phone feedback is unavailable');
+      if (
+        performance.now() - first >
+        CALIBRATION_PHONE_POLICY.measurementFreshMs
+      )
+        throw new RobotArmError(
+          'PHONE_DISCONNECTED',
+          'Phone feedback is unavailable',
+          409,
+        );
       await delay(20, undefined, { signal: host.signal });
     }
     const imageToWeb = invertMapping(config.webToImage);
@@ -280,6 +293,7 @@ export class AutomaticCapture {
           acceleration,
           timeoutMs: 10000,
         });
+        requestedTipZMm = contactPoint(pose, this.offset).z;
       },
       // The runtime move already performs adapter preflight and measured stable completion
       // under the same motion lease; do not duplicate these network round trips.
@@ -287,10 +301,6 @@ export class AutomaticCapture {
         this.check(host);
       },
       stable: async () => {
-        this.check(host);
-      },
-      hold: async (ms) => {
-        await delay(ms, undefined, { signal: host.signal });
         this.check(host);
       },
       stop: host.stop,
@@ -323,41 +333,38 @@ export class AutomaticCapture {
         findMappedSession: async () => page(),
         session: async () => page(),
         targets: async () => ({ mappingVersion, targets }),
-        setSample: async (_id, id) => {
+        setSample: async (_id, id, purpose, settleMs) => {
           snapshot = undefined;
           sampleId = id;
-          this.step = { id, phase: 'result', contactMode: 'current' };
-          const sequence = this.latest!.sequence;
-          this.changed();
-          await this.wait(
-            host,
-            () => {
-              const reply = this.latest?.stepFeedback;
-              return Boolean(
-                this.latest &&
-                  this.latest.sequence > sequence &&
-                  this.latest.targetReady === this.target?.id &&
-                  reply?.id === id &&
-                  reply.phase === 'result' &&
-                  reply.contactMode === 'current',
-              );
-            },
-            2500,
+          const observation = new StationaryPhoneObservation(
+            id,
+            this.target!.id,
+            purpose,
+            requestedTipZMm,
+            this.latest!.sequence,
+            this.lastSeen,
           );
-          const reply = this.latest!.stepFeedback!;
-          snapshot = {
-            sampleId: id,
-            mappingVersion,
-            pointerCount:
-              reply.outcome === 'unknown'
-                ? 2
-                : reply.outcome === 'touched'
-                  ? 1
-                  : 0,
-            screen: reply.point
-              ? project(config.webToImage, reply.point)
-              : null,
-          };
+          this.observation = observation;
+          try {
+            const point = await observation.measure(
+              { signal: host.signal, check: () => this.check(host) },
+              this.changed,
+              Math.min(this.layout.width, this.layout.height),
+              settleMs,
+            );
+            snapshot = {
+              sampleId: id,
+              mappingVersion,
+              pointerCount: point ? 1 : 0,
+              screen: point ? project(config.webToImage, point) : null,
+            };
+          } finally {
+            this.recentObservations.push(observation.diagnostics());
+            if (this.recentObservations.length > 24)
+              this.recentObservations.shift();
+            this.observation = undefined;
+            this.changed();
+          }
         },
       },
     };

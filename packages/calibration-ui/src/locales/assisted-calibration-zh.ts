@@ -1,4 +1,10 @@
 export const assistedCalibrationZh: Record<string, string> = {
+  'Phone step acknowledgement timed out. Touch at this position is unknown.':
+    '手机未在时限内确认本步，当前位置的接触状态未知。请检查标定页和连接后重试。',
+  'The phone cancelled the active pointer. Touch at this position is unknown.':
+    '手机浏览器取消了当前触点，当前位置的接触状态未知。',
+  'Phone contact changed while the robot was stationary. This position could not be measured.':
+    '机械臂静止期间，手机回报的触点未稳定，本次位置未计入测量。',
   'Calibration positions': '标定位置',
   'Safe Parking Position': '安全避让位',
   '{0} · outside frame': '{0} · 画面外',

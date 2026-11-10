@@ -17,6 +17,8 @@ it.each([
   'slide',
   'page-reload',
   'missing-ack',
+  'slow-ack',
+  'transient-touch',
   'ambiguous',
   'cancel',
 ] as const)(
@@ -43,6 +45,8 @@ it.each([
     let current = pose(50, -50, 40);
     let sequence = 0;
     let touching = false;
+    const started = performance.now();
+    let movesAtTransient: number | undefined;
     const motions: Array<{ z: number; speedRatio: number }> = [];
     let collector: AutomaticCapture;
     const send = () => {
@@ -64,7 +68,9 @@ it.each([
         contact,
         targetReady: capture?.target.id,
         stepFeedback:
-          step && mode !== 'missing-ack'
+          step &&
+          mode !== 'missing-ack' &&
+          !(mode === 'slow-ack' && performance.now() - started < 3000)
             ? {
                 ...step,
                 outcome:
@@ -72,11 +78,26 @@ it.each([
                     ? 'unknown'
                     : touching
                       ? 'touched'
-                      : 'no_touch',
+                      : step.phase === 'prepare'
+                        ? 'ready'
+                        : 'no_touch',
                 point: touching ? point : undefined,
               }
             : undefined,
       };
+      if (
+        mode === 'transient-touch' &&
+        movesAtTransient === undefined &&
+        step?.phase === 'result' &&
+        collector.phoneObservations.at(-1)?.purpose === 'search'
+      ) {
+        movesAtTransient = motions.length;
+        collector.receive({
+          ...update,
+          stepFeedback: { ...step, outcome: 'touched', point },
+        });
+        update.sequence = ++sequence;
+      }
       collector.receive(update);
     };
     collector = new AutomaticCapture(
@@ -106,6 +127,10 @@ it.each([
             touching = current.positionMm.z <= (touching ? 32 : 30);
             if (mode === 'cancel' && motions.length === 2)
               abort.abort(new Error('operator stopped'));
+            if (mode === 'slow-ack') {
+              expect(performance.now() - started).toBeGreaterThanOrEqual(3000);
+              abort.abort(new Error('first move after delayed confirmation'));
+            }
             send();
           },
         },
@@ -154,6 +179,14 @@ it.each([
         expect(collector.upstreamResult).toBeUndefined();
         if (mode === 'missing-ack' || mode === 'ambiguous')
           expect(motions).toHaveLength(0);
+        if (mode === 'missing-ack')
+          expect(error).toMatchObject({ code: 'PHONE_STEP_TIMEOUT' });
+        if (mode === 'transient-touch') {
+          expect(error).toMatchObject({ code: 'PHONE_TOUCH_UNSTABLE' });
+          expect(movesAtTransient).toBeGreaterThan(0);
+          expect(motions).toHaveLength(movesAtTransient!);
+        }
+        if (mode === 'slow-ack') expect(motions).toHaveLength(1);
       }
     } finally {
       clearInterval(timer);

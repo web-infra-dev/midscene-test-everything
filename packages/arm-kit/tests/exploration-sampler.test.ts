@@ -308,7 +308,6 @@ describe('first-time automatic exploration', () => {
         },
         stable: async () => undefined,
         stationaryPose: async () => pose(100, -50, startZ),
-        hold: async () => undefined,
         contactAction: async () => {
           throw new Error('unused');
         },
@@ -358,8 +357,8 @@ describe('first-time automatic exploration', () => {
         const expected: Record<string, string> = {
           'release-missing': 'No confirmed release',
           'repress-missing': 'refined press',
-          'snapshot-missing': 'confirm the current touch state',
-          'snapshot-stale': 'confirm the current touch state',
+          'snapshot-missing': 'Phone step acknowledgement timed out',
+          'snapshot-stale': 'Phone step acknowledgement timed out',
           'safety-floor': 'safety floor',
           'fast-no-touch': 'fast local height-search budget',
           'fast-deep-recovery': 'Deep recovery collected',
