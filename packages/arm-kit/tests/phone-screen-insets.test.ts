@@ -319,6 +319,21 @@ test('iOS standalone follows the viewport when screen.orientation is stale', () 
   expect(phone.last().layout.topInset).toBeUndefined();
 });
 
+test('Android reports the displayed view and visibility when switching away and back', () => {
+  const phone = openPhone(800, 0, 0, false);
+  phone.receive({ view: 'touch-preview', anchors: [] });
+  expect(phone.last()).toMatchObject({ view: 'touch-preview', visible: true });
+  const change = phone.documentListeners.get('visibilitychange')!;
+  phone.scope.document.hidden = true;
+  change.callback({});
+  expect(phone.last()).toMatchObject({ view: 'touch-preview', visible: false });
+  phone.scope.document.hidden = false;
+  change.callback({});
+  expect(phone.last()).toMatchObject({ view: 'touch-preview', visible: true });
+  phone.receive({ view: 'waiting', anchors: [] });
+  expect(phone.last()).toMatchObject({ view: 'waiting', visible: true });
+});
+
 test('Android waits for the phone button before requesting browser fullscreen', async () => {
   const phone = openPhone(800, 0, 0, false, true);
   phone.receive({ view: 'markers', markerRequest: 'markers-1' });

@@ -23,7 +23,7 @@ import { jpegSize } from './jpeg-size.js';
 import { PerspectiveMonitor } from './perspective-monitor.js';
 import { PerspectiveTransformer } from './perspective-transformer.js';
 import { checkPerspectiveValidity } from './perspective-validity.js';
-import type { CameraBackend, CameraDevice } from './types.js';
+import type { CameraBackend, CameraDevice, CameraFrame } from './types.js';
 import { validateQuad } from './vision-geometry.js';
 import type { PerspectiveTarget } from './vision-types.js';
 
@@ -119,10 +119,13 @@ export class CameraSession implements CalibrationVision {
   private target?: PerspectiveTarget;
   private writeChain = Promise.resolve();
   private readonly transformer = new PerspectiveTransformer();
+  /** Supplied by the calibration host for this screen while its phone is paired. */
+  referenceFrame?: () => CameraFrame | undefined;
   private readonly perspective = new PerspectiveMonitor({
     file: () => `${this.correctionFile}.validity.json`,
     key: () => this.fingerprint(0, 0),
     correction: () => this.getCorrection(),
+    referenceFrame: () => this.referenceFrame?.(),
     frame: async () => {
       if (this.stream.getInfo().state !== 'running')
         throw new RobotArmError('VISION_UNAVAILABLE', 'Camera is not running');

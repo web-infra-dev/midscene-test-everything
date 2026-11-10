@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { AssistedCalibrationInput } from '../assisted-contracts.js';
+import {
+  type AssistedCalibrationInput,
+  CALIBRATION_PHONE_POLICY,
+  type CalibrationPageUpdate,
+} from '../assisted-contracts.js';
 import { screenPoseMm } from '../calibration/geometry.js';
 import {
   calibrationPhonePage,
@@ -15,6 +19,7 @@ import {
   recognizeScreenMarkers,
 } from '../camera/calibration-markers.js';
 import type { CameraSession } from '../camera/session.js';
+import type { CameraFrame } from '../camera/types.js';
 import { calibrationAccepted } from '../contracts.js';
 import {
   type CameraCorrection,
@@ -30,6 +35,8 @@ import { createCalibrationHandler } from './handler.js';
 
 import { PhoneSocketServer } from './phone-socket.js';
 import { calibrationPreviewPositions } from './preview-positions.js';
+
+const REFERENCE_REPORT_MAX_AGE_MS = 3 * CALIBRATION_PHONE_POLICY.heartbeatMs;
 
 export interface CalibrationHostOptions {
   arm: ArmController;
@@ -60,6 +67,7 @@ export class CalibrationHost {
       vision: options.camera,
       phoneLinks: options.phoneLinks,
       markerCodes: options.markerCodes,
+      onPhoneObservation: (update) => this.observePhone(update),
       referencePosition: () => {
         const store = controllerRuntime(options.arm).profileStore;
         const binding = store.deviceBinding(options.deviceId);
@@ -98,11 +106,62 @@ export class CalibrationHost {
         );
       },
     });
+    options.camera.referenceFrame = this.referenceFrame;
     this.phoneSocket = new PhoneSocketServer(this.service);
     this.control = createCalibrationHandler({
       service: this.service,
       basePath: this.basePath,
     });
+  }
+  private reference?: {
+    key: string;
+    since: number;
+    seen: number;
+    frame?: CameraFrame;
+  };
+  private readonly referenceFrame = () => this.activeReference()?.frame;
+  private activeReference() {
+    const ref = this.reference;
+    if (
+      ref &&
+      Date.now() - ref.seen < REFERENCE_REPORT_MAX_AGE_MS &&
+      this.service.phoneView().view !== 'waiting'
+    )
+      return ref;
+  }
+  private observePhone(update?: CalibrationPageUpdate) {
+    const view = this.service.phoneView();
+    // Older phone pages can still confirm the marker surface after paint.
+    const shown =
+      update?.view ?? (update?.markersPainted ? 'markers' : undefined);
+    if (
+      !update ||
+      view.view === 'waiting' ||
+      shown !== view.view ||
+      (shown === 'markers' &&
+        (!update.markersPainted || update.markerRequest !== view.markerRequest))
+    ) {
+      this.reference = undefined;
+      return;
+    }
+    const now = Date.now();
+    const key = JSON.stringify([
+      update.pageId,
+      update.layout.revision,
+      shown,
+      update.markerRequest,
+    ]);
+    if (
+      !this.reference ||
+      this.reference.key !== key ||
+      now - this.reference.seen >= REFERENCE_REPORT_MAX_AGE_MS
+    )
+      this.reference = { key, since: now, seen: now };
+    const ref = this.reference;
+    ref.seen = now;
+    // Only use a frame bracketed by foreground reports from this display.
+    const frame = this.options.camera.stream?.currentFrame;
+    ref.frame = frame && frame.capturedAt > ref.since ? frame : undefined;
   }
   async prepare(): Promise<void> {
     if (!this.input) {
@@ -716,11 +775,13 @@ export class CalibrationHost {
         const cancel = () => abort.abort();
         res.once('close', cancel);
         try {
-          const check = await this.options.camera.checkPerspective({
-            signal: abort.signal,
-          });
+          const check = this.activeReference()
+            ? await this.options.camera.checkPerspective({
+                signal: abort.signal,
+              })
+            : undefined;
           send(200, {
-            ...check,
+            ...(check ?? { skipped: 'reference-page-unavailable' }),
             summary: this.options.camera.getPerspectiveValidity(),
           });
         } finally {
@@ -904,6 +965,9 @@ export class CalibrationHost {
     }
   }
   async close() {
+    if (this.options.camera.referenceFrame === this.referenceFrame)
+      this.options.camera.referenceFrame = undefined;
+    this.reference = undefined;
     this.alignment?.abort();
     this.phoneSocket.close();
     for (const res of this.streams) res.end();

@@ -109,3 +109,42 @@ it('retains server-stored mismatch evidence when the first live frame is unavail
     watcher.close();
   }
 });
+
+it('pauses silently without a reference page, preserves confirmed mismatches and resumes', async () => {
+  rstest.stubGlobal(
+    'fetch',
+    rstest
+      .fn()
+      .mockResolvedValueOnce(response('suspected'))
+      .mockResolvedValueOnce(
+        Response.json({
+          skipped: 'reference-page-unavailable',
+          summary: { state: 'suspected' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          skipped: 'reference-page-unavailable',
+          summary: { state: 'invalid' },
+        }),
+      )
+      .mockResolvedValueOnce(response('valid')),
+  );
+  const updates: PerspectiveObservation[] = [];
+  const watcher = observePerspective({
+    baseUrl: '/screen',
+    visible: () => true,
+    publish: (value) => updates.push(value),
+  });
+  try {
+    await rstest.waitFor(() => expect(updates).toHaveLength(1));
+    await watcher.refresh();
+    expect(updates[1]).toEqual({});
+    await watcher.refresh();
+    expect(updates[2]).toEqual({ summary: { state: 'invalid' } });
+    await watcher.refresh();
+    expect(updates[3].summary?.state).toBe('valid');
+  } finally {
+    watcher.close();
+  }
+});

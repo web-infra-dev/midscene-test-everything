@@ -222,6 +222,8 @@ export interface CalibrationPageUpdate {
   displayMode?: 'browser' | 'fullscreen' | 'standalone';
   fullscreen?: boolean;
   wakeState?: 'system' | 'video' | 'pending' | 'blocked';
+  /** View actually displayed by the phone. */
+  view?: CalibrationPageReply['view'];
   markersPainted?: boolean;
   markerRequest?: string;
   touchDiagnosticsVersion?: 2;

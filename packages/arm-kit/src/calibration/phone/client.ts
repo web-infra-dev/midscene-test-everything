@@ -952,6 +952,7 @@ export function mountCalibrationPhonePage(
       platform,
       displayMode: displayMode(),
       fullscreen: fullscreenReady(),
+      view: state?.view,
       markersPainted,
       markerRequest: markersPainted ? state?.markerRequest : undefined,
       visible: !document.hidden && (visualViewport?.scale || 1) === 1,
@@ -1086,7 +1087,8 @@ export function mountCalibrationPhonePage(
         if (
           reportedWake !== wakeState() ||
           state?.view === 'collect' ||
-          state?.view === 'verify'
+          state?.view === 'verify' ||
+          (state && state.view !== 'waiting' && !document.hidden)
         )
           send();
       }, policy.heartbeatMs);

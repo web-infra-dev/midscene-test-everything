@@ -42,6 +42,7 @@ async function fixture() {
     file: () => join(directory, 'evidence.json'),
     key: () => key,
     correction: () => correction,
+    referenceFrame: (): CameraFrame | undefined => frame,
     frame: rstest.fn(async () => frame),
   };
   const monitor = new PerspectiveMonitor(source);
@@ -64,13 +65,13 @@ async function fixture() {
 it('keeps observed evidence out of geometry, restores mismatch after reload, and retains it on weak frames', async () => {
   const f = await fixture();
   const before = structuredClone(f.correction);
-  expect((await f.monitor.check()).validity.state).toBe('invalid');
+  expect((await f.monitor.check())!.validity.state).toBe('invalid');
   expect(f.correction).toEqual(before);
   const restored = new PerspectiveMonitor(f.source);
   await restored.load();
   expect(restored.summary()?.state).toBe('invalid');
   f.next(f.weak);
-  expect((await restored.check()).validity).toMatchObject({
+  expect((await restored.check())!.validity).toMatchObject({
     state: 'invalid',
     temporal: { retainedMismatch: true, currentState: 'unverified' },
   });
@@ -85,11 +86,11 @@ it('requires distinct fresh aligned frames for stable recovery and does not clea
   for (let i = 0; i < 3; i++) {
     rstest.advanceTimersByTime(750);
     f.next(f.aligned.jpeg);
-    const state = (await f.monitor.check()).validity.state;
+    const state = (await f.monitor.check())!.validity.state;
     expect(state).toBe(i === 2 ? 'valid' : 'invalid');
     if (i === 0) {
       rstest.advanceTimersByTime(100);
-      expect((await f.monitor.check()).validity.state).toBe('invalid');
+      expect((await f.monitor.check())!.validity.state).toBe('invalid');
     }
   }
 });
@@ -136,7 +137,7 @@ it('discards a late check when correction changes and allows a clean retry with 
   await rejected;
   expect(f.monitor.summary()).toBeUndefined();
   f.next(f.aligned.jpeg);
-  expect((await f.monitor.check()).validity.state).toBe('valid');
+  expect((await f.monitor.check())!.validity.state).toBe('valid');
 });
 it('shares concurrent checks while cancellation only rejects the cancelled observer', async () => {
   const f = await fixture();
@@ -145,7 +146,7 @@ it('shares concurrent checks while cancellation only rejects the cancelled obser
   const second = f.monitor.check();
   abort.abort();
   await expect(first).rejects.toThrow();
-  expect((await second).validity.state).toBe('invalid');
+  expect((await second)!.validity.state).toBe('invalid');
   expect(f.source.frame).toHaveBeenCalledTimes(1);
 });
 it('expires positive evidence, retains confirmed mismatch, and drops evidence after mapping changes', async () => {
@@ -167,4 +168,27 @@ it('expires positive evidence, retains confirmed mismatch, and drops evidence af
   });
   f.changeKey();
   expect(f.monitor.summary()).toBeUndefined();
+});
+
+it('uses only phone-confirmed frames and retains a confirmed mismatch while the phone is away', async () => {
+  const f = await fixture();
+  const reference = f.source.referenceFrame;
+  f.source.referenceFrame = () => undefined;
+  expect(await f.monitor.check()).toBeUndefined();
+  await f.monitor.assertCurrent();
+  expect(f.monitor.summary()).toBeUndefined();
+  f.source.referenceFrame = reference;
+  await expect(f.monitor.assertCurrent()).rejects.toMatchObject({
+    code: 'CALIBRATION_MISMATCH',
+  });
+  f.next(f.aligned.jpeg);
+  f.source.referenceFrame = () => undefined;
+  expect(await f.monitor.check()).toBeUndefined();
+  await expect(f.monitor.assertCurrent()).rejects.toMatchObject({
+    code: 'CALIBRATION_MISMATCH',
+  });
+  f.next(f.aligned.jpeg, Date.now() - 3000);
+  await expect(f.monitor.assertCurrent()).rejects.toMatchObject({
+    code: 'VISION_UNAVAILABLE',
+  });
 });

@@ -68,6 +68,7 @@ type SessionState = Omit<
 export interface AssistedCalibrationOptions {
   deviceId?: string;
   vision: CalibrationVision;
+  onPhoneObservation?: (update?: CalibrationPageUpdate) => void;
   phoneLinks?: () => { name: string; url: string }[];
   referencePosition?: () => CartesianPose | undefined;
   markerCodes?: readonly number[];
@@ -103,6 +104,7 @@ export class CalibrationWorkflow {
   }
   disconnectPhone() {
     this.phone.lastSeen = 0;
+    this.options.onPhoneObservation?.();
     if (
       this.measuring() ||
       this.state?.stage === 'safety' ||
@@ -464,6 +466,9 @@ export class CalibrationWorkflow {
     const reloaded = this.phone.receive(update);
     this.changed();
     const input = this.phone.update!;
+    this.options.onPhoneObservation?.(
+      this.phone.connected() ? input : undefined,
+    );
     const s = this.state;
     if (!s || s.stage === 'cancelled') return this.phoneView();
     if (reloaded) {

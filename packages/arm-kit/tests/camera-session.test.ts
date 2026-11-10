@@ -470,8 +470,12 @@ it('isolates drift evidence per screen on the shared stream without changing map
   const source = await (backend.openStream as ReturnType<typeof rstest.fn>).mock
     .results[0].value;
   source.emit('frame', frame.jpeg);
-  expect((await left.checkPerspective()).validity.state).toBe('invalid');
-  expect((await right.checkPerspective()).validity.state).toBe('valid');
+  expect(await left.checkPerspective()).toBeUndefined();
+  left.referenceFrame = () => left.stream.currentFrame;
+  expect((await left.checkPerspective())?.validity.state).toBe('invalid');
+  expect(await right.checkPerspective()).toBeUndefined();
+  right.referenceFrame = () => right.stream.currentFrame;
+  expect((await right.checkPerspective())?.validity.state).toBe('valid');
   const after = await left.binding(options);
   expect(after.fingerprint).toBe(before.fingerprint);
   expect(after.validity?.state).toBe('invalid');

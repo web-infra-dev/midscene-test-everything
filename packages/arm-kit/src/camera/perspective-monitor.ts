@@ -15,11 +15,34 @@ const EVIDENCE_MAX_AGE_MS = 30 * 60_000;
 const FRAME_MAX_AGE_MS = 2_000;
 type Evidence = PerspectiveValidityCheck & { key: string };
 
+function validateFrame(frame: CameraFrame, correction: CameraCorrection) {
+  if (
+    !Number.isFinite(frame.capturedAt) ||
+    Date.now() - frame.capturedAt > FRAME_MAX_AGE_MS ||
+    frame.capturedAt > Date.now() + 1000
+  )
+    throw new RobotArmError(
+      'VISION_UNAVAILABLE',
+      'A fresh camera frame is required to check the screen outline',
+      409,
+    );
+  const size = jpegSize(frame.jpeg);
+  if (
+    size.width !== correction.sourceWidth ||
+    size.height !== correction.sourceHeight
+  )
+    throw new RobotArmError(
+      'VISION_BINDING_CHANGED',
+      'Camera image dimensions changed; repeat correction',
+      409,
+    );
+}
+
 /** One screen's observed evidence, isolated from its measured correction. */
 export class PerspectiveMonitor {
   private evidence?: Evidence;
   private tracker = new PerspectiveValidityTracker();
-  private pending?: Promise<PerspectiveValidityCheck>;
+  private pending?: Promise<PerspectiveValidityCheck | undefined>;
   private writes = Promise.resolve();
   private revision = 0;
   private lastPersistedAt = 0;
@@ -29,6 +52,7 @@ export class PerspectiveMonitor {
       key(): string;
       correction(): CameraCorrection | undefined;
       frame(): Promise<CameraFrame>;
+      referenceFrame(): CameraFrame | undefined;
     },
   ) {}
   async load() {
@@ -86,11 +110,15 @@ export class PerspectiveMonitor {
   }
   check(
     options: { signal?: AbortSignal; maxAgeMs?: number } = {},
-  ): Promise<PerspectiveValidityCheck> {
+  ): Promise<PerspectiveValidityCheck | undefined> {
     options.signal?.throwIfAborted();
     const key = this.source.key();
     const current = this.evidence;
+    const reference = this.source.referenceFrame();
     const reusable =
+      reference &&
+      reference.id === current?.frameId &&
+      reference.capturedAt === Date.parse(current.checkedAt) &&
       current?.key === key &&
       Date.now() - Date.parse(current.checkedAt) <= (options.maxAgeMs ?? 0);
     if (!reusable && !this.pending)
@@ -111,14 +139,14 @@ export class PerspectiveMonitor {
   }
   async assertCurrent() {
     const check = await this.check();
-    if (check.validity.state === 'invalid')
+    if ((check?.validity.state ?? this.summary()?.state) === 'invalid')
       throw new RobotArmError(
         'CALIBRATION_MISMATCH',
         'The saved screen outline no longer matches the camera view. Recalibrate before moving.',
         409,
       );
   }
-  private async measure(): Promise<PerspectiveValidityCheck> {
+  private async measure(): Promise<PerspectiveValidityCheck | undefined> {
     const correction = this.source.correction();
     if (!correction)
       throw new RobotArmError(
@@ -128,32 +156,16 @@ export class PerspectiveMonitor {
       );
     const key = this.source.key();
     const revision = this.revision;
-    const frame = await this.source.frame();
-    if (
-      !Number.isFinite(frame.capturedAt) ||
-      Date.now() - frame.capturedAt > FRAME_MAX_AGE_MS ||
-      frame.capturedAt > Date.now() + 1000
-    )
-      throw new RobotArmError(
-        'VISION_UNAVAILABLE',
-        'A fresh camera frame is required to check the screen outline',
-        409,
-      );
-    const size = jpegSize(frame.jpeg);
-    if (
-      size.width !== correction.sourceWidth ||
-      size.height !== correction.sourceHeight
-    )
-      throw new RobotArmError(
-        'VISION_BINDING_CHANGED',
-        'Camera image dimensions changed; repeat correction',
-        409,
-      );
+    const latest = await this.source.frame();
+    validateFrame(latest, correction);
+    const frame = this.source.referenceFrame();
+    if (!frame || Date.now() - frame.capturedAt > FRAME_MAX_AGE_MS) return;
+    if (frame !== latest) validateFrame(frame, correction);
     const raw = await checkPerspectiveValidity({
       jpeg: frame.jpeg,
       points: correction.points,
-      sourceWidth: size.width,
-      sourceHeight: size.height,
+      sourceWidth: correction.sourceWidth,
+      sourceHeight: correction.sourceHeight,
     });
     if (revision !== this.revision || key !== this.source.key())
       throw new RobotArmError(

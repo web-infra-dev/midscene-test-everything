@@ -36,9 +36,14 @@ export function observePerspective(options: {
               data.error ??
               'Outline verification unavailable',
           );
-        if (!data.validity || !data.summary)
-          throw new Error('Outline verification unavailable');
-        last = { check: data, summary: data.summary };
+        if (data.skipped === 'reference-page-unavailable') {
+          last =
+            data.summary?.state === 'invalid' ? { summary: data.summary } : {};
+        } else {
+          if (!data.validity || !data.summary)
+            throw new Error('Outline verification unavailable');
+          last = { check: data, summary: data.summary };
+        }
       } catch (error) {
         if (abort.signal.aborted) return;
         last = {

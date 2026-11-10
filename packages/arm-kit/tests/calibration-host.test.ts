@@ -1,8 +1,13 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Readable } from 'node:stream';
 import { expect, it, rstest } from '@rstest/core';
+import {
+  type CalibrationPageUpdate,
+  calibrationPageMarkers,
+} from '../src/assisted-contracts.js';
 import { CalibrationHost } from '../src/calibration-server/host.js';
 import type { CameraSession } from '../src/camera/session.js';
+import type { CameraFrame } from '../src/camera/types.js';
 import { controllerRuntime } from '../src/controller-runtime.js';
 import { ArmController } from '../src/controller.js';
 import { fixture } from './fixtures.js';
@@ -228,6 +233,86 @@ it('restores measured length and weight before calibration acceptance, isolated 
   } finally {
     await next.close();
     await other.close();
+    await arm.close();
+    await f.cleanup();
+  }
+});
+
+it('admits only frames bracketed by visible phone reports for the active calibration view', async () => {
+  const f = await fixture();
+  await f.runtime.shutdown();
+  const arm = new ArmController({ adapter: f.adapter, profileStore: f.store });
+  let now = Date.now();
+  const clock = rstest.spyOn(Date, 'now').mockImplementation(() => now);
+  let frame = { capturedAt: now - 1 } as CameraFrame;
+  const camera = {
+    stream: {
+      get currentFrame() {
+        return frame;
+      },
+    },
+  } as CameraSession;
+  const host = new CalibrationHost({ arm, camera, deviceId: 'screen' });
+  const report: CalibrationPageUpdate = {
+    pageId: host.service.openPhonePage(),
+    sequence: 0,
+    visible: true,
+    platform: 'android',
+    displayMode: 'fullscreen',
+    view: 'markers',
+    markersPainted: true,
+    layout: {
+      revision: 1,
+      width: 400,
+      height: 800,
+      screen: { width: 400, height: 800, devicePixelRatio: 1 },
+      markers: calibrationPageMarkers(400, 800),
+    },
+  };
+  const send = (fields: Partial<CalibrationPageUpdate> = {}) =>
+    host.service.receivePhone({
+      ...report,
+      sequence: ++report.sequence,
+      ...fields,
+    });
+  try {
+    send();
+    expect(camera.referenceFrame?.()).toBeUndefined();
+    frame = { capturedAt: ++now } as CameraFrame;
+    now++;
+    send();
+    expect(camera.referenceFrame?.()).toBe(frame);
+    send({ visible: false });
+    expect(camera.referenceFrame?.()).toBeUndefined();
+    frame = { capturedAt: ++now } as CameraFrame;
+    now++;
+    send();
+    expect(camera.referenceFrame?.()).toBeUndefined(); // frame from the other app
+    frame = { capturedAt: ++now } as CameraFrame;
+    send();
+    expect(camera.referenceFrame?.()).toBe(frame);
+    now += 3000;
+    host.service.phoneHeartbeat(); // transport liveness alone does not confirm the display
+    expect(camera.referenceFrame?.()).toBeUndefined();
+    send();
+    expect(camera.referenceFrame?.()).toBeUndefined();
+    frame = { capturedAt: ++now } as CameraFrame;
+    send();
+    expect(camera.referenceFrame?.()).toBe(frame);
+    send({ displayMode: 'browser' });
+    expect(camera.referenceFrame?.()).toBeUndefined();
+    host.service.restorePhoneHome();
+    send({ view: 'waiting' });
+    expect(camera.referenceFrame?.()).toBeUndefined();
+    host.service.resumePhonePage();
+    send();
+    frame = { capturedAt: ++now } as CameraFrame;
+    send();
+    host.service.disconnectPhone();
+    expect(camera.referenceFrame?.()).toBeUndefined();
+  } finally {
+    clock.mockRestore();
+    await host.close();
     await arm.close();
     await f.cleanup();
   }

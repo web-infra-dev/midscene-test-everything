@@ -159,6 +159,11 @@ export class CameraStream extends EventEmitter {
     };
   }
 
+  /** The latest frame already received when the phone reports its display. */
+  get currentFrame(): CameraFrame | undefined {
+    return this.state === 'running' ? this.latestFrame : undefined;
+  }
+
   async getFrame(
     options: {
       fresh?: boolean;
