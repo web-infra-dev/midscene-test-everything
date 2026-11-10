@@ -8,7 +8,9 @@ import { configDirectory } from '../config/store.js';
 
 const execute = promisify(execFile);
 const compiling = new Map<string, Promise<string>>();
-export function nativeHelper(name: 'usb-capture' | 'hid'): Promise<string> {
+export function nativeHelper(
+  name: 'usb-capture' | 'hid' | 'airplay-launcher',
+): Promise<string> {
   if (process.platform !== 'darwin')
     return Promise.reject(new Error('iOS HID requires macOS'));
   let result = compiling.get(name);
@@ -22,20 +24,25 @@ export function nativeHelper(name: 'usb-capture' | 'hid'): Promise<string> {
   return result;
 }
 async function compile(name: string) {
-  const source = new URL(`../../native/${name}.swift`, import.meta.url);
+  const source = new URL(
+    `../../native/${name}.${name === 'hid' ? 'm' : name === 'airplay-launcher' ? 'c' : 'swift'}`,
+    import.meta.url,
+  );
   const plist = new URL('../../native/helper.plist', import.meta.url);
   const sources =
-    name === 'hid'
-      ? [
-          source,
-          new URL('../../native/HIDPeripheral.swift', import.meta.url),
-          new URL('../../native/HIDReportMap.swift', import.meta.url),
-        ]
-      : [
-          source,
-          new URL('../../native/USBIdentity.swift', import.meta.url),
-          new URL('../../native/USBDiscovery.swift', import.meta.url),
-        ];
+    name === 'airplay-launcher'
+      ? [source]
+      : name === 'hid'
+        ? [
+            source,
+            new URL('../../native/HIDDescriptor.h', import.meta.url),
+            new URL('../../native/HIDProtocol.h', import.meta.url),
+          ]
+        : [
+            source,
+            new URL('../../native/USBIdentity.swift', import.meta.url),
+            new URL('../../native/USBDiscovery.swift', import.meta.url),
+          ];
   const hash = createHash('sha256')
     .update(await readFile(plist))
     .update(process.arch);
@@ -53,10 +60,29 @@ async function compile(name: string) {
     await execute(
       '/usr/bin/xcrun',
       [
-        'swiftc',
-        '-parse-as-library',
-        '-O',
-        ...sources.map((file) => fileURLToPath(file)),
+        ...(name === 'airplay-launcher'
+          ? ['clang', '-O2', '-Wall', '-Wextra', fileURLToPath(source)]
+          : name === 'hid'
+            ? [
+                'clang',
+                '-fobjc-arc',
+                '-O2',
+                '-Wall',
+                '-Wextra',
+                '-framework',
+                'Foundation',
+                '-framework',
+                'CoreBluetooth',
+                '-framework',
+                'IOBluetooth',
+                fileURLToPath(source),
+              ]
+            : [
+                'swiftc',
+                '-parse-as-library',
+                '-O',
+                ...sources.map((file) => fileURLToPath(file)),
+              ]),
         '-o',
         candidate,
         '-Xlinker',

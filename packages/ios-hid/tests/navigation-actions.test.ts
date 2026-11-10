@@ -4,6 +4,7 @@ import { IOSHIDAgent, IOSHIDDevice } from '../dist/index.js';
 import { HIDInputSession } from '../dist/input/session.js';
 import { DeviceSession } from '../dist/runtime/device-session.js';
 import type { InputAction, Point } from '../dist/types.js';
+import { curveModel } from './fixtures/pointer-model.js';
 
 const screen = {
   getFrame: async () => ({
@@ -45,7 +46,7 @@ test('Device and borrowed Agent expose navigation with cancellation preserved', 
   }
 });
 
-test('Home sends and releases AC Home even when cancelled after press', async () => {
+test('Home sends and releases Command H even when cancelled after press', async () => {
   for (const cancel of [false, true]) {
     const abort = new AbortController();
     const reports: { peer: string; report: number; bytes: number[] }[] = [];
@@ -53,7 +54,7 @@ test('Home sends and releases AC Home even when cancelled after press', async ()
       {
         send: async (peer: string, report: number, bytes: number[]) => {
           reports.push({ peer, report, bytes });
-          if (cancel && bytes[0] === 0x23) abort.abort();
+          if (cancel && bytes[0] === 8) abort.abort();
           return true;
         },
       } as unknown as ConstructorParameters<typeof HIDInputSession>[0],
@@ -63,8 +64,8 @@ test('Home sends and releases AC Home even when cancelled after press', async ()
     if (cancel) await assert.rejects(result, { name: 'AbortError' });
     else await result;
     assert.deepEqual(reports, [
-      { peer: 'phone', report: 4, bytes: [0x23, 0x02] },
-      { peer: 'phone', report: 4, bytes: [0, 0] },
+      { peer: 'phone', report: 1, bytes: [8, 0, 11, 0, 0, 0, 0, 0] },
+      { peer: 'phone', report: 1, bytes: [0, 0, 0, 0, 0, 0, 0, 0] },
     ]);
   }
 });
@@ -79,7 +80,7 @@ test('Back uses calibrated dragging from the left edge, releasing the pointer', 
   // biome-ignore lint/complexity/useLiteralKeys: Bracket access preserves type checking for non-public test hooks.
   input['mapping'] = { turn: 0, width: 1000, height: 2000 };
   // biome-ignore lint/complexity/useLiteralKeys: Bracket access preserves type checking for non-public test hooks.
-  input['motion'] = { x: { a: 4, b: 0 }, y: { a: 4, b: 0 } };
+  input['motion'] = curveModel({ a: 4, b: 0 }, { a: 4, b: 0 });
   const positions: Point[] = [];
   const buttons: (number | undefined)[] = [];
   // biome-ignore lint/complexity/useLiteralKeys: Bracket access preserves type checking for non-public test hooks.

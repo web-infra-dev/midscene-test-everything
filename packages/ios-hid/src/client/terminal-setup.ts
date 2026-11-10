@@ -97,7 +97,7 @@ export async function presentTerminalSetup(
       `On iPhone, open Screen Mirroring and select "${setup.airplay.name}". Pairing code: ${setup.airplay.pin}`,
     );
   console.error(
-    `In iPhone Bluetooth settings, connect to "${setup.computerName}" (or Midscene), and enable AssistiveTouch. Keep the phone unlocked on a static, bright screen.`,
+    `In iPhone Bluetooth settings, connect to "${setup.computerName}", and enable AssistiveTouch. Keep the phone unlocked on a static, bright screen.`,
   );
   let peers = setup.bluetooth.hosts.filter((peer) =>
     [1, 2, 3].every((report) => peer.reports.includes(report)),

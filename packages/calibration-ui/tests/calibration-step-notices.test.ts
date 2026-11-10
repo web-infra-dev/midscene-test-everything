@@ -1,4 +1,4 @@
-import { calibrationPageMarkers } from '@midscene/arm-kit-shared/assisted-contracts';
+import { calibrationPageMarkers } from '@midscene/robotics-shared/assisted-contracts';
 import { expect, it } from '@rstest/core';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';

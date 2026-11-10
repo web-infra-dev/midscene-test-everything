@@ -7,6 +7,7 @@ export type {
   DeviceConfig,
   ConnectionState,
   ConnectOptions,
+  AirPlaySetupInfo,
 } from './types.js';
 
 export { ensureLocalHost as connectIOSHIDHost } from './client/ensure-local-host.js';

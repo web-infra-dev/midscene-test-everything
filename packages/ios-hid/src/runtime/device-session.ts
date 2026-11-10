@@ -1,4 +1,5 @@
 import type { HIDInputSession } from '../input/session.js';
+import { settledFrame } from '../screen/settled-frame.js';
 import type { ScreenSession } from '../screen/source.js';
 import type { DeviceConfig, InputAction } from '../types.js';
 
@@ -7,6 +8,9 @@ export class DeviceSession {
   private pending: Promise<unknown> = Promise.resolve();
   private closed = false;
   private closing?: Promise<void>;
+  private generation = 1;
+  private settledGeneration = 0;
+  private settling?: Promise<Awaited<ReturnType<ScreenSession['getFrame']>>>;
   constructor(
     readonly config: DeviceConfig,
     private screen: ScreenSession,
@@ -18,7 +22,22 @@ export class DeviceSession {
   }
   screenshot() {
     if (this.closed) throw new Error('Device session closed');
-    return this.screen.getFrame({ fresh: true, timeoutMs: 10000 });
+    if (this.settledGeneration === this.generation)
+      return this.screen.getFrame({
+        fresh: true,
+        allowUnchanged: true,
+        timeoutMs: 10000,
+      });
+    const generation = this.generation;
+    this.settling ??= settledFrame(this.screen)
+      .then((frame) => {
+        this.settledGeneration = generation;
+        return frame;
+      })
+      .finally(() => {
+        this.settling = undefined;
+      });
+    return this.settling;
   }
   execute(action: InputAction, signal?: AbortSignal) {
     const operation = this.pending.then(async () => {
@@ -26,9 +45,14 @@ export class DeviceSession {
       signal?.throwIfAborted();
       try {
         // Never continue keyboard or pointer input after the screen source stops.
-        await this.screen.getFrame({ fresh: true, timeoutMs: 10000 });
+        await this.screen.getFrame({
+          fresh: true,
+          allowUnchanged: true,
+          timeoutMs: 10000,
+        });
         signal?.throwIfAborted();
         await this.input.execute(action, this.screen, signal);
+        this.generation++;
       } catch (error) {
         await this.input.releaseAll();
         throw error;

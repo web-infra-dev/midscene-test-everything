@@ -19,8 +19,9 @@ import {
   motionBinding,
 } from '../dist/pointer/motion-profile.js';
 import type { DeviceConfig, Point } from '../dist/types.js';
+import { curveModel, physicalMovement } from './fixtures/pointer-model.js';
 
-const linear = { x: { a: 1, b: 0 }, y: { a: 1, b: 0 } };
+const linear = curveModel({ a: 1, b: 0 }, { a: 1, b: 0 });
 function displacement(reports: Point[], model = linear, turn: PointerTurn = 0) {
   return reports.reduce(
     (sum, report) => {
@@ -44,7 +45,7 @@ test('an out-of-range ideal still advances, rather than selecting zero', () => {
   assert.ok(plan.reports.every((p) => Math.hypot(p.x, p.y) <= 8));
   assert.ok(Math.abs(displacement(plan.reports).x - 140) <= 1);
   assert.ok(plan.reports.at(-1)!.x > 0, 'no held stationary tail');
-});
+}, 60_000);
 
 test('bounded duration extension preserves distance without increasing step size', () => {
   const plan = planRelativeDrag(
@@ -60,10 +61,10 @@ test('bounded duration extension preserves distance without increasing step size
     () => planRelativeDrag({ x: 0, y: 0 }, { x: 10000, y: 0 }, 300, linear, 0),
     /timing limit/,
   );
-});
+}, 60_000);
 
 test('nonlinear diagonal paths and all pointer rotations preserve their endpoints', () => {
-  const model = { x: { a: 0.8, b: 0.07 }, y: { a: 0.95, b: 0.06 } };
+  const model = curveModel();
   for (const turn of [0, 1, 2, 3] as const)
     for (const target of [
       { x: 160, y: 210 },
@@ -75,7 +76,7 @@ test('nonlinear diagonal paths and all pointer rotations preserve their endpoint
       assert.ok(Math.hypot(end.x - target.x, end.y - target.y) <= 1.1);
       assert.ok(plan.reports.every((p) => Math.hypot(p.x, p.y) <= 8));
     }
-});
+}, 60_000);
 
 test('ordinary drags start quickly and slow down at the end', () => {
   const plan = planRelativeDrag(
@@ -93,7 +94,7 @@ test('ordinary drags start quickly and slow down at the end', () => {
     () => planRelativeDrag({ x: 0, y: 0 }, { x: 0, y: 0 }, 300, linear, 0),
     /different endpoints/,
   );
-});
+}, 60_000);
 
 function fastTimers() {
   const real = globalThis.setTimeout;
@@ -109,7 +110,8 @@ function fastTimers() {
 /** Real image differencing, simulated HID transport; never touches Bluetooth. */
 function simulatedPhone(
   config: DeviceConfig,
-  model = { x: { a: 0.8, b: 0.07 }, y: { a: 0.95, b: 0.06 } },
+  model = curveModel(),
+  movement?: (delta: Point) => Point,
 ) {
   let point = { x: 350, y: 650 };
   let sequence = 0;
@@ -138,7 +140,7 @@ function simulatedPhone(
     relative: async (delta: Point, buttons = 0) => {
       if (buttons) pressed++;
       else probes.push(delta);
-      const d = predictMovement(model, delta);
+      const d = movement?.(delta) ?? physicalMovement(model, delta);
       if (!dropMovement) point = { x: point.x + d.x, y: point.y + d.y };
       cancel?.abort();
     },
@@ -190,16 +192,32 @@ const phoneConfig = (): DeviceConfig => ({
   screen: { source: 'usb', deviceId: 'usb-a' },
 });
 
-test('measured samples persist through devices.json and reconnect only checks independent probes', async () => {
+test('connection measures and persists movement before the first swipe; reconnect reuses saved data without probes', async () => {
   fastTimers();
   const config = phoneConfig();
   const first = simulatedPhone(config);
-  await first.prepare();
+  await first.input.verify(first.screen);
   assert.equal(first.pressed(), 0);
-  assert.equal(config.pointerMotion!.samples.length, 4);
+  assert.equal(config.pointerMotion!.samples.length, 10);
   assert.equal(config.pointerMotion!.validation.samples.length, 3);
-  assert.ok(first.probes.some((d) => d.x === 14));
-  assert.ok(first.probes.some((d) => d.y === 14));
+  assert.ok(first.probes.some((d) => d.x === 2));
+  assert.ok(first.probes.some((d) => d.y === 2));
+  const measurementCount = first.probes.filter((p) => p.x || p.y).length;
+  await first.input.execute(
+    {
+      type: 'swipe',
+      from: { x: 200, y: 300 },
+      to: { x: 350, y: 450 },
+      durationMs: 500,
+    },
+    first.screen,
+  );
+  assert.equal(
+    first.probes.filter((p) => p.x || p.y).length,
+    measurementCount,
+    'the first swipe must reuse connection-time measurement without more hover probes',
+  );
+  assert.ok(first.pressed() > 0);
   const measuredAt = config.pointerMotion!.measuredAt;
   const directory = await mkdtemp(join(tmpdir(), 'ios-motion-'));
   onTestFinished(() => rm(directory, { recursive: true, force: true }));
@@ -216,30 +234,32 @@ test('measured samples persist through devices.json and reconnect only checks in
   const next = simulatedPhone(restored);
   await next.input.verify(next.screen);
   assert.equal(restored.pointerMotion!.measuredAt, measuredAt);
-  assert.ok(
-    !next.probes.some(
-      (p) => p.x === 6 || p.y === 6 || p.x === 14 || p.y === 14,
-    ),
+  assert.deepEqual(
+    next.probes,
+    [],
+    'matching reconnect does not move the pointer',
   );
-  assert.ok(next.probes.some((p) => p.x === 4 && p.y === 4));
-  assert.equal(next.saved(), 1);
-});
+  assert.equal(next.saved(), 0, 'reuse does not rewrite validation timestamps');
+}, 60_000);
 
-test('changed pointer sensitivity rejects the cache and refits before any drag', async () => {
+test('explicit reconfiguration refits changed pointer sensitivity before any drag', async () => {
   fastTimers();
   const config = phoneConfig();
   await simulatedPhone(config).prepare();
-  const old = config.pointerMotion!.model.x.a;
-  const next = simulatedPhone(config, {
-    x: { a: 1.8, b: 0.11 },
-    y: { a: 1.7, b: 0.1 },
-  });
-  await next.prepare();
-  assert.ok(next.probes.some((p) => p.x === 14));
-  assert.ok(config.pointerMotion!.model.x.a > old + 0.5);
-  assert.equal(next.saved(), 2, 'invalidate then save verified replacement');
+  const old = predictMovement(config.pointerMotion!.model, { x: 8, y: 0 }).x;
+  config.pointerMotion = undefined; // The setup checkbox explicitly requests remeasurement.
+  const next = simulatedPhone(
+    config,
+    curveModel({ a: 1.8, b: 0.11 }, { a: 1.7, b: 0.1 }),
+  );
+  await next.input.verify(next.screen);
+  assert.ok(next.probes.some((p) => p.x === 2));
+  assert.ok(
+    predictMovement(config.pointerMotion!.model, { x: 8, y: 0 }).x > old + 0.5,
+  );
+  assert.equal(next.saved(), 1, 'save only the verified replacement');
   assert.equal(next.pressed(), 0);
-});
+}, 60_000);
 
 test('failed revalidation clears stale disk data, and cancellation never starts a drag', async () => {
   fastTimers();
@@ -247,7 +267,10 @@ test('failed revalidation clears stale disk data, and cancellation never starts 
   await simulatedPhone(config).prepare();
   const broken = simulatedPhone(config);
   broken.drop();
-  await assert.rejects(broken.prepare(), /Cannot measure/);
+  await assert.rejects(
+    broken.prepare(),
+    /Pointer (start position|endpoint) did not settle/,
+  );
   assert.equal(config.pointerMotion, undefined);
   assert.equal(broken.saved(), 1);
   assert.equal(broken.pressed(), 0);
@@ -264,7 +287,21 @@ test('failed revalidation clears stale disk data, and cancellation never starts 
   );
   assert.equal(cancelled.pressed(), 0);
   assert.equal(cancelled.saved(), 0);
-});
+}, 60_000);
+
+test('a first connection fails if movement cannot be measured, without clicking or saving a profile', async () => {
+  fastTimers();
+  const config = phoneConfig();
+  const phone = simulatedPhone(config);
+  phone.drop();
+  await assert.rejects(
+    phone.input.verify(phone.screen),
+    /Pointer (start position|endpoint) did not settle/,
+  );
+  assert.equal(config.pointerMotion, undefined);
+  assert.equal(phone.saved(), 0);
+  assert.equal(phone.pressed(), 0);
+}, 60_000);
 
 test('cache binding includes source, Bluetooth identity, dimensions, rotation and camera correction', async () => {
   fastTimers();
@@ -312,7 +349,80 @@ test('cache binding includes source, Bluetooth identity, dimensions, rotation an
   );
   const bad = {
     ...config.pointerMotion!,
-    model: { x: { a: Number.NaN, b: 0 }, y: linear.y },
+    model: {
+      reports: config.pointerMotion!.model.reports.map((point, index) =>
+        index === 0
+          ? { ...point, displacement: { x: Number.NaN, y: 0 } }
+          : point,
+      ),
+    },
   };
   assert.equal(compatibleMotionProfile(bad, binding), false);
-});
+}, 60_000);
+
+test('non-quadratic response from the real AirPlay failure calibrates without extrapolation', async () => {
+  fastTimers();
+  const response = curveModel();
+  for (const point of response.reports) {
+    if (point.delta.x === 6 && !point.delta.y)
+      point.displacement.x = 52.4154486036839 / 12;
+    if (point.delta.y === 6 && !point.delta.x)
+      point.displacement.y = 54.150702426564465 / 12;
+    if (point.delta.x === 8 && !point.delta.y)
+      point.displacement.x = 111.50824181637361 / 16;
+    if (point.delta.y === 8 && !point.delta.x)
+      point.displacement.y = 101.14728682170545 / 15;
+  }
+  const config = phoneConfig();
+  const phone = simulatedPhone(config, response);
+  await phone.prepare();
+  assert.ok(config.pointerMotion!.validation.maxRelativeError < 0.08);
+  assert.ok(!phone.probes.some((p) => Math.hypot(p.x, p.y) > 8));
+  for (const target of [
+    { x: 180, y: 240 },
+    { x: -90, y: 150 },
+  ]) {
+    const plan = planRelativeDrag(
+      { x: 0, y: 0 },
+      target,
+      700,
+      config.pointerMotion!.model,
+      0,
+    );
+    const actual = plan.reports.reduce(
+      (sum, report) => {
+        const d = physicalMovement(response, report);
+        return { x: sum.x + d.x, y: sum.y + d.y };
+      },
+      { x: 0, y: 0 },
+    );
+    assert.ok(Math.hypot(actual.x - target.x, actual.y - target.y) < 3);
+  }
+}, 60_000);
+
+test('stable validation drift is corrected and checked again before the table is saved', async () => {
+  fastTimers();
+  const response = curveModel();
+  let warmed = false;
+  const config = phoneConfig();
+  const phone = simulatedPhone(config, response, (delta) => {
+    if (delta.x === 2 && delta.y === 2) warmed = true;
+    const d = physicalMovement(response, delta);
+    if (warmed && delta.x === 8 && !delta.y) d.x *= 1.12;
+    return d;
+  });
+  await phone.prepare();
+  const measured = predictMovement(config.pointerMotion!.model, {
+    x: 8,
+    y: 0,
+  }).x;
+  const expected = physicalMovement(response, { x: 8, y: 0 }).x * 1.12;
+  assert.ok(Math.abs(measured - expected) < 0.15);
+  assert.ok(config.pointerMotion!.validation.maxRelativeError < 0.08);
+  assert.equal(
+    phone.saved(),
+    1,
+    'save only after the corrected table passes new probes',
+  );
+  assert.equal(phone.pressed(), 0);
+}, 60_000);

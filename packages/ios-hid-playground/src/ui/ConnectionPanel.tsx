@@ -1,15 +1,37 @@
 import type { PlaygroundControllerResult } from '@midscene/arm-kit-playground/shell/controller/types.ts';
 import MidsceneLogo from '@midscene/arm-kit-playground/shell/icons/midscene-logo.svg?react';
 import '@midscene/arm-kit-playground/shell/SessionSetupPanel.less';
+import type { AirPlaySetupInfo } from '@midscene/ios-hid';
+import { AirPlayPreview, airplayStatusText } from './AirPlayPreview';
 import { CameraCalibration } from './CameraCalibration';
+import { Frame } from './ScreenPreview';
+import {
+  bluetoothLabel,
+  resolveBluetoothSelection,
+} from './bluetooth-selection';
 import { navigate } from './routes';
 import '@midscene/robotics-vision/styles.css';
 import '@midscene/robotics-vision/screen-setup.less';
-import { Alert, Button, Form, Input, Select, Space, Spin, message } from 'antd';
+import {
+  Alert,
+  Button,
+  Checkbox,
+  Form,
+  Input,
+  Select,
+  Space,
+  Spin,
+  message,
+} from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
-type Choice = { id: string; name: string; modelName?: string };
+type Choice = {
+  id: string;
+  name: string;
+  modelName?: string;
+  address?: string;
+};
 const choiceLabel = (choice: Choice) =>
   choice.modelName ? `${choice.name} - ${choice.modelName}` : choice.name;
 export type Connection = {
@@ -25,7 +47,7 @@ type Binding = {
   selectedUSB?: string;
   devices: Choice[];
   bluetooth: { hosts: Choice[] };
-  airplay?: { name: string; pin: string };
+  airplay?: AirPlaySetupInfo;
 };
 async function request(url: string, body?: unknown) {
   const id = /\/setup\/([^/]+)/.exec(url)?.[1];
@@ -151,55 +173,107 @@ function RefreshDevices({
     />
   );
 }
-function Frame({ url }: { url: string }) {
-  const [src, setSrc] = useState('');
-  const [error, setError] = useState('');
-  useEffect(() => {
-    let stopped = false;
-    let previous = '';
-    let timer: ReturnType<typeof setTimeout>;
-    const poll = async () => {
-      try {
-        const blob = await (await request(url)).blob();
-        if (stopped) return;
-        const next = URL.createObjectURL(blob);
-        setSrc(next);
-        setError('');
-        if (previous) URL.revokeObjectURL(previous);
-        previous = next;
-      } catch (cause) {
-        if (!stopped) setError(String(cause));
-      }
-      if (!stopped) timer = setTimeout(poll, 200);
-    };
-    void poll();
-    return () => {
-      stopped = true;
-      clearTimeout(timer);
-      if (previous) URL.revokeObjectURL(previous);
-    };
-  }, [url]);
+function BluetoothPeers({
+  peers,
+  selected,
+  reserved = [],
+  disabled = false,
+  onSelect,
+}: {
+  peers: Choice[];
+  selected?: string;
+  reserved?: string[];
+  disabled?: boolean;
+  onSelect: (id: string) => void;
+}) {
   return (
-    <div className="ios-hid-live">
-      {src ? <img src={src} alt="手机实时画面" /> : <Spin tip="等待手机画面" />}
-      {error && <Alert type="warning" message={error} />}
-    </div>
+    <fieldset aria-label="选择蓝牙手机" className="ios-hid-bluetooth-status">
+      {peers.map((peer) => {
+        const occupied = reserved.includes(peer.id);
+        return (
+          <button
+            key={peer.id}
+            type="button"
+            className="ios-hid-bluetooth-device"
+            aria-pressed={selected === peer.id}
+            disabled={disabled || occupied}
+            onClick={() => onSelect(peer.id)}
+          >
+            <span className="ios-hid-online-dot" />
+            <span>{bluetoothLabel(peer, peers)}</span>
+            {occupied ? (
+              <small>使用中</small>
+            ) : selected === peer.id ? (
+              <svg
+                aria-hidden="true"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="m5 12 4 4L19 6" />
+              </svg>
+            ) : null}
+          </button>
+        );
+      })}
+    </fieldset>
   );
 }
-function BindingSetup({
+export function BindingSetup({
   baseUrl,
   previewTarget,
   peers,
+  selectedPeerId,
+  onSelectPeer,
+  source,
+  verifying = false,
+  recovery = false,
+  onBluetoothStatus,
+  onStop,
 }: {
   baseUrl: string;
   previewTarget: HTMLElement | null;
   peers: Choice[];
+  selectedPeerId?: string;
+  onSelectPeer: (id: string) => void;
+  source: string;
+  verifying?: boolean;
+  recovery?: boolean;
+  onBluetoothStatus?: (connected: boolean | undefined) => void;
+  onStop?: () => void;
 }) {
   const [state, setState] = useState<Binding>();
-  const peer = peers.length === 1 ? peers[0].id : undefined;
+  const [airplay, setAirplay] = useState<AirPlaySetupInfo>();
+  const [eventsOnline, setEventsOnline] = useState(false);
+  const peer = peers.find((item) => item.id === selectedPeerId)?.id;
   const [preview, setPreview] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!recovery || verifying) return;
+    const events = new EventSource(
+      baseUrl.replace(/\/setup\/[^/]+\/?$/, '/bluetooth/events'),
+    );
+    events.onmessage = (event) => {
+      const status = JSON.parse(event.data) as {
+        hosts: { id: string; reports: number[] }[];
+      };
+      onBluetoothStatus?.(
+        status.hosts.some(
+          (host) =>
+            host.id === selectedPeerId &&
+            [1, 2, 3].every((report) => host.reports.includes(report)),
+        ),
+      );
+    };
+    events.onerror = () => onBluetoothStatus?.(undefined);
+    return () => events.close();
+  }, [baseUrl, recovery, verifying, selectedPeerId, onBluetoothStatus]);
   useEffect(() => {
     let stopped = false;
     void (async () => {
@@ -209,6 +283,7 @@ function BindingSetup({
         const next: Binding = await (await request(`${baseUrl}/state`)).json();
         if (!stopped) {
           setState(next);
+          setAirplay((current) => current ?? next.airplay);
           setPreview(true);
         }
       } catch (cause) {
@@ -219,6 +294,113 @@ function BindingSetup({
       stopped = true;
     };
   }, [baseUrl]);
+  useEffect(() => {
+    if (source !== 'airplay' || verifying) return;
+    const events = new EventSource(`${baseUrl}/events`);
+    events.onmessage = (event) => {
+      const value = JSON.parse(event.data) as { airplay?: AirPlaySetupInfo };
+      if (value.airplay) setAirplay(value.airplay);
+      setEventsOnline(true);
+    };
+    events.onerror = () => setEventsOnline(false);
+    return () => events.close();
+  }, [baseUrl, source, verifying]);
+  useEffect(() => {
+    if (
+      !selectedPeerId &&
+      state?.selectedPeer &&
+      peers.some((peer) => peer.id === state.selectedPeer)
+    )
+      onSelectPeer(state.selectedPeer);
+  }, [selectedPeerId, state?.selectedPeer, peers, onSelectPeer]);
+  const confirm = () => {
+    setBusy(true);
+    setError('');
+    void request(`${baseUrl}/confirm`, {
+      bluetoothPeerId: peer,
+      confirmed: true,
+    }).catch((cause) => {
+      setError(String(cause));
+      setBusy(false);
+    });
+  };
+  if (source === 'airplay') {
+    const checking = verifying || busy;
+    const info =
+      !eventsOnline && airplay?.state === 'streaming' && !checking
+        ? { ...airplay, state: 'interrupted' as const }
+        : airplay;
+    return (
+      <>
+        {!recovery && (
+          <div className="ios-hid-airplay-controls">
+            <span className="ios-hid-airplay-status">
+              {(!info || info.state === 'waiting' || checking) && (
+                <span className="ios-hid-waiting-ring" aria-hidden="true" />
+              )}
+              {airplayStatusText(info, checking)}
+            </span>
+            <p className="ios-hid-hint">
+              {info?.state === 'streaming'
+                ? '确认右侧画面是要操作的手机。'
+                : '按右侧提示在手机上开始屏幕镜像。'}
+            </p>
+            <Button
+              type="primary"
+              block
+              className="session-setup-submit"
+              loading={checking}
+              disabled={
+                !peer ||
+                !preview ||
+                !eventsOnline ||
+                info?.state !== 'streaming' ||
+                checking
+              }
+              onClick={confirm}
+            >
+              验证并连接
+            </Button>
+            {info?.state === 'failed' && (
+              <Button
+                block
+                disabled={checking}
+                onClick={() => {
+                  setError('');
+                  void request(`${baseUrl}/select`, {}).catch((cause) =>
+                    setError(String(cause)),
+                  );
+                }}
+              >
+                重试接收器
+              </Button>
+            )}
+            {onStop && (
+              <Button
+                type="text"
+                block
+                size="small"
+                disabled={checking}
+                onClick={onStop}
+              >
+                停止接收器
+              </Button>
+            )}
+            {error && <Alert type="warning" message={error} />}
+          </div>
+        )}
+        {previewTarget &&
+          createPortal(
+            <AirPlayPreview
+              info={info}
+              frameUrl={`${baseUrl}/frame`}
+              verifying={checking}
+            />,
+            previewTarget,
+          )}
+      </>
+    );
+  }
   return (
     <Space direction="vertical" className="ios-hid-fields" size="middle">
       {state?.source === 'usb' && (
@@ -228,27 +410,20 @@ function BindingSetup({
             '已选择手机'}
         </p>
       )}
-      {state?.source === 'airplay' && (
-        <>
-          <p>在 iPhone 控制中心打开「屏幕镜像」，选择以下接收器。</p>
-          <strong>{state.airplay?.name ?? '正在启动接收器…'}</strong>
-          {state.airplay && <p>配对码：{state.airplay.pin}</p>}
-        </>
-      )}
       <strong>{state?.selectedPeer ? '确认画面' : '蓝牙连接'}</strong>
       {!state?.selectedPeer && (
         <p>
-          在 iPhone「设置 → 蓝牙」中连接「Midscene 」，并在「辅助功能 →
-          触控」中启用辅助触控。
+          在 iPhone「设置 → 蓝牙」中连接「{state?.computerName ?? 'Mac'}
+          」，并在「辅助功能 → 触控」中启用辅助触控。
         </p>
       )}
       <div className="ios-hid-bluetooth-status">
-        {peers.map((peer) => (
-          <div key={peer.id} className="ios-hid-bluetooth-device">
-            <span className="ios-hid-online-dot" />
-            {peer.name}
-          </div>
-        ))}
+        <BluetoothPeers
+          peers={peers}
+          selected={peer}
+          disabled={busy}
+          onSelect={onSelectPeer}
+        />
         {!peers.length && (
           <span className="ios-hid-waiting">
             <span className="ios-hid-waiting-ring" aria-hidden="true" />
@@ -261,16 +436,7 @@ function BindingSetup({
         block
         loading={busy}
         disabled={!peer || !preview}
-        onClick={() => {
-          setBusy(true);
-          setError('');
-          void request(`${baseUrl}/confirm`, {
-            bluetoothPeerId: peer,
-            confirmed: true,
-          })
-            .catch((cause) => setError(String(cause)))
-            .finally(() => setBusy(false));
-        }}
+        onClick={confirm}
       >
         确认并验证指针
       </Button>
@@ -278,47 +444,6 @@ function BindingSetup({
       {preview &&
         previewTarget &&
         createPortal(<Frame url={`${baseUrl}/frame`} />, previewTarget)}
-    </Space>
-  );
-}
-function SavedSelection({ baseUrl }: { baseUrl: string }) {
-  const [items, setItems] = useState<Choice[]>([]);
-  const [id, setId] = useState<string>();
-  const [error, setError] = useState('');
-  useEffect(() => {
-    let stopped = false;
-    void request(`${baseUrl}/devices`)
-      .then((r) => r.json())
-      .then((items) => {
-        if (!stopped) setItems(items);
-      })
-      .catch((cause) => {
-        if (!stopped) setError(String(cause));
-      });
-    return () => {
-      stopped = true;
-    };
-  }, [baseUrl]);
-  return (
-    <Space direction="vertical" className="ios-hid-fields">
-      <p>有多个已保存配置，请选择这台手机的配置。</p>
-      <Select
-        aria-label="已保存设备"
-        value={id}
-        onChange={setId}
-        options={items.map((item) => ({ value: item.id, label: item.name }))}
-      />
-      <Button
-        disabled={!id}
-        onClick={() => {
-          void request(`${baseUrl}/select`, { id }).catch((cause) =>
-            setError(String(cause)),
-          );
-        }}
-      >
-        继续
-      </Button>
-      {error && <Alert type="warning" message={error} />}
     </Space>
   );
 }
@@ -355,6 +480,16 @@ export function ConnectionPanel({
   const availableDevices = devices.filter(
     (device) => !reservedSources.includes(`${source}:${device.id}`),
   );
+  const selectedPeerId = Form.useWatch('bluetoothPeerId', state.form) as
+    | string
+    | undefined;
+  const preferredPeer = useRef<string>(
+    state.form.getFieldValue('bluetoothPeerId'),
+  );
+  const selectPeer = (id: string) => {
+    preferredPeer.current = id;
+    state.form.setFieldValue('bluetoothPeerId', id);
+  };
   const [peers, setPeers] = useState<Choice[]>([]);
   const [connectedPeers, setConnectedPeers] = useState<Choice[]>([]);
   const [bluetoothName, setBluetoothName] = useState('Midscene');
@@ -431,7 +566,12 @@ export function ConnectionPanel({
         setBluetoothName(value.serviceName ?? 'Midscene');
         setBluetoothState(value.state);
         setBluetoothOnline(true);
-        const peer = value.hosts.length === 1 ? value.hosts[0].id : undefined;
+        const peer = resolveBluetoothSelection(
+          preferredPeer.current,
+          value.hosts,
+          reservedPeers,
+        );
+        if (peer) preferredPeer.current = peer;
         if (state.form.getFieldValue('bluetoothPeerId') !== peer)
           state.form.setFieldsValue({
             bluetoothPeerId: peer,
@@ -451,16 +591,30 @@ export function ConnectionPanel({
     return () => events.close();
   }, [state.form, apiBase, reservedPeerKey]);
   // The initial SSE snapshot restores state; it is not a new failure event.
+  const cancelled = useRef(false);
   const notifiedError = useRef(connection.error ?? '');
   useEffect(() => {
     const notice = error || connection.error || '';
-    if (notice && notice !== notifiedError.current)
+    if (!cancelled.current && notice && notice !== notifiedError.current)
       void message.warning(notice);
     notifiedError.current = notice;
   }, [error, connection.error]);
   const baseUrl = connection.setupId
     ? `${apiBase}/ios-hid/setup/${connection.setupId}`
     : undefined;
+  const lastAirplaySetup = useRef<string>();
+  if (source === 'airplay' && baseUrl && connection.setupKind === 'device')
+    lastAirplaySetup.current = baseUrl;
+  if (!pending) lastAirplaySetup.current = undefined;
+  const airplaySetupUrl =
+    source === 'airplay' && pending ? lastAirplaySetup.current : undefined;
+  const stopAirplay = () => {
+    cancelled.current = true;
+    void scopedRequest('/ios-hid/cancel', {}).catch((cause) => {
+      cancelled.current = false;
+      setError(String(cause));
+    });
+  };
   if (pending && connection.setupKind === 'camera' && baseUrl) {
     return createPortal(
       <div className="ios-hid-camera-page">
@@ -490,17 +644,22 @@ export function ConnectionPanel({
           form={state.form}
           layout="vertical"
           className="session-setup-form"
-          initialValues={{ source: initialSource }}
-          hidden={pending && Boolean(baseUrl)}
+          initialValues={{ source: initialSource, reuseConfiguration: true }}
+          hidden={pending && Boolean(baseUrl) && !airplaySetupUrl}
           disabled={pending}
           onFinish={async () => {
             setCameraId(state.form.getFieldValue('cameraId'));
             setError('');
+            cancelled.current = false;
             setPreparing(true);
             try {
               await cameraPreview.release.current();
               const { name: _name, ...input } = state.form.getFieldsValue(true);
-              if (await actions.createSession(input)) {
+              if (
+                await actions.createSession(input, {
+                  silent: source === 'airplay',
+                })
+              ) {
                 if (onConnected) onConnected();
                 else navigate('workspace');
               }
@@ -521,20 +680,21 @@ export function ConnectionPanel({
             className="ios-hid-connection-step"
           >
             <div className="ios-hid-bluetooth-status" aria-live="polite">
-              {connectedPeers.map((peer) => (
-                <div key={peer.id} className="ios-hid-bluetooth-device">
-                  <span className="ios-hid-online-dot" />
-                  {peer.name}
-                </div>
-              ))}
+              <BluetoothPeers
+                peers={connectedPeers}
+                selected={selectedPeerId}
+                reserved={reservedPeers}
+                disabled={pending || !bluetoothOnline}
+                onSelect={selectPeer}
+              />
               {!connectedPeers.length && (
                 <span className="ios-hid-waiting">
                   <span className="ios-hid-waiting-ring" aria-hidden="true" />
                   {!bluetoothOnline
                     ? '正在连接蓝牙服务…'
-                    : bluetoothState === 'bluetooth off'
+                    : bluetoothState.toLowerCase() === 'bluetooth off'
                       ? '请开启 Mac 蓝牙'
-                      : /not allowed|failed|unavailable/.test(bluetoothState)
+                      : /not allowed|failed|unavailable/i.test(bluetoothState)
                         ? '蓝牙服务不可用，请检查系统蓝牙权限'
                         : '等待手机连接…'}
                 </span>
@@ -618,20 +778,41 @@ export function ConnectionPanel({
               />
             </Form.Item>
           )}
-          <Button
-            className="session-setup-submit"
-            loading={pending}
-            htmlType="submit"
-            type="primary"
-            block
-            disabled={
-              peers.length !== 1 ||
-              !bluetoothOnline ||
-              (source !== 'airplay' && (loading || !selectedAvailable))
-            }
-          >
-            {source === 'airplay' ? '启动 AirPlay 接收器' : '连接设备'}
-          </Button>
+          <Form.Item name="reuseConfiguration" valuePropName="checked">
+            <Checkbox className="ios-hid-reuse-configuration">
+              使用已保存的校准配置（取消勾选可重新设置）
+            </Checkbox>
+          </Form.Item>
+          {airplaySetupUrl ? (
+            <BindingSetup
+              source="airplay"
+              baseUrl={airplaySetupUrl}
+              key={airplaySetupUrl}
+              previewTarget={previewTarget}
+              peers={peers}
+              selectedPeerId={selectedPeerId}
+              onSelectPeer={selectPeer}
+              onStop={stopAirplay}
+              verifying={
+                connection.phase === 'connecting' && !connection.setupId
+              }
+            />
+          ) : (
+            <Button
+              className="session-setup-submit"
+              loading={pending}
+              htmlType="submit"
+              type="primary"
+              block
+              disabled={
+                !peers.some((peer) => peer.id === selectedPeerId) ||
+                !bluetoothOnline ||
+                (source !== 'airplay' && (loading || !selectedAvailable))
+              }
+            >
+              {source === 'airplay' ? '启动 AirPlay 接收器' : '连接设备'}
+            </Button>
+          )}
         </Form>
         {!pending &&
           source === 'camera' &&
@@ -652,20 +833,23 @@ export function ConnectionPanel({
             ),
             previewTarget,
           )}
-        {pending && baseUrl && (
+        {pending && baseUrl && !airplaySetupUrl && (
           <div className="ios-hid-fields">
             <div ref={setControls} />
-            {baseUrl && connection.setupKind === 'selection' && (
-              <SavedSelection key={baseUrl} baseUrl={baseUrl} />
-            )}
-            {baseUrl && connection.setupKind === 'device' && (
-              <BindingSetup
-                peers={peers}
-                key={baseUrl}
-                baseUrl={baseUrl}
-                previewTarget={previewTarget}
-              />
-            )}
+            {baseUrl &&
+              connection.setupKind === 'device' &&
+              !airplaySetupUrl && (
+                <BindingSetup
+                  source={source}
+                  onStop={stopAirplay}
+                  peers={peers}
+                  selectedPeerId={selectedPeerId}
+                  onSelectPeer={selectPeer}
+                  key={baseUrl}
+                  baseUrl={baseUrl}
+                  previewTarget={previewTarget}
+                />
+              )}
           </div>
         )}
       </div>

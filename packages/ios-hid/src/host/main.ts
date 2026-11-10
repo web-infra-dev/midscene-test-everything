@@ -1,7 +1,6 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { configDirectory } from '../config/store.js';
-import { createPointerDiagnostics } from './diagnostics.js';
 import { IOSHIDHost } from './host.js';
 
 const lock = join(configDirectory, 'host.lock');
@@ -25,14 +24,7 @@ async function lockHost() {
   }
 }
 await lockHost();
-const debugDirectory = process.argv
-  .find((arg) => arg.startsWith('--pointer-debug='))
-  ?.slice('--pointer-debug='.length);
-const host = new IOSHIDHost({
-  pointerDiagnostics: debugDirectory
-    ? createPointerDiagnostics(debugDirectory)
-    : undefined,
-});
+const host = new IOSHIDHost();
 let stopping = false;
 async function stop() {
   if (stopping) return;

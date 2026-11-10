@@ -4,22 +4,11 @@ export type Route =
   | 'connect'
   | 'workspace'
   | `workspace/${string}`
-  | `connect/${string}`
-  | 'prototype-a'
-  | 'prototype-b'
-  | 'prototype-c';
+  | `connect/${string}`;
 export function readRoute(): Route {
   const path = location.hash.slice(2);
   if (/^(connect|workspace)\/[a-f0-9-]{36}$/.test(path)) return path as Route;
-  return [
-    'connect',
-    'workspace',
-    'prototype-a',
-    'prototype-b',
-    'prototype-c',
-  ].includes(path)
-    ? (path as Route)
-    : 'connect';
+  return ['connect', 'workspace'].includes(path) ? (path as Route) : 'connect';
 }
 export function navigate(route: Route, replace = false) {
   if (readRoute() === route && location.hash === `#/${route}`) return;

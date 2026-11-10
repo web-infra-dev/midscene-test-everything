@@ -37,10 +37,12 @@ for (const [source, input, expected] of cases) {
     await manager.createSession({
       source,
       name: 'Selected phone',
+      reuseConfiguration: false,
       bluetoothPeerId: 'single-connected-peer',
       ...input,
     });
     assert.equal(options.bluetoothPeerId, 'single-connected-peer');
+    assert.equal(options.reuseConfiguration, false);
     assert.deepEqual(options.screen, expected);
     await assert.rejects(
       manager.createSession({ source, ...input }),
@@ -55,7 +57,7 @@ test('does not silently choose hardware when selection is missing', async () => 
     .spyOn(IOSHIDDevice.prototype, 'connect')
     .mockImplementation(async () => {});
   const manager = new IOSHIDSessionManager();
-  for (const source of ['usb', 'camera']) {
+  for (const source of ['usb', 'camera', 'airplay']) {
     await assert.rejects(manager.createSession({ source }), /请选择/);
   }
   assert.equal(connect.mock.calls.length, 0);

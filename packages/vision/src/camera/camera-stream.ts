@@ -113,15 +113,18 @@ export class CameraStream extends EventEmitter {
       // The process started, but the camera may already be held by another
       // process, in which case no frame ever arrives. Report that as a failure
       // so the operator sees a reason instead of an endless spinner.
-      this.startupTimer = setTimeout(() => {
-        this.fail(
-          new Error(
-            `No frame arrived within ${this.startupTimeoutMs}ms; the camera may be in use by another process`,
-          ),
-        );
-      }, this.startupTimeoutMs);
-      // Do not keep the process alive just for this timer.
-      this.startupTimer.unref?.();
+      // Receivers awaiting a human connection can explicitly disable this deadline.
+      if (this.startupTimeoutMs > 0) {
+        this.startupTimer = setTimeout(() => {
+          this.fail(
+            new Error(
+              `No frame arrived within ${this.startupTimeoutMs}ms; the camera may be in use by another process`,
+            ),
+          );
+        }, this.startupTimeoutMs);
+        // Do not keep the process alive just for this timer.
+        this.startupTimer.unref?.();
+      }
     } catch (error) {
       this.fail(error instanceof Error ? error : new Error(String(error)));
       throw error;

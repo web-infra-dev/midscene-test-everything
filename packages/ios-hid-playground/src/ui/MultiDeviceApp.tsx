@@ -3,7 +3,11 @@ import { DisconnectedPreview } from '@midscene/arm-kit-playground/shell/Disconne
 import { PlaygroundPreview } from '@midscene/arm-kit-playground/shell/PlaygroundPreview.tsx';
 import { Button, Modal, Popover, Spin, Tabs, Tooltip, message } from 'antd';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { type Connection, ConnectionPanel } from './ConnectionPanel';
+import {
+  BindingSetup,
+  type Connection,
+  ConnectionPanel,
+} from './ConnectionPanel';
 import { type Route, navigate } from './routes';
 import './multi-device.css';
 
@@ -242,6 +246,26 @@ function DeviceWorkspace({
   };
   const [refreshing, setRefreshing] = useState(false);
   const busy = refreshing || Boolean(item.refreshing);
+  const lastRecoverySetup = useRef<string>();
+  if (busy && item.source === 'airplay' && item.state?.setupId)
+    lastRecoverySetup.current = `${item.apiBase}/ios-hid/setup/${item.state.setupId}`;
+  if (!busy) lastRecoverySetup.current = undefined;
+  const recoverySetup = lastRecoverySetup.current;
+  const [recoveryBluetoothConnected, setRecoveryBluetoothConnected] =
+    useState<boolean>();
+  useEffect(() => {
+    setRecoveryBluetoothConnected(undefined);
+  }, [recoverySetup]);
+  const recoveryMessage =
+    item.state?.phase === 'connecting'
+      ? '正在恢复设备控制…'
+      : recoverySetup
+        ? recoveryBluetoothConnected === false
+          ? '等待蓝牙重新连接，请在手机「设置 → 蓝牙」中连接这台 Mac。'
+          : recoveryBluetoothConnected === true
+            ? '等待手机恢复屏幕镜像…'
+            : '正在获取蓝牙连接状态…'
+        : '正在检查设备连接…';
   const ready = item.state?.phase === 'ready' && !item.screenError && !busy;
   const error =
     item.screenError ??
@@ -253,7 +277,11 @@ function DeviceWorkspace({
     if (busy) return;
     setRefreshing(true);
     try {
-      await workspaceRequest(`/${item.id}/refresh`, 'POST', 60000);
+      await workspaceRequest(
+        `/${item.id}/refresh`,
+        'POST',
+        10 * 60_000 + 15000,
+      );
     } catch (error) {
       void message.warning(
         error instanceof Error ? error.message : '恢复失败，请重试。',
@@ -316,8 +344,24 @@ function DeviceWorkspace({
       />
       {!ready && (
         <div className="ios-hid-device-notice">
-          <span>{busy ? '正在检查设备连接…' : error}</span>
+          <span>{busy ? recoveryMessage : error}</span>
         </div>
+      )}
+      {recoverySetup && (
+        <BindingSetup
+          key={recoverySetup}
+          recovery
+          onBluetoothStatus={setRecoveryBluetoothConnected}
+          baseUrl={recoverySetup}
+          source="airplay"
+          previewTarget={previewTarget}
+          peers={
+            item.bluetoothPeerId ? [{ id: item.bluetoothPeerId, name }] : []
+          }
+          selectedPeerId={item.bluetoothPeerId}
+          onSelectPeer={() => {}}
+          verifying={item.state?.phase === 'connecting'}
+        />
       )}
     </div>
   );
@@ -366,16 +410,15 @@ function DeviceWorkspace({
                 reservedPeers={workspaces
                   .filter(
                     (other) =>
-                      other.id !== item.id && other.state?.phase === 'ready',
+                      // Occupancy follows workspace membership, including outages.
+                      other.id !== item.id && other.connected,
                   )
                   .map((other) => other.bluetoothPeerId)
                   .filter((id): id is string => Boolean(id))}
                 reservedSources={workspaces
                   .filter(
                     (other) =>
-                      other.id !== item.id &&
-                      other.state?.phase === 'ready' &&
-                      other.sourceId,
+                      other.id !== item.id && other.connected && other.sourceId,
                   )
                   .map((other) => `${other.source}:${other.sourceId}`)}
                 onConnected={() => {
@@ -391,6 +434,8 @@ function DeviceWorkspace({
             <div className="ios-hid-preview" ref={setPreviewTarget}>
               <DisconnectedPreview />
             </div>
+          ) : recoverySetup ? (
+            <div className="ios-hid-preview" ref={setPreviewTarget} />
           ) : (
             <div className="ios-hid-device-preview">
               <div className="ios-hid-device-preview-header">

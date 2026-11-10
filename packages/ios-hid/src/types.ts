@@ -8,6 +8,8 @@ export type ScreenOptions =
   | { source: 'airplay' }
   | { source: 'camera'; cameraId?: string };
 export interface IOSHIDDeviceOptions {
+  /** Set false to repeat setup instead of reusing saved calibration. */
+  reuseConfiguration?: boolean;
   bluetoothPeerId?: string;
   id?: string;
   name?: string;
@@ -80,5 +82,13 @@ export interface TaskState {
   setupUrl?: string;
   setupKind?: ConnectionState['setupKind'];
   result?: string;
+  error?: string;
+}
+
+/** Receiver readiness and picture availability are separate states. */
+export interface AirPlaySetupInfo {
+  name: string;
+  pin: string;
+  state: 'waiting' | 'streaming' | 'interrupted' | 'failed';
   error?: string;
 }

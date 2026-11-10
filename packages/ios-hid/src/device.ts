@@ -70,7 +70,7 @@ export class IOSHIDDevice extends IOSHIDInterface {
         {
           ...options,
           interactive: false,
-          timeoutMs: options.timeoutMs ?? 30000,
+          timeoutMs: options.timeoutMs ?? 60000,
         },
         true,
       );
@@ -111,7 +111,7 @@ export class IOSHIDDevice extends IOSHIDInterface {
         }
         if (state.phase === 'failed' || state.phase === 'closed')
           throw new Error(state.error ?? 'Device connection closed');
-        if (restore && state.phase === 'setup-required')
+        if (restore && state.phase === 'setup-required' && !onState)
           throw new Error('原设备配置无法恢复，请移除设备后重新添加。');
         if (
           state.phase === 'setup-required' &&

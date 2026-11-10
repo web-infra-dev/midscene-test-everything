@@ -1,6 +1,5 @@
 import { CameraStreamManager, cameraBackend } from '@midscene/robotics-vision';
 import { HIDInputManager, type HIDInputSession } from '../input/session.js';
-import type { PointerDiagnostics } from '../pointer/diagnostics.js';
 import { AirPlayScreenSession } from '../screen/airplay.js';
 import { CameraScreenSession } from '../screen/camera.js';
 import type { ScreenSession } from '../screen/source.js';
@@ -11,10 +10,7 @@ import { DeviceSession } from './device-session.js';
 /** All native resources, including first-time setup previews, belong to this runtime. */
 export class IOSHIDRuntime {
   readonly cameras = new CameraStreamManager(cameraBackend());
-  readonly input: HIDInputManager;
-  constructor(options: { pointerDiagnostics?: PointerDiagnostics } = {}) {
-    this.input = new HIDInputManager(options.pointerDiagnostics);
-  }
+  readonly input = new HIDInputManager();
   private owners = new Set<string>();
   private sessions = new Set<DeviceSession>();
   private screens = new Map<ScreenSession, string>();
@@ -73,6 +69,7 @@ export class IOSHIDRuntime {
           return opened.getFrame(options);
         },
         getSetupInfo: () => opened.getSetupInfo?.(),
+        subscribeSetup: opened.subscribeSetup?.bind(opened),
         close: () => {
           closing ??= (async () => {
             try {

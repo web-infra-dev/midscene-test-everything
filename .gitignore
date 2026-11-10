@@ -12,5 +12,6 @@ coverage/
 
 .midscene/
 midscene_run/
+.promo-ios-hid/
 
 packages/calibration-ui/lib/

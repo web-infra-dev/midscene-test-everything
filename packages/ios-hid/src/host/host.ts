@@ -8,7 +8,6 @@ import {
 import { join } from 'node:path';
 import { listCameras } from '@midscene/robotics-vision';
 import { DeviceConfigStore, configDirectory } from '../config/store.js';
-import type { PointerDiagnostics } from '../pointer/diagnostics.js';
 import { IOSHIDRuntime } from '../runtime/runtime.js';
 import { listUSBDevices } from '../screen/usb.js';
 import {
@@ -26,12 +25,8 @@ import { HostTaskManager } from './tasks.js';
 export class IOSHIDHost {
   private token = randomBytes(32).toString('hex');
   private config = new DeviceConfigStore();
-  private runtime: IOSHIDRuntime;
-  private cameraPreviews: CameraPreviews;
-  constructor(options: { pointerDiagnostics?: PointerDiagnostics } = {}) {
-    this.runtime = new IOSHIDRuntime(options);
-    this.cameraPreviews = new CameraPreviews(this.runtime.cameras);
-  }
+  private runtime = new IOSHIDRuntime();
+  private cameraPreviews = new CameraPreviews(this.runtime.cameras);
   private connections?: ConnectionManager;
   private tasks?: HostTaskManager;
   private server = createServer((req, res) => {

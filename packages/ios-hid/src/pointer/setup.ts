@@ -1,7 +1,6 @@
 import type { ScreenSession } from '../screen/source.js';
 import type { Point, ScreenFrame } from '../types.js';
 import { scorePointerPositions } from './detector.js';
-import type { PointerDiagnostics } from './diagnostics.js';
 import { type PointerTurn, pointerToScreen } from './mapping.js';
 
 export interface PointerTransport {
@@ -15,10 +14,9 @@ export async function measurePointerTurn(
   screen: ScreenSession,
   input: PointerTransport,
   signal: AbortSignal,
-  diagnostics?: PointerDiagnostics,
 ): Promise<{ turn: PointerTurn; width: number; height: number }> {
   const votes = [0, 0, 0, 0];
-  let frame = await screen.getFrame({ fresh: true });
+  let frame = await screen.getFrame({ fresh: true, allowUnchanged: true });
   for (const point of [
     { x: 0.27, y: 0.32 },
     { x: 0.68, y: 0.61 },
@@ -32,19 +30,17 @@ export async function measurePointerTurn(
     for (let attempt = 0; attempt < 5; attempt++) {
       await pause(100);
       signal.throwIfAborted();
-      frame = await screen.getFrame({ fresh: true, timeoutMs: 3000 });
+      frame = await screen.getFrame({
+        fresh: true,
+        allowUnchanged: true,
+        timeoutMs: 3000,
+      });
       const turns = [0, 1, 2, 3] as const;
       const scores = await scorePointerPositions(
         before,
         frame,
         turns.map((turn) => pointerToScreen(point, turn)),
       );
-      await diagnostics?.({
-        stage: 'orientation',
-        before,
-        after: frame,
-        data: { point, attempt, scores },
-      });
       const ranked = turns
         .map((turn) => ({ turn, ...scores[turn] }))
         .sort((a, b) => b.mean - a.mean);

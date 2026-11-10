@@ -4,7 +4,7 @@ import { IOSHIDInterface } from './interface.js';
 import type { InputAction } from './types.js';
 
 const inputContext =
-  'Input supports ASCII only. For Chinese, focus the field, use the on-screen keyboard, switch input methods if needed, and tap keys and candidates slowly. Check screenshots between short sequences and verify the committed text. Report if the keyboard or input method is unavailable.';
+  'Input supports ASCII only. For Chinese, focus the field, use the on-screen keyboard, switch input methods if needed, and tap keys and candidates slowly. Check screenshots between short sequences and verify the committed text. Report if the keyboard or input method is unavailable. Avoid starting swipes on the floating AssistiveTouch menu.';
 
 function withInputContext(options: AgentOpt = {}): AgentOpt {
   const userContext =

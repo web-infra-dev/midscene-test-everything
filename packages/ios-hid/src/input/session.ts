@@ -1,12 +1,13 @@
 import { NativeHIDClient } from '../native/client.js';
-import type { PointerDiagnostics } from '../pointer/diagnostics.js';
 import {
   type PointerTurn,
   screenDeltaToPointer,
   screenToPointer,
 } from '../pointer/mapping.js';
 import {
+  MotionValidationError,
   type PointerMotionModel,
+  correctMotionModel,
   measureMotionModel,
   planRelativeDrag,
   validateMotionModel,
@@ -26,7 +27,6 @@ import type { DeviceConfig, InputAction, Point } from '../types.js';
 const pause = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
 export class HIDInputManager {
-  constructor(private diagnostics?: PointerDiagnostics) {}
   private native = new NativeHIDClient();
   subscribe(listener: Parameters<NativeHIDClient['subscribe']>[0]) {
     return this.native.subscribe(listener);
@@ -71,7 +71,7 @@ export class HIDInputManager {
       lifetime.addEventListener('abort', onAbort, { once: true });
       if (lifetime.aborted) onAbort();
     });
-    return new HIDInputSession(this.native, peerId, this.diagnostics);
+    return new HIDInputSession(this.native, peerId);
   }
 
   close() {
@@ -93,7 +93,6 @@ export class HIDInputSession {
   constructor(
     private native: NativeHIDClient,
     private peer: string,
-    private diagnostics?: PointerDiagnostics,
   ) {}
   cancel() {
     this.lifetime.abort();
@@ -120,16 +119,40 @@ export class HIDInputSession {
     const signal = cancellation
       ? AbortSignal.any([this.lifetime.signal, cancellation])
       : this.lifetime.signal;
+    signal.throwIfAborted();
+    const config = this.profileConfig;
+    const cached = config?.pointerMotion;
+    if (config && cached) {
+      const frame = await screen.getFrame({
+        fresh: true,
+        allowUnchanged: true,
+        timeoutMs: 10000,
+      });
+      const geometry = {
+        width: frame.width,
+        height: frame.height,
+        turn: cached.turn,
+      };
+      if (
+        frame.width === cached.width &&
+        frame.height === cached.height &&
+        compatibleMotionProfile(cached, motionBinding(config, geometry))
+      ) {
+        signal.throwIfAborted();
+        this.mapping = geometry;
+        this.motion = cached.model;
+        return;
+      }
+    }
     this.mapping = await measurePointerTurn(
       screen,
       { absolute: (point) => this.absolute(point, signal) },
       signal,
-      this.diagnostics,
     );
     this.motion = undefined;
-    // Reconnection checks only move the cursor; no extra phone page or clicks.
-    if (this.profileConfig?.pointerMotion)
-      await this.prepareMotion(screen, signal);
+    // New or changed bindings require measurement; ordinary reconnects reuse
+    // the previously validated orientation and movement table above.
+    await this.prepareMotion(screen, signal);
   }
   private async prepareMotion(screen: ScreenSession, signal: AbortSignal) {
     const config = this.profileConfig;
@@ -159,7 +182,6 @@ export class HIDInputSession {
           transport,
           cached.model,
           signal,
-          this.diagnostics,
         );
       } catch {
         signal.throwIfAborted();
@@ -178,19 +200,32 @@ export class HIDInputSession {
       config.pointerMotion = undefined;
       await this.persistProfile?.();
     }
-    const measured = await measureMotionModel(
-      screen,
-      transport,
-      signal,
-      this.diagnostics,
-    );
-    const validation = await validateMotionModel(
-      screen,
-      transport,
-      measured.model,
-      signal,
-      this.diagnostics,
-    );
+    const measured = await measureMotionModel(screen, transport, signal);
+    let validation;
+    // Learn stable discrepancies, then test again with new moves. Never turn a
+    // failed sample itself into a passing validation or save unchecked data.
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        validation = await validateMotionModel(
+          screen,
+          transport,
+          measured.model,
+          signal,
+        );
+        break;
+      } catch (error) {
+        signal.throwIfAborted();
+        if (!(error instanceof MotionValidationError) || attempt === 2)
+          throw error;
+        correctMotionModel(measured.model, error.sample);
+        const index = measured.samples.findIndex(
+          (sample) =>
+            sample.delta.x === error.sample.delta.x &&
+            sample.delta.y === error.sample.delta.y,
+        );
+        if (index >= 0) measured.samples[index] = error.sample;
+      }
+    }
     signal.throwIfAborted();
     await assertGeometry();
     if (config) {
@@ -203,7 +238,7 @@ export class HIDInputSession {
         dragReportLimit: DRAG_REPORT_LIMIT,
         model: measured.model,
         samples: measured.samples,
-        validation,
+        validation: validation!,
         measuredAt: new Date().toISOString(),
       };
       await this.persistProfile?.();
@@ -253,14 +288,10 @@ export class HIDInputSession {
     if (!action || typeof action !== 'object')
       throw new Error('Invalid input action');
     if (action.type === 'home') {
-      // Consumer AC Home, matching the fork's homescreen command.
-      try {
-        await this.native.send(this.peer, 4, [0x23, 0x02]);
-        await pause(40);
-        signal.throwIfAborted();
-      } finally {
-        await this.native.send(this.peer, 4, [0, 0]);
-      }
+      // Consumer AC Home is accepted but ignored on some iPhones. The external
+      // keyboard system shortcut works on those devices as well.
+      await this.sendKey(11, 8, signal); // Command + H
+      signal.throwIfAborted();
       return;
     }
     if (action.type === 'back') {

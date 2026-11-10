@@ -3,16 +3,30 @@ import type { DeviceConfig, Point } from '../types.js';
 import type { PointerTurn } from './mapping.js';
 import type { PointerMotionModel } from './motion-model.js';
 
-export const MOTION_VERSION = 1;
+// Measured report tables replace two-point quadratic curves.
+export const MOTION_VERSION = 3;
 export const REPORT_INTERVAL_MS = 16;
 export const DRAG_REPORT_LIMIT = 8;
-export const MEASURED_REPORT_LIMIT = 14;
+export const MEASURED_REPORT_LIMIT = 8;
+export const CALIBRATION_REPORTS = [
+  ...[8, 6, 4, 2].flatMap((units) =>
+    ['x', 'y'].map((axis) => ({
+      delta: { x: axis === 'x' ? units : 0, y: axis === 'y' ? units : 0 },
+      reports: units === 8 ? 12 : units === 6 ? 16 : units === 4 ? 32 : 64,
+    })),
+  ),
+  ...[4, 2].map((units) => ({
+    delta: { x: units, y: units },
+    reports: units === 4 ? 24 : 48,
+  })),
+];
 
 export interface MotionSample {
   delta: Point;
   reports: number;
   displacement: Point;
   elapsedMs: number;
+  repetitions?: { displacement: Point; elapsedMs: number }[];
 }
 export interface MotionValidation {
   samples: MotionSample[];
@@ -65,7 +79,7 @@ export function motionBinding(
     .digest('hex');
 }
 
-/** Disk data is a cache, never permission to skip runtime measurement. */
+/** Only reuse a measured profile that matches the current hardware binding. */
 export function compatibleMotionProfile(
   profile: PointerMotionProfile | undefined,
   binding: string,
@@ -102,24 +116,32 @@ export function compatibleMotionProfile(
       (n) => Number.isInteger(n) && n > 0,
     ) &&
     [0, 1, 2, 3].includes(profile.turn) &&
-    ['x', 'y'].every((axis) => {
-      const curve = profile.model?.[axis as 'x' | 'y'];
+    Array.isArray(profile.model?.reports) &&
+    profile.model.reports.length === CALIBRATION_REPORTS.length &&
+    CALIBRATION_REPORTS.every(({ delta }) => {
+      const reports = profile.model.reports.filter(
+        (point) => point.delta?.x === delta.x && point.delta?.y === delta.y,
+      );
+      if (reports.length !== 1) return false;
+      const d = reports[0].displacement;
       return (
-        curve &&
-        Number.isFinite(curve.a) &&
-        curve.a > 0 &&
-        Number.isFinite(curve.b) &&
-        curve.b >= 0
+        validPoint(d) &&
+        (delta.x ? d.x > 0 : d.x === 0) &&
+        (delta.y ? d.y > 0 : d.y === 0)
       );
     }) &&
     validSamples(profile.samples) &&
-    profile.samples.length >= 4 &&
+    profile.samples.length === CALIBRATION_REPORTS.length &&
     Boolean(profile.validation) &&
     validSamples(profile.validation.samples) &&
+    profile.validation.samples.length === 3 &&
     Number.isFinite(profile.validation.maxErrorPx) &&
     profile.validation.maxErrorPx >= 0 &&
     Number.isFinite(profile.validation.maxRelativeError) &&
     profile.validation.maxRelativeError >= 0 &&
+    (profile.validation.maxErrorPx <= 4 ||
+      profile.validation.maxRelativeError <= 0.08) &&
+    Number.isFinite(Date.parse(profile.validation.checkedAt)) &&
     Number.isFinite(Date.parse(profile.measuredAt))
   );
 }

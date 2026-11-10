@@ -35,6 +35,23 @@ export class DeviceConfigStore {
       )
         throw new Error('Invalid device configuration');
       this.devices = value.devices;
+      // Older versions could save several records for the same phone/source.
+      // The last occurrence is the most recently saved record.
+      const unique = this.devices.filter(
+        (device, index, devices) =>
+          !device.bluetoothPeerId ||
+          !devices
+            .slice(index + 1)
+            .some(
+              (other) =>
+                other.bluetoothPeerId === device.bluetoothPeerId &&
+                other.screen.source === device.screen.source,
+            ),
+      );
+      if (unique.length !== this.devices.length) {
+        this.devices = unique;
+        await this.save(unique[unique.length - 1]);
+      }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
@@ -43,15 +60,15 @@ export class DeviceConfigStore {
     return structuredClone(this.devices);
   }
   resolve(options: IOSHIDDeviceOptions): DeviceConfig {
-    // An unnamed explicitly selected phone must not reuse an unrelated saved profile.
+    // A selected Bluetooth phone and source identify the saved configuration.
     const physicalSelection =
       !options.id &&
-      !options.name &&
-      (options.bluetoothPeerId || options.screen);
+      (options.bluetoothPeerId || (!options.name && options.screen));
     const matches = this.devices.filter((d) =>
       physicalSelection
         ? options.bluetoothPeerId
-          ? d.bluetoothPeerId === options.bluetoothPeerId
+          ? d.bluetoothPeerId === options.bluetoothPeerId &&
+            (!options.screen || d.screen.source === options.screen.source)
           : options.screen?.source === 'usb' &&
               d.screen.source === 'usb' &&
               Boolean(options.screen.deviceId)
@@ -61,13 +78,22 @@ export class DeviceConfigStore {
                   (d.screen.source === 'camera'
                     ? d.screen.cameraId
                     : undefined)) === options.screen.cameraId
-              : d.screen.source === options.screen?.source
+              : false
         : options.id
           ? d.id === options.id
           : options.name
-            ? d.name === options.name
+            ? d.name === options.name &&
+              (!options.screen || d.screen.source === options.screen.source)
             : true,
     );
+    // An explicit phone/source never needs an intermediate profile picker.
+    if (
+      physicalSelection &&
+      options.bluetoothPeerId &&
+      options.screen &&
+      matches.length > 1
+    )
+      matches.splice(0, matches.length - 1);
     if (matches.length > 1)
       throw new DeviceSelectionRequired(structuredClone(matches));
     if (options.id && matches.length === 0)
@@ -79,6 +105,17 @@ export class DeviceConfigStore {
         name: options.name ?? 'iPhone',
         screen: options.screen ?? { source: 'usb' },
         bluetoothPeerId: options.bluetoothPeerId,
+      });
+    if (
+      options.screen &&
+      options.screen.source !== found.screen.source &&
+      found.bluetoothPeerId
+    )
+      return this.resolve({
+        ...options,
+        id: undefined,
+        name: undefined,
+        bluetoothPeerId: options.bluetoothPeerId ?? found.bluetoothPeerId,
       });
     const config = structuredClone(found);
     if (options.screen) {
@@ -98,16 +135,32 @@ export class DeviceConfigStore {
           : structuredClone(next);
       // A new capture binding must be confirmed against the Bluetooth phone.
       // Keep the system pairing; only repeat the local identity confirmation.
-      if (changed) config.bluetoothPeerId = undefined;
+      if (changed) {
+        config.bluetoothPeerId = undefined;
+        config.pointerMotion = undefined;
+        if (next.source === 'camera') config.camera = undefined;
+      }
     }
     if (options.bluetoothPeerId)
       config.bluetoothPeerId = options.bluetoothPeerId;
+    if (options.reuseConfiguration === false) {
+      config.camera = undefined;
+      config.pointerMotion = undefined;
+    }
     return config;
   }
   async save(config: DeviceConfig) {
     const operation = this.pending.then(async () => {
       const next = this.devices
-        .filter((d) => d.id !== config.id)
+        .filter(
+          (d) =>
+            d.id !== config.id &&
+            !(
+              config.bluetoothPeerId &&
+              d.bluetoothPeerId === config.bluetoothPeerId &&
+              d.screen.source === config.screen.source
+            ),
+        )
         .concat(structuredClone(config));
       const target = join(this.directory, 'devices.json');
       const temporary = `${target}.${randomUUID()}.tmp`;

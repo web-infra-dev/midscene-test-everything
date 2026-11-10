@@ -1,11 +1,10 @@
 import type { ScreenSession } from '../screen/source.js';
 import type { Point } from '../types.js';
 import { detectPointerChanges } from './detector.js';
-import type { PointerDiagnostics } from './diagnostics.js';
 import { type PointerTurn, screenDeltaToPointer } from './mapping.js';
 import {
+  CALIBRATION_REPORTS,
   DRAG_REPORT_LIMIT,
-  MEASURED_REPORT_LIMIT,
   type MotionSample,
   type MotionValidation,
   REPORT_INTERVAL_MS,
@@ -15,13 +14,9 @@ export interface RelativeTransport {
   moveTo(point: Point): Promise<void>;
   relative(delta: Point, buttons?: number): Promise<void>;
 }
-interface AxisCurve {
-  a: number;
-  b: number;
-}
+/** Actual screen displacement for one report, at the configured report cadence. */
 export interface PointerMotionModel {
-  x: AxisCurve;
-  y: AxisCurve;
+  reports: { delta: Point; displacement: Point }[];
 }
 const pause = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -30,10 +25,15 @@ export function predictMovement(
   model: PointerMotionModel,
   delta: Point,
 ): Point {
-  const length = Math.hypot(delta.x, delta.y);
+  if (!delta.x && !delta.y) return { x: 0, y: 0 };
+  const measured = model.reports.find(
+    ({ delta: report }) =>
+      report.x === Math.abs(delta.x) && report.y === Math.abs(delta.y),
+  );
+  if (!measured) throw new Error('Relative report has not been measured');
   return {
-    x: delta.x * (model.x.a + model.x.b * length),
-    y: delta.y * (model.y.a + model.y.b * length),
+    x: Math.sign(delta.x) * measured.displacement.x,
+    y: Math.sign(delta.y) * measured.displacement.y,
   };
 }
 
@@ -45,20 +45,56 @@ async function probe(
   reports: number,
   cross: number,
   signal: AbortSignal,
-  diagnostics?: PointerDiagnostics,
 ): Promise<MotionSample> {
   signal.throwIfAborted();
-  const frame = await screen.getFrame({ fresh: true });
+  const frame = await screen.getFrame({ fresh: true, allowUnchanged: true });
   const origin = {
     x: frame.width * (delta.x ? 0.2 : cross),
     y: frame.height * (delta.y ? 0.2 : cross),
   };
   await transport.moveTo(origin);
-  await pause(250);
-  signal.throwIfAborted();
-  const before = await screen.getFrame({ fresh: true });
-  if (before.width !== frame.width || before.height !== frame.height)
-    throw new Error('Screen geometry changed during pointer measurement');
+  const tolerance = Math.max(10, Math.min(frame.width, frame.height) * 0.025);
+  let before = frame;
+  let previousAnchor: Point | undefined;
+  let anchorFrames = 0;
+  // The absolute report can arrive well before its video frame. Verify that the
+  // anchor itself has appeared and settled before sending relative reports.
+  for (let attempt = 0; attempt < 24; attempt++) {
+    await pause(100);
+    signal.throwIfAborted();
+    before = await screen.getFrame({
+      fresh: true,
+      allowUnchanged: true,
+      timeoutMs: 1500,
+    });
+    if (before.width !== frame.width || before.height !== frame.height)
+      throw new Error('Screen geometry changed during pointer measurement');
+    let changes;
+    try {
+      changes = await detectPointerChanges(frame, before);
+    } catch {
+      previousAnchor = undefined;
+      anchorFrames = 0;
+      continue;
+    }
+    const anchors = changes.filter(
+      (p) => Math.hypot(p.x - origin.x, p.y - origin.y) < tolerance,
+    );
+    const anchor = anchors.length === 1 ? anchors[0] : undefined;
+    anchorFrames =
+      anchor &&
+      previousAnchor &&
+      Math.hypot(anchor.x - previousAnchor.x, anchor.y - previousAnchor.y) <=
+        1.5
+        ? anchorFrames + 1
+        : 0;
+    previousAnchor = anchor;
+    if (anchorFrames >= 2) break;
+  }
+  if (anchorFrames < 2)
+    throw new Error(
+      'Pointer start position did not settle. Keep a static screen visible and check video latency.',
+    );
   let lastStart = 0;
   const started = performance.now();
   for (let i = 0; i < reports; i++) {
@@ -71,11 +107,16 @@ async function probe(
     await transport.relative(delta);
   }
   const elapsedMs = performance.now() - started;
-  const tolerance = Math.max(10, Math.min(frame.width, frame.height) * 0.025);
-  for (let attempt = 0; attempt < 8; attempt++) {
+  let previousEnd: Point | undefined;
+  let stableFrames = 0;
+  for (let attempt = 0; attempt < 24; attempt++) {
     await pause(100);
     signal.throwIfAborted();
-    const after = await screen.getFrame({ fresh: true, timeoutMs: 3000 });
+    const after = await screen.getFrame({
+      fresh: true,
+      allowUnchanged: true,
+      timeoutMs: 3000,
+    });
     let changes;
     try {
       changes = await detectPointerChanges(before, after);
@@ -84,21 +125,23 @@ async function probe(
       // An old frame is retryable; geometry changes must not be fitted.
       if (before.width !== after.width || before.height !== after.height)
         throw error;
+      previousEnd = undefined;
+      stableFrames = 0;
       continue;
     }
-    await diagnostics?.({
-      stage: 'movement',
-      before,
-      after,
-      data: { delta, reports, origin, attempt, candidates: changes },
-    });
+
     const anchors = changes.filter(
       (p) => Math.hypot(p.x - origin.x, p.y - origin.y) < tolerance,
     );
-    if (anchors.length !== 1) continue;
+    if (anchors.length !== 1) {
+      previousEnd = undefined;
+      stableFrames = 0;
+      continue;
+    }
     const start = anchors[0];
     const ends = changes.filter((p) => {
-      if (p === start) return false;
+      // Small changing text or spinner fragments are not the pointer endpoint.
+      if (p === start || p.area < start.area * 0.4) return false;
       const dx = p.x - start.x;
       const dy = p.y - start.y;
       return (
@@ -112,7 +155,18 @@ async function probe(
         p.y < frame.height * 0.9
       );
     });
-    if (ends.length === 1)
+    if (ends.length === 1) {
+      const end = ends[0];
+      // Acknowledging a HID write does not mean video has reached its final
+      // position. Observe four agreeing fresh frames (~300ms), so a short
+      // plateau in delayed video isn't mistaken for the final endpoint.
+      stableFrames =
+        previousEnd &&
+        Math.hypot(end.x - previousEnd.x, end.y - previousEnd.y) <= 1.5
+          ? stableFrames + 1
+          : 0;
+      previousEnd = end;
+      if (stableFrames < 3) continue;
       return {
         delta,
         reports,
@@ -122,65 +176,125 @@ async function probe(
         },
         elapsedMs,
       };
+    }
+    previousEnd = undefined;
+    stableFrames = 0;
   }
   throw new Error(
-    'Cannot measure relative pointer movement. Keep a static bright screen visible and avoid reflections, then retry.',
+    'Pointer endpoint did not settle or could not be identified. Keep a static bright screen visible and check video latency.',
   );
+}
+
+/** Three independent moves; take the median trial only when a majority agrees. */
+async function repeatProbe(
+  ...args: Parameters<typeof probe>
+): Promise<MotionSample> {
+  const trials: MotionSample[] = [];
+  for (let i = 0; i < 3; i++) {
+    const sample = await probe(...args);
+    trials.push(sample);
+  }
+  const ordered = [...trials].sort(
+    (a, b) =>
+      Math.hypot(a.displacement.x, a.displacement.y) -
+      Math.hypot(b.displacement.x, b.displacement.y),
+  );
+  const median = ordered[1];
+  const tolerance = Math.max(
+    4,
+    Math.hypot(median.displacement.x, median.displacement.y) * 0.08,
+  );
+  const agreeing = trials.filter(
+    (sample) =>
+      Math.hypot(
+        sample.displacement.x - median.displacement.x,
+        sample.displacement.y - median.displacement.y,
+      ) <= tolerance,
+  );
+  if (agreeing.length < 2)
+    throw new Error(
+      'Pointer measurements are inconsistent across repeated moves. Keep a static screen visible and check video latency.',
+    );
+  return {
+    ...median,
+    repetitions: trials.map(({ displacement, elapsedMs }) => ({
+      displacement,
+      elapsedMs,
+    })),
+  };
 }
 
 export async function measureMotionModel(
   screen: ScreenSession,
   transport: RelativeTransport,
   signal: AbortSignal,
-  diagnostics?: PointerDiagnostics,
 ): Promise<{ model: PointerMotionModel; samples: MotionSample[] }> {
-  const model = {} as PointerMotionModel;
+  // iOS may damp the first relative reports after establishing the channel.
+  // Warm up without pressing a button, then return to measured probe anchors.
+  const frame = await screen.getFrame({ fresh: true, allowUnchanged: true });
+  await transport.moveTo({ x: frame.width * 0.2, y: frame.height * 0.3 });
+  for (let i = 0; i < 12; i++) {
+    signal.throwIfAborted();
+    await transport.relative({ x: 6, y: 0 });
+    await pause(REPORT_INTERVAL_MS);
+  }
+  const model: PointerMotionModel = { reports: [] };
   const samples: MotionSample[] = [];
-  for (const axis of ['x', 'y'] as const) {
-    let accepted = false;
+  // Measure only reports the planner will actually send. Diagonals are measured
+  // independently: iOS acceleration can depend on vector length, not each axis.
+  for (const { delta, reports } of CALIBRATION_REPORTS) {
+    let sample: MotionSample | undefined;
     for (const cross of [0.3, 0.5, 0.7]) {
       try {
-        const measured: MotionSample[] = [];
-        for (const [units, count] of [
-          [6, 12],
-          [MEASURED_REPORT_LIMIT, 5],
-        ])
-          measured.push(
-            await probe(
-              screen,
-              transport,
-              { x: axis === 'x' ? units : 0, y: axis === 'y' ? units : 0 },
-              count,
-              cross,
-              signal,
-              diagnostics,
-            ),
-          );
-        const [small, large] = measured.map((s) => ({
-          units: s.delta[axis],
-          pixels: s.displacement[axis] / s.reports,
-        }));
-        const b =
-          (large.pixels / large.units - small.pixels / small.units) /
-          (large.units - small.units);
-        const a = small.pixels / small.units - b * small.units;
-        if (!Number.isFinite(a) || !Number.isFinite(b) || a <= 0 || b < 0)
-          continue;
-        model[axis] = { a, b };
-        samples.push(...measured);
-        accepted = true;
+        sample = await repeatProbe(
+          screen,
+          transport,
+          delta,
+          reports,
+          cross,
+          signal,
+        );
         break;
       } catch (error) {
         signal.throwIfAborted();
         if (cross === 0.7) throw error;
       }
     }
-    if (!accepted)
-      throw new Error(
-        'Cannot fit relative pointer movement. Keep the screen static and retry.',
-      );
+    const observed = sample!;
+    model.reports.push({
+      delta: { ...delta },
+      displacement: {
+        x: delta.x ? observed.displacement.x / reports : 0,
+        y: delta.y ? observed.displacement.y / reports : 0,
+      },
+    });
+    samples.push(observed);
   }
   return { model, samples };
+}
+
+export class MotionValidationError extends Error {
+  constructor(
+    readonly sample: MotionSample,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/** Refine a measured report only; a subsequent independent check is mandatory. */
+export function correctMotionModel(
+  model: PointerMotionModel,
+  sample: MotionSample,
+) {
+  const point = model.reports.find(
+    ({ delta }) => delta.x === sample.delta.x && delta.y === sample.delta.y,
+  );
+  if (!point) throw new Error('Cannot correct an unmeasured report');
+  point.displacement = {
+    x: sample.delta.x ? sample.displacement.x / sample.reports : 0,
+    y: sample.delta.y ? sample.displacement.y / sample.reports : 0,
+  };
 }
 
 /** Independent axis and diagonal checks, also used before reusing disk data. */
@@ -189,7 +303,6 @@ export async function validateMotionModel(
   transport: RelativeTransport,
   model: PointerMotionModel,
   signal: AbortSignal,
-  diagnostics?: PointerDiagnostics,
 ): Promise<MotionValidation> {
   const frame = await screen.getFrame();
   const samples: MotionSample[] = [];
@@ -228,14 +341,13 @@ export async function validateMotionModel(
     let result: MotionSample | undefined;
     for (const cross of [0.3, 0.5, 0.7]) {
       try {
-        result = await probe(
+        result = await repeatProbe(
           screen,
           transport,
           delta,
           count,
           cross,
           signal,
-          diagnostics,
         );
         break;
       } catch (error) {
@@ -252,8 +364,9 @@ export async function validateMotionModel(
     const relativeError = error / Math.hypot(expected.x, expected.y);
     // Screenshot localization has a finite pixel floor; do not promise subpixel accuracy.
     if (error > Math.max(4, Math.hypot(expected.x, expected.y) * 0.08))
-      throw new Error(
-        'Pointer movement validation failed. Keep the phone still, check the picture and retry.',
+      throw new MotionValidationError(
+        sample,
+        `Pointer movement differs from the fitted curve by ${error.toFixed(1)}px (${(relativeError * 100).toFixed(1)}%). Keep a static screen visible; check Tracking Speed and video latency.`,
       );
     maxErrorPx = Math.max(maxErrorPx, error);
     maxRelativeError = Math.max(maxRelativeError, relativeError);
@@ -300,16 +413,23 @@ export function planRelativeDrag(
         (!target.y && y)
       )
         continue;
+      if (
+        (x || y) &&
+        !model.reports.some(
+          ({ delta }) => delta.x === Math.abs(x) && delta.y === Math.abs(y),
+        )
+      )
+        continue;
       candidates.push({
         report: { x, y },
         displacement: predictMovement(model, { x, y }),
       });
     }
   const minimumSteps = Math.max(8, Math.ceil(duration / REPORT_INTERVAL_MS));
-  // Bounded extension only. Excessively slow drags can become long presses.
+  // Extend from measured capacity, not a multiple of the requested duration.
+  // Movement starts immediately; the bound limits total gesture time, not a hold.
   const maximumSteps = Math.floor(
-    Math.min(5000, Math.max(duration, Math.min(1000, duration * 2))) /
-      REPORT_INTERVAL_MS,
+    Math.max(duration, 2000) / REPORT_INTERVAL_MS,
   );
   for (
     let steps = minimumSteps;
@@ -319,7 +439,11 @@ export function planRelativeDrag(
     const travelled = { x: 0, y: 0 };
     const reports: Point[] = [];
     for (let i = 0; i < steps; i++) {
-      const progress = 1 - (1 - (i + 1) / steps) ** 2.5;
+      const fraction = (i + 1) / steps;
+      // Start promptly and keep moving through release. The previous steep
+      // ease-out exhausted most travel early, making short page swipes crawl
+      // at release and bounce back instead of committing a page turn.
+      const progress = fraction * (1.2 - 0.2 * fraction);
       const needed = {
         x: target.x * progress - travelled.x,
         y: target.y * progress - travelled.y,
@@ -342,7 +466,14 @@ export function planRelativeDrag(
     }
     const tolerance = Math.min(
       6,
-      Math.max(1, Math.hypot(model.x.a, model.y.a) * 0.55),
+      Math.max(
+        1,
+        Math.min(
+          ...model.reports.map(({ displacement }) =>
+            Math.hypot(displacement.x, displacement.y),
+          ),
+        ) * 0.75,
+      ),
     );
     if (Math.hypot(target.x - travelled.x, target.y - travelled.y) > tolerance)
       continue;

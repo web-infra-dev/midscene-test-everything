@@ -92,6 +92,7 @@ export class IOSHIDSessionManager implements PlaygroundSessionManager {
       };
       this.notifyStateChange();
       await device.refreshConnection({
+        timeoutMs: this.input.source === 'airplay' ? 10 * 60_000 : 180000,
         onState: (state) => {
           if (this.device !== device) return;
           // A ready input lease still needs a fresh video frame before enabling tasks.
@@ -195,6 +196,11 @@ export class IOSHIDSessionManager implements PlaygroundSessionManager {
       (typeof input.cameraId !== 'string' || !input.cameraId)
     )
       throw new Error('请选择摄像头');
+    if (
+      !input.id &&
+      (typeof input.bluetoothPeerId !== 'string' || !input.bluetoothPeerId)
+    )
+      throw new Error('请选择蓝牙手机');
     this.creating = true;
     this.input = { ...input };
     this.screenError = undefined;
@@ -206,6 +212,7 @@ export class IOSHIDSessionManager implements PlaygroundSessionManager {
         typeof input.name === 'string' && input.name.trim()
           ? input.name.trim()
           : undefined,
+      reuseConfiguration: input.reuseConfiguration !== false,
       bluetoothPeerId:
         typeof input.bluetoothPeerId === 'string'
           ? input.bluetoothPeerId

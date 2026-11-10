@@ -7,7 +7,7 @@ import {
 import type { DeviceSession } from '../runtime/device-session.js';
 import type { IOSHIDRuntime } from '../runtime/runtime.js';
 import type { ScreenSession } from '../screen/source.js';
-import { cachedUSBDevice, listUSBDevices } from '../screen/usb.js';
+import { listUSBDevices } from '../screen/usb.js';
 import type {
   ConnectionState,
   DeviceConfig,
@@ -200,13 +200,17 @@ export class ConnectionManager {
         }
       }
       if (c.state.phase === 'closed') return;
+    }
+    // Restoring AirPlay also requires the person to reconnect screen mirroring.
+    // Reuse the original setup and transfer its live receiver into the session.
+    if (!restore || config.screen.source === 'airplay') {
       if (
         config.screen.source === 'airplay' ||
         config.screen.source === 'camera' ||
         !config.bluetoothPeerId ||
         (config.screen.source === 'usb' && !config.screen.deviceId)
       ) {
-        const setup = new DeviceSetupSession(config, this.runtime);
+        const setup = new DeviceSetupSession(config, this.runtime, restore);
         c.setup = setup;
         c.state.phase = 'setup-required';
         c.state.setupKind = 'device';
@@ -226,6 +230,11 @@ export class ConnectionManager {
       await preview?.close();
       return;
     }
+    const peer = (await this.runtime.input.listPeers()).find(
+      (peer) => peer.id === config.bluetoothPeerId,
+    );
+    if (peer) config.name = peer.name;
+    config.modelName = undefined;
     c.state.phase = 'connecting';
     const session = await this.runtime.open(
       config,
@@ -241,17 +250,6 @@ export class ConnectionManager {
       return;
     }
     c.session = session;
-    if (
-      !options.name &&
-      config.screen.source === 'usb' &&
-      config.screen.deviceId
-    ) {
-      const device = cachedUSBDevice(config.screen.deviceId);
-      if (device) {
-        config.name = device.name;
-        config.modelName = device.modelName;
-      }
-    }
     c.state.device = {
       id: config.id,
       name: config.name,

@@ -31,6 +31,36 @@ export type Routes = {
   all(path: string, handler: Handler): unknown;
 };
 
+/** Both setup and Bluetooth use the same streaming proxy and cancellation. */
+async function forwardEvents(
+  upstream: globalThis.Response,
+  res: Response,
+  signal: AbortSignal,
+) {
+  if (!upstream.ok || !upstream.body)
+    throw new Error('Event stream unavailable');
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-store',
+    Connection: 'keep-alive',
+  });
+  for await (const chunk of upstream.body) {
+    if (signal.aborted || res.destroyed) break;
+    if (!res.write(chunk))
+      await new Promise<void>((resolve) => {
+        const done = () => {
+          res.off('drain', done);
+          signal.removeEventListener('abort', done);
+          resolve();
+        };
+        res.once('drain', done);
+        signal.addEventListener('abort', done, { once: true });
+        if (signal.aborted) done();
+      });
+  }
+  res.end();
+}
+
 /** The browser only talks to Playground; Host capability URLs stay on the server. */
 export function mountSetupRoutes(
   server: PlaygroundServer,
@@ -46,27 +76,7 @@ export function mountSetupRoutes(
         headers: { Authorization: `Bearer ${host.address.token}` },
         signal: cancellation.signal,
       });
-      if (!upstream.ok || !upstream.body)
-        throw new Error('Bluetooth event stream unavailable');
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-store',
-        Connection: 'keep-alive',
-      });
-      for await (const chunk of upstream.body) {
-        if (!res.write(chunk))
-          await new Promise<void>((resolve) => {
-            const done = () => {
-              res.off('drain', done);
-              cancellation.signal.removeEventListener('abort', done);
-              resolve();
-            };
-            res.once('drain', done);
-            cancellation.signal.addEventListener('abort', done, { once: true });
-            if (cancellation.signal.aborted) done();
-          });
-      }
-      res.end();
+      await forwardEvents(upstream, res, cancellation.signal);
     })().catch(() => {
       if (!res.destroyed) res.end();
     });
@@ -180,6 +190,7 @@ export function mountSetupRoutes(
               'state',
               'devices',
               'frame',
+              ...(state?.setupKind === 'device' ? ['events'] : []),
               ...(state?.setupKind === 'camera' ? [''] : []),
             ]
           : req.method === 'POST'
@@ -213,6 +224,8 @@ export function mountSetupRoutes(
         }
         body = Buffer.concat(chunks).toString('utf8');
       }
+      const cancellation = new AbortController();
+      res.once('close', () => cancellation.abort());
       const response = await fetch(new URL(action, target), {
         method: req.method,
         headers:
@@ -223,10 +236,20 @@ export function mountSetupRoutes(
                 'X-Midscene-Setup': req.params.id,
               },
         body,
-        signal: AbortSignal.timeout(
-          ['detect', 'verify-model'].includes(action) ? 150000 : 25000,
-        ),
+        signal:
+          action === 'events'
+            ? cancellation.signal
+            : AbortSignal.any([
+                cancellation.signal,
+                AbortSignal.timeout(
+                  ['detect', 'verify-model'].includes(action) ? 150000 : 25000,
+                ),
+              ]),
       });
+      if (action === 'events') {
+        await forwardEvents(response, res, cancellation.signal);
+        return;
+      }
       res.status(response.status);
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader(

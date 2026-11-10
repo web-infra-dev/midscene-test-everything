@@ -7,14 +7,16 @@ export interface BluetoothPeer {
   id: string;
   name: string;
   reports: number[];
+  address?: string;
 }
 export interface HIDStatus {
   serviceName?: string;
+  transport?: 'classic';
   state: string;
   hosts: BluetoothPeer[];
 }
 
-/** One BLE peripheral for the Host, with explicit per-central routing. */
+/** One classic HID peripheral for the Host, with explicit per-phone routing. */
 export class NativeHIDClient {
   constructor(private readonly resolveHelper = () => nativeHelper('hid')) {}
   private revision = 0;
