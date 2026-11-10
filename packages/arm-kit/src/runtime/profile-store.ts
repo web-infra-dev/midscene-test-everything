@@ -46,6 +46,40 @@ import { invertMapping } from '../domain/homography.js';
 import { validateScreenMotionSettings } from '../screen-interaction/motion-policy.js';
 import { backupPreviousFile, robotDataRoot } from '../storage/layout.js';
 
+export function sharedCalibrationTool(
+  profiles: Pick<ProfileData, 'calibrationSetups' | 'robots' | 'screenTargets'>,
+  cameraId: string,
+  adapterId: string,
+  connectionIdentity: string,
+): Pick<ProfileBinding, 'robotProfileId' | 'toolProfileId'> | undefined {
+  const candidates = profiles.calibrationSetups?.filter(
+    (setup) =>
+      setup.cameraId === cameraId &&
+      !profiles.screenTargets?.some(
+        (target) => target.id === setup.deviceId && target.archived,
+      ) &&
+      profiles.robots.some(
+        (robot) =>
+          robot.id === setup.robotProfileId &&
+          robot.adapterId === adapterId &&
+          robot.connectionIdentity === connectionIdentity,
+      ),
+  );
+  const first = candidates?.[0];
+  if (
+    first &&
+    candidates?.every(
+      (setup) =>
+        setup.robotProfileId === first.robotProfileId &&
+        setup.toolProfileId === first.toolProfileId,
+    )
+  )
+    return {
+      robotProfileId: first.robotProfileId,
+      toolProfileId: first.toolProfileId,
+    };
+}
+
 export function validateScreen(s: ProfileInput<ScreenProfile>): void {
   if (!s.id || !s.name || !s.direction)
     throw new RobotArmError(
@@ -567,6 +601,27 @@ export class ProfileStore {
         ...(draft.screenPages ?? []).filter((p) => p.id !== page.id),
         structuredClone(page),
       ];
+    });
+  }
+  /**
+   * Forgets a saved page. Used for a browser identity that is gone for good —
+   * clearing site data or switching browsers leaves a page record that no phone
+   * can ever come back as, and it would keep showing up as an offline device.
+   */
+  removeScreenPage(id: string) {
+    return this.transaction((draft) => {
+      draft.screenPages = (draft.screenPages ?? []).filter((p) => p.id !== id);
+    });
+  }
+  archiveScreenTarget(id: string) {
+    return this.transaction((draft) => {
+      const target = draft.screenTargets?.find((screen) => screen.id === id);
+      if (!target)
+        throw new RobotArmError('INVALID_ARGUMENT', 'Screen not found');
+      target.archived = true;
+      target.pageKey = undefined;
+      for (const page of draft.screenPages ?? [])
+        if (page.targetId === id) page.targetId = undefined;
     });
   }
   saveInstallationTeachingDraft(

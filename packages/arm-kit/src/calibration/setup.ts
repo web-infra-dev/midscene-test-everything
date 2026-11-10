@@ -73,6 +73,15 @@ export class CalibrationSetup {
       );
     return structuredClone(this.input);
   }
+  /**
+   * Drops the page mapping built from a camera correction that no longer
+   * applies. The camera and output size stay selected, so mapping the same
+   * screen again needs no setup changes.
+   */
+  clearMapping() {
+    this.mapping = undefined;
+    return this.status();
+  }
   prepare(input: AssistedCalibrationInput) {
     const previous = this.input;
     const previousGeometryKey = this.geometryKey;

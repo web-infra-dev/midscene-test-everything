@@ -21,6 +21,7 @@ import {
 import { controllerRuntime } from '../controller-runtime.js';
 import type { ArmController } from '../controller.js';
 import { contactPoint, flangePose } from '../domain.js';
+import { sharedCalibrationTool } from '../runtime/profile-store.js';
 import { createCalibrationHandler } from './handler.js';
 
 import { PhoneSocketServer } from './phone-socket.js';
@@ -125,6 +126,24 @@ export class CalibrationHost {
           height: saved.vision.height,
           motion: screen,
         };
+      }
+      if (!this.input && runtime.describeCapabilities().setupDefaults?.motion) {
+        const cameraId = this.options.camera.camera.id;
+        const tool = sharedCalibrationTool(
+          store.list(),
+          cameraId,
+          runtime.id,
+          runtime.connectionIdentity,
+        );
+        if (tool) {
+          const selection = { ...tool, cameraId, width: 720, height: 1280 };
+          await this.service.prepare(selection);
+          if (!this.input) {
+            this.input = selection;
+            this.autoOutput = true;
+          }
+          return;
+        }
       }
     }
     if (this.input) {
@@ -255,17 +274,19 @@ export class CalibrationHost {
   }
 
   async configuration() {
+    if (!this.input) await this.prepare();
     const { camera, deviceId } = this.options;
     const arm = controllerRuntime(this.options.arm);
     const state = await arm.state(this.input?.toolProfileId);
     const correction = camera.getCorrection();
     const saved = arm.profileStore.deviceBinding(deviceId);
-    const selection = this.service.setup().selection;
+    const { selection, teaching } = this.service.setup();
     return {
       deviceId,
       capabilities: arm.describeCapabilities(),
       armState: state,
       input: this.input,
+      installationTaught: Boolean(teaching),
       correctionOutput: this.autoOutputSize(),
       output: selection
         ? {
@@ -329,10 +350,23 @@ export class CalibrationHost {
         409,
       );
   }
-  private async saveCorrection(correction: CameraCorrection) {
-    await this.options.camera.checkCorrection(correction);
+  private async saveCorrection(
+    correction: CameraCorrection,
+    allowMismatch = false,
+    output?: { width: number; height: number },
+  ) {
+    const validity = await this.options.camera.checkCorrection(
+      correction,
+      undefined,
+      allowMismatch,
+    );
     this.editable();
-    await this.options.camera.setCorrection(correction);
+    if (output)
+      await this.options.camera.setPerspective(correction, {
+        ...output,
+        rotation: correction.rotation,
+      });
+    else await this.options.camera.setCorrection(correction);
     const size = this.autoOutputSize();
     if (size && this.input) {
       const selection = { ...this.input, ...size };
@@ -346,6 +380,7 @@ export class CalibrationHost {
       });
       this.input = selection;
     }
+    return validity;
   }
 
   get deviceId() {
@@ -354,10 +389,28 @@ export class CalibrationHost {
   get cameraId() {
     return this.options.camera.camera.id;
   }
-  async applyMarkerCorrection(correction: CameraCorrection) {
+  async applyMarkerCorrection(
+    correction: CameraCorrection,
+    allowMismatch = false,
+    output?: { width: number; height: number },
+  ) {
     this.editable();
-    await this.saveCorrection(correction);
-    if (this.input) await this.service.mapSetup();
+    const validity = await this.saveCorrection(
+      correction,
+      allowMismatch,
+      output,
+    );
+    if (validity.state === 'invalid') {
+      await this.service.clearMapping();
+      return 'The screen outline does not match the camera view. Recalibrate before moving.';
+    }
+    if (this.input) {
+      try {
+        await this.service.mapSetup();
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    }
   }
   private alignmentTask?: Promise<void>;
   alignForBatch(signal: AbortSignal) {
@@ -751,6 +804,15 @@ export class CalibrationHost {
             409,
           );
         await this.saveCorrection(input);
+        send(200, await this.configuration());
+      } else if (relative === '/camera/correction' && req.method === 'DELETE') {
+        // Clearing keeps the screen, its page link and its saved size; the
+        // camera simply stops applying the perspective to that screen. Drop the
+        // page mapping first: a busy calibration must fail before anything is
+        // released.
+        this.editable();
+        await this.service.clearMapping();
+        await this.options.camera.clearCorrection();
         send(200, await this.configuration());
       } else send(404, { error: '404 Not Found' });
     } catch (error) {

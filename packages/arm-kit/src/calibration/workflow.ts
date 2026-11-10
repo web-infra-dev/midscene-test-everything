@@ -512,7 +512,7 @@ export class CalibrationWorkflow {
     this.changed();
   }
   phoneView(): CalibrationPageReply {
-    if (this.phoneHome) return { view: 'touch-preview', anchors: [] };
+    if (this.phoneHome) return { view: 'waiting', anchors: [] };
     const s = this.state;
     if (
       !s ||
@@ -631,6 +631,10 @@ export class CalibrationWorkflow {
   }
   async mapSetup(output?: AssistedMappingInput) {
     return this.configureSetup(() => this.configuration.map(output));
+  }
+  /** The camera correction was cleared, so the page mapping no longer holds. */
+  async clearMapping() {
+    return this.configureSetup(() => this.configuration.clearMapping());
   }
   private async configureSetup(
     work: () => AssistedCalibrationSetup | Promise<AssistedCalibrationSetup>,
