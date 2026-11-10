@@ -4,10 +4,7 @@ import { createPortal } from 'react-dom';
 import { CalibrationRequestError } from '../../client';
 import type { AssistedCalibrationController } from '../../hooks/useAssistedCalibration';
 import { calibrationErrorText, t, useCalibrationLanguage } from '../../i18n';
-import {
-  type CalibrationProfile,
-  calibrationAccepted,
-} from '../../robot-arm-api';
+import type { CalibrationProfile } from '../../robot-arm-api';
 import { ExplorationQualitySummary } from './CalibrationQualityWarnings';
 import { ExplorationProgress } from './ExplorationProgress';
 import { SetupNotice } from './SetupNotice';
@@ -15,6 +12,7 @@ import { SetupNotice } from './SetupNotice';
 export function WebCalibrationWorkspace({
   controller,
   result,
+  completedAttempt = false,
   readyToCapture = true,
   readyToStart = true,
   cameraCheckRequired = false,
@@ -34,6 +32,7 @@ export function WebCalibrationWorkspace({
 }: {
   controller: AssistedCalibrationController;
   result?: CalibrationProfile;
+  completedAttempt?: boolean;
   readyToCapture?: boolean;
   readyToVerify?: boolean;
   readyToStart?: boolean;
@@ -46,17 +45,20 @@ export function WebCalibrationWorkspace({
   controls?: ReactNode;
   onActivated(): Promise<void>;
   onBeforeLeaveChange?(handler: (() => Promise<void>) | null): void;
-  onReturn?(): void;
+  onReturn?(): void | Promise<void>;
   onRestart?(): void;
   completionLabel?: string;
   onCheckCamera?(): void;
   onConnectPhone?(): void;
 }) {
   useCalibrationLanguage((state) => state.language);
-  const { session: s, setup, busy, error } = controller;
+  const { session, setup, busy, error } = controller;
+  const s = completedAttempt && session?.stage !== 'completed' ? null : session;
   const [mode, setMode] = useState<'slide' | 'standard'>('slide');
   const [confirmed, setConfirmed] = useState(false);
   const [saveConfirmed, setSaveConfirmed] = useState(false);
+  const [finishing, setFinishing] = useState(false);
+  const [finishFailed, setFinishFailed] = useState(false);
   const [reviewStep, setReviewStep] = useState<number>();
   const stage = s?.stage;
   const offerStandardRetry =
@@ -64,8 +66,7 @@ export function WebCalibrationWorkspace({
     !s?.awaitingSocketRecovery &&
     s?.collectionFailed &&
     s.explorationMode === 'slide';
-  const completed =
-    stage === 'completed' || (!s && calibrationAccepted(result));
+  const completed = stage === 'completed' || completedAttempt;
   const activeMotion =
     stage === 'collecting' ||
     stage === 'safety' ||
@@ -103,6 +104,7 @@ export function WebCalibrationWorkspace({
   useEffect(() => {
     setConfirmed(false);
     setSaveConfirmed(false);
+    setFinishFailed(false);
     setReviewStep(undefined);
   }, [stage, s?.id, s?.teachingId]);
   useEffect(() => {
@@ -150,24 +152,29 @@ export function WebCalibrationWorkspace({
     'Set a safe position',
     'Save and Use',
   ];
+  const phase =
+    stage === 'interrupted'
+      ? (s?.interruptedFrom ?? (s?.collectionFailed ? 'collecting' : stage))
+      : stage;
   const index =
-    completed || stage === 'review'
+    completed || phase === 'review'
       ? 4
-      : stage === 'ready' &&
+      : phase === 'ready' &&
           s?.referencePosition &&
           !s.teachingId &&
           s.cameraBoundaryPosition
         ? 0
-        : stage === 'return-ready' ||
-            stage === 'positioning-safe' ||
-            stage === 'avoiding-camera'
+        : phase === 'return-ready' ||
+            phase === 'positioning-safe' ||
+            phase === 'avoiding-camera'
           ? 3
-          : stage === 'safety' ||
-              stage === 'returning' ||
-              stage === 'boundary-review'
+          : phase === 'safety' ||
+              phase === 'returning' ||
+              phase === 'boundary-review'
             ? 2
-            : stage === 'collecting' ||
-                (stage === 'ready' &&
+            : phase === 'collecting' ||
+                phase === 'capture-failed' ||
+                (phase === 'ready' &&
                   s?.referencePosition &&
                   (s.teachingId || !s.cameraBoundaryPosition))
               ? 1
@@ -178,13 +185,13 @@ export function WebCalibrationWorkspace({
       ? Math.max(firstStep, Math.min(reviewStep, index))
       : index;
   const reviewing = viewed < index;
-  const saved = !s || completed ? result : undefined;
+  const saved = completed ? (s?.result ?? result) : undefined;
   const pose =
     viewed === 0
       ? s?.referencePosition
       : (s?.safePosition ?? saved?.observationPose);
   const boundary = s?.calibration?.boundary ?? saved?.verification?.boundary;
-  const samples = s?.samples ?? saved?.verification?.auto?.samples.length;
+  const samples = s?.samples ?? saved?.verification?.auto?.samples?.length;
   const reviewDetail =
     viewed === 1
       ? samples === undefined
@@ -210,12 +217,26 @@ export function WebCalibrationWorkspace({
   const liveActions = completed ? (
     <>
       <Button
-        disabled={busy || !readyToStart}
+        disabled={busy || finishing || !readyToStart}
         onClick={onRestart ?? (() => start(controller.create))}
       >
         {t('Restart Calibration')}
       </Button>
-      <Button type="primary" onClick={onReturn}>
+      <Button
+        type="primary"
+        loading={finishing}
+        onClick={async () => {
+          setFinishing(true);
+          setFinishFailed(false);
+          try {
+            await onReturn?.();
+          } catch {
+            setFinishFailed(true);
+          } finally {
+            setFinishing(false);
+          }
+        }}
+      >
         {t(completionLabel)}
       </Button>
     </>
@@ -353,7 +374,7 @@ export function WebCalibrationWorkspace({
             type="primary"
             className="robot-cancel-calibration"
             danger
-            disabled={busy}
+            loading={controller.cancelling}
             onClick={() => command('cancel')}
           >
             {t('Cancel Calibration')}
@@ -388,6 +409,7 @@ export function WebCalibrationWorkspace({
         {steps.slice(firstStep).map((label, i) => (
           <span
             key={label}
+            aria-current={i + firstStep === viewed ? 'step' : undefined}
             className={i + firstStep === viewed ? 'current' : ''}
           >
             {i + firstStep < index ? '✓' : i + 1} {t(label)}
@@ -400,12 +422,19 @@ export function WebCalibrationWorkspace({
         <section className="robot-disclosure-body">
           <SetupNotice
             notice={
-              error || s?.error
+              finishFailed
                 ? {
                     tone: 'warning',
-                    title: calibrationErrorText(error ?? s!.error!),
+                    title: t(
+                      'Could not finish calibration. Check the connection and try again.',
+                    ),
                   }
-                : undefined
+                : error || s?.error
+                  ? {
+                      tone: 'warning',
+                      title: calibrationErrorText(error ?? s!.error!),
+                    }
+                  : undefined
             }
           />
           {offerStandardRetry && (
@@ -474,7 +503,12 @@ export function WebCalibrationWorkspace({
             </>
           ) : (
             <>
-              {!s && controls}
+              {!completed &&
+                (!s ||
+                  stage === 'ready' ||
+                  stage === 'interrupted' ||
+                  stage === 'cancelled') &&
+                controls}
               {!(s?.phoneConnected ?? setup.phoneConnected) && !completed && (
                 <Typography.Paragraph>
                   {t('Phone disconnected')}
@@ -485,7 +519,7 @@ export function WebCalibrationWorkspace({
                   )}
                 </Typography.Paragraph>
               )}
-              {!setup.mapping && !s?.mapping && onCheckCamera && (
+              {!completed && !setup.mapping && !s?.mapping && onCheckCamera && (
                 <Button onClick={onCheckCamera}>
                   {t('Check Camera Mapping')}
                 </Button>
@@ -532,11 +566,11 @@ export function WebCalibrationWorkspace({
                   </>
                 )}
               {s?.capture && <ExplorationProgress session={s} />}
-              {activeMotion && (
+              {(stage === 'safety' || stage === 'returning') && (
                 <Typography.Paragraph>
                   {t(
-                    stage === 'collecting'
-                      ? 'Collect calibration points'
+                    stage === 'returning'
+                      ? 'Preparing boundary verification'
                       : 'Boundary verification',
                   )}
                 </Typography.Paragraph>

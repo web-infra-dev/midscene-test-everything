@@ -43,7 +43,7 @@ function CalibrationPanelContent(props: {
   editing?: boolean;
   onDetect?(): Promise<void>;
   onAlign?(signal: AbortSignal): Promise<void>;
-  onComplete?(): void;
+  onComplete?(): void | Promise<void>;
   completionLabel?: string;
   footerContainer?: HTMLElement | null;
   navigationContainer?: HTMLElement | null;
@@ -59,15 +59,23 @@ function CalibrationPanelContent(props: {
   const footer = props.footerContainer ?? localFooter;
   useEffect(() => props.onStepChange?.(step), [step, props.onStepChange]);
   const [error, setError] = useState<string>();
+  const [pairing, setPairing] = useState(false);
+  useEffect(() => {
+    if (controller.setup.phoneConnected) setPairing(false);
+  }, [controller.setup.phoneConnected]);
   const beforeLeave = useRef<(() => Promise<void>) | null>(null);
   const registerLeave = useCallback((handler: (() => Promise<void>) | null) => {
     beforeLeave.current = handler;
   }, []);
+  const setupLocked =
+    controller.busy ||
+    Boolean(
+      controller.session &&
+        !['ready', 'completed', 'interrupted', 'cancelled'].includes(
+          controller.session.stage,
+        ),
+    );
   const changeStep = async (next: number) => {
-    if (next === 1 && props.onAlign && props.onReviewCamera) {
-      props.onReviewCamera();
-      return;
-    }
     if (props.onAlign && next === 0) next = 1;
     if (props.onAlign && next === 2) return;
     if (
@@ -82,9 +90,13 @@ function CalibrationPanelContent(props: {
         throw new Error(
           t('Wait for the current calibration command to finish.'),
         );
+      if (next === 1 && props.onAlign && props.onReviewCamera) {
+        props.onReviewCamera();
+        return;
+      }
       if (next === 2 && props.editing)
         throw new Error(t('Confirm the screen area before continuing.'));
-      await beforeLeave.current?.();
+      if (!props.onAlign) await beforeLeave.current?.();
       setStep(next);
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error));
@@ -98,18 +110,23 @@ function CalibrationPanelContent(props: {
             size="small"
             current={step === 1 ? 0 : 2}
             items={['Camera correction', 'Touch Tool', 'Arm calibration'].map(
-              (title) => ({ title: t(title) }),
+              (title, index) => ({
+                title: t(title),
+                disabled:
+                  step === 2 &&
+                  index < 2 &&
+                  (setupLocked ||
+                    (index === 1 && !controller.setup.phoneConnected)),
+              }),
             )}
             onChange={(next) => {
               if (
                 next === 1 &&
                 step === 2 &&
                 controller.setup.phoneConnected &&
-                !controller.busy
+                !setupLocked
               )
-                void (beforeLeave.current?.() ?? Promise.resolve())
-                  .then(() => props.onEditSetup?.())
-                  .catch((error) => setError(String(error)));
+                props.onEditSetup?.();
               if (next === 0) void changeStep(1);
             }}
           />,
@@ -193,6 +210,13 @@ function CalibrationPanelContent(props: {
           onContinue={() => void changeStep(2)}
         />
       )}
+      {step === 2 && pairing && !controller.setup.phoneConnected && (
+        <PhonePairStep
+          controller={controller}
+          footer={null}
+          onContinue={() => setPairing(false)}
+        />
+      )}
       {step === 2 && (props.input || !props.onAlign) && (
         <WebCalibrationWorkspace
           controller={controller}
@@ -211,7 +235,7 @@ function CalibrationPanelContent(props: {
           onActivated={async () => {}}
           onBeforeLeaveChange={registerLeave}
           onCheckCamera={() => void changeStep(1)}
-          onConnectPhone={() => void changeStep(0)}
+          onConnectPhone={() => setPairing(true)}
           onReturn={props.onComplete}
           completionLabel={props.completionLabel}
         />
@@ -232,25 +256,18 @@ function AutomaticScreenStep({
   align(signal: AbortSignal): Promise<void>;
   advance(): void;
 }) {
-  const { setup, session, phone } = controller;
-  const [started, setStarted] = useState(false);
+  const { session, phone } = controller;
   const [attempt, setAttempt] = useState(0);
   const [error, setError] = useState<string>();
-  // Reopening a running collection resumes its own screen without changing the camera.
-  const resume =
-    session &&
-    (!['ready', 'completed', 'interrupted', 'cancelled'].includes(
-      session.stage,
-    ) ||
-      (session.stage === 'interrupted' && session.samples > 0) ||
-      (session.stage === 'ready' &&
-        Boolean(session.referencePosition || session.safePosition)));
+  const resume = Boolean(session && session.stage !== 'cancelled');
+  const ready = phone.state === 'connected' && !phone.displayRequirement;
   useEffect(() => {
-    if (resume && setup.phoneConnected) advance();
-    else if (phone.state === 'connected') setStarted(true);
-  }, [resume, setup.phoneConnected, phone.state, advance]);
-  useEffect(() => {
-    if (!started || resume) return;
+    if (resume) {
+      advance();
+      return;
+    }
+    setError(undefined);
+    if (!ready) return;
     const abort = new AbortController();
     const timer = setTimeout(() => {
       void align(abort.signal)
@@ -266,7 +283,7 @@ function AutomaticScreenStep({
       clearTimeout(timer);
       abort.abort();
     };
-  }, [started, attempt, align, advance, resume]);
+  }, [ready, attempt, align, advance, resume]);
   if (phone.state === 'connected' && phone.displayRequirement)
     return (
       <output>
@@ -286,8 +303,6 @@ function AutomaticScreenStep({
         action={
           <Button
             onClick={() => {
-              setError(undefined);
-              setStarted(setup.phoneConnected);
               setAttempt((n) => n + 1);
             }}
           >
@@ -296,7 +311,7 @@ function AutomaticScreenStep({
         }
       />
     );
-  if (!started || phone.state !== 'connected')
+  if (!ready)
     return (
       <PhonePairStep
         controller={controller}

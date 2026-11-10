@@ -98,7 +98,7 @@ export function CalibrationWorkspace({
   embedded?: boolean;
   cancelAction?: ReactNode;
   baseUrl?: string;
-  onComplete?: () => void;
+  onComplete?: () => void | Promise<void>;
 }) {
   useBrowserVoice(!embedded);
   const base = baseUrl.replace(/\/+$/, '');
@@ -253,7 +253,11 @@ export function CalibrationWorkspace({
               <PerspectiveObservationCard
                 observation={perspective}
                 screenName={config?.camera.name}
-                onRecalibrate={() => setReviewCamera(true)}
+                onRecalibrate={
+                  config?.editable && config.correction
+                    ? () => setReviewCamera(true)
+                    : undefined
+                }
               />
               {(error || pollError) && (
                 <Alert
@@ -405,7 +409,7 @@ export function CalibrationWorkspace({
                       </div>
                     }
                     onReviewCamera={
-                      config.correction
+                      config.editable && config.correction
                         ? () => setReviewCamera(true)
                         : undefined
                     }

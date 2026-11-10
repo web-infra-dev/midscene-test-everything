@@ -327,6 +327,7 @@ function GuidedContent({
         ? undefined
         : (selectable.find((screen) => screen.id === cameraId) ??
           selectable[0]);
+      const openingScreen = initialStepPending.current && !fallback;
       if (fallback) selectScreen(fallback.id);
       else if (initialStepPending.current) {
         initialStepPending.current = false;
@@ -362,17 +363,15 @@ function GuidedContent({
       const busy =
         !inBatch &&
         ['queued', 'running', 'cancelling'].includes(singleStatus.phase);
-      setSingle((previous) =>
-        busy ||
-        (!inBatch &&
-          singleStatus.phase === 'completed' &&
-          previous?.screenId === selectedId &&
-          previous.attemptId === singleStatus.attemptId)
+      const completed = !inBatch && singleStatus.phase === 'completed';
+      setSingle(
+        busy || completed
           ? { ...singleStatus, screenId: selectedId }
           : undefined,
       );
-      if (busy || inBatch) setStep(3);
-      else if (next.mappingReady === false)
+      if (busy || inBatch || (completed && openingScreen && initialStep !== 1))
+        setStep(3);
+      else if (!completed && next.mappingReady === false)
         setStep((current) => (current === 3 ? 1 : current));
       setSingleFailure(
         singleStatus.phase === 'error' &&
@@ -834,6 +833,14 @@ function GuidedContent({
     (next < 2 || Boolean(config?.correction && controller.setup.mapping)) &&
     (next < 2 || !outlineBlocked) &&
     (next < 3 || Boolean(controller.setup.teaching));
+  const batchAction = savedScreens.length > 1 && (
+    <Button
+      disabled={!config?.ready || outlineBlocked || singleBusy}
+      onClick={() => batchPanel.current?.open()}
+    >
+      {t('Calibrate multiple screens')}
+    </Button>
+  );
 
   return (
     <main className="calibration-page is-embedded guided-calibration">
@@ -879,7 +886,7 @@ function GuidedContent({
               observation={perspective}
               screenName={activeScreen?.name}
               onRecalibrate={
-                batchActive || singleActive || singleQueued
+                batchActive || singleBusy
                   ? undefined
                   : () => {
                       setStep(1);
@@ -1222,8 +1229,7 @@ function GuidedContent({
                           !config.ready ||
                           outlineBlocked ||
                           controller.busy ||
-                          singleActive ||
-                          singleQueued
+                          singleBusy
                         }
                         onChanged={refresh}
                       />
@@ -1231,12 +1237,16 @@ function GuidedContent({
                     {batchActive && current && (
                       <ActiveBatchScreen controller={progress} />
                     )}
+                    {!batchActive &&
+                      lease?.phase === 'completed' &&
+                      batchAction}
                     {!batchActive && singleActive && (
                       <WebCalibrationWorkspace
                         key={JSON.stringify([selectedId, lease?.attemptId])}
                         controller={controller}
                         footer={footer}
-                        result={controller.session?.result}
+                        result={config.result}
+                        completedAttempt={lease?.phase === 'completed'}
                         onConnectPhone={() => setPhonesOpen(true)}
                         onCheckCamera={checkCameraBeforeCalibration}
                         cameraCheckRequired={outlineBlocked}
@@ -1277,16 +1287,7 @@ function GuidedContent({
                         >
                           {t('Calibrate {0}', [selected?.name ?? selectedId])}
                         </Button>
-                        {savedScreens.length > 1 && (
-                          <Button
-                            disabled={
-                              !config.ready || outlineBlocked || singleQueued
-                            }
-                            onClick={() => batchPanel.current?.open()}
-                          >
-                            {t('Calibrate multiple screens')}
-                          </Button>
-                        )}
+                        {batchAction}
                       </WizardFooter>
                     )}
                   </>

@@ -22,9 +22,14 @@ export function ExplorationProgress({
     automaticPhase,
     explorationMode = 'standard',
   } = session;
-  if (!capture) return null;
   const failed =
-    session.stage === 'interrupted' || session.stage === 'capture-failed';
+    (session.stage === 'interrupted' && session.collectionFailed) ||
+    session.stage === 'capture-failed';
+  if (
+    !capture ||
+    (!failed && session.stage !== 'collecting' && session.stage !== 'reprobing')
+  )
+    return null;
   const local = automaticPhase === 'local';
   const total = explorationMode === 'standard' ? 9 : 6;
   const layout = session.mapping?.layout ?? session.layout;

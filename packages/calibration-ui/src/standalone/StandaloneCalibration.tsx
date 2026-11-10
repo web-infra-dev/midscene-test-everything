@@ -68,30 +68,43 @@ export function StandaloneCalibration() {
       document.removeEventListener('visibilitychange', visible);
     };
   }, [completed]);
+  if (completed)
+    return (
+      <main className="calibration-page">
+        <Alert
+          type="success"
+          showIcon
+          message={t(
+            'Calibration finished. You can close this tab.',
+            [],
+            language,
+          )}
+        />
+      </main>
+    );
   return (
-    <>
+    <div className="standalone-calibration">
       {offline && (
-        <div className="calibration-page">
-          <Alert
-            type="error"
-            showIcon
-            message={t(
-              expired
-                ? 'Calibration page expired. Start calibration again from your script.'
-                : 'Connection to calibration was lost. Reconnecting…',
-              [],
-              language,
-            )}
-          />
-        </div>
+        <Alert
+          type="error"
+          showIcon
+          message={t(
+            expired
+              ? 'Calibration page expired. Start calibration again from your script.'
+              : 'Connection to calibration was lost. Reconnecting…',
+            [],
+            language,
+          )}
+        />
       )}
       {ready && !expired ? (
         <CalibrationWorkspace
           onComplete={async () => {
             const response = await fetch('/_calibration/finish', {
               method: 'POST',
+              signal: AbortSignal.timeout(10000),
             });
-            if (!response.ok) return;
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
             setCompleted(true);
             window.close();
           }}
@@ -103,6 +116,6 @@ export function StandaloneCalibration() {
           </div>
         )
       )}
-    </>
+    </div>
   );
 }

@@ -6,6 +6,7 @@ import { PhonePairStep } from '../src/components/robot-arm/PhonePairStep';
 import { WebCalibrationWorkspace } from '../src/components/robot-arm/WebCalibrationWorkspace';
 import { WebCameraMappingStep } from '../src/components/robot-arm/WebCameraMappingStep';
 import type { AssistedCalibrationController } from '../src/hooks/useAssistedCalibration';
+import type { CalibrationProfile } from '../src/robot-arm-api';
 
 const markerError =
   'Calibration marker 12 could not be decoded uniquely (2 matches). Keep all calibration markers visible and in focus.';
@@ -108,6 +109,104 @@ it('offers automatic collection before recording the safe position', () => {
   expect(html).toContain('自动执行悬停与接触边界验证');
   expect(html).not.toContain('Record Safe Position');
   expect(html).not.toContain('15 点');
+});
+
+it('only offers Finish for the current completed attempt even with an accepted profile on disk', () => {
+  const result = {
+    geometryStatus: 'valid',
+    acceptanceStatus: 'accepted',
+    observationPose: { positionMm: { x: 0, y: 0, z: 40 } },
+    verification: {
+      protocol: 'auto-boundary-v1',
+      confirmedAt: '2026-01-01T00:00:00Z',
+      boundary: {
+        hoverCorners: true,
+        hoverEdges: true,
+        contactCorners: true,
+        contactEdges: true,
+      },
+      auto: { humanAccepted: true, samples: [] },
+    },
+  } as CalibrationProfile;
+  const value = controller();
+  const render = (completedAttempt: boolean) =>
+    renderToStaticMarkup(
+      createElement(WebCalibrationWorkspace, {
+        controller: value,
+        footer: null,
+        result,
+        completedAttempt,
+        completionLabel: 'Finish Calibration',
+        onActivated: async () => {},
+      }),
+    );
+  expect(render(false)).toContain('开始自动标定');
+  expect(render(false)).not.toContain('完成标定');
+  expect(render(true)).toContain('完成标定');
+  value.session = {
+    id: 'saving',
+    stage: 'review',
+    phoneConnected: false,
+    samples: 6,
+    points: [],
+    anchors: [],
+    verification: [],
+  };
+  expect(render(true)).toContain('完成标定');
+  expect(render(true)).not.toContain('type="checkbox"');
+});
+
+it('keeps cancellation available during a pending boundary check and shows recovery at the interrupted step', () => {
+  const value = controller();
+  value.error = undefined;
+  value.busy = true;
+  value.session = {
+    id: 'pending',
+    stage: 'safety',
+    phoneConnected: true,
+    samples: 6,
+    points: [],
+    anchors: [],
+    verification: [],
+    capture: {
+      index: 6,
+      total: 6,
+      phase: 'captured',
+      readings: 1,
+      progress: 1,
+      target: { id: 'last', point: { x: 0, y: 0 } },
+    },
+  };
+  const render = () =>
+    renderToStaticMarkup(
+      createElement(WebCalibrationWorkspace, {
+        controller: value,
+        controls: createElement(
+          'button',
+          { type: 'button' },
+          'Recover controller',
+        ),
+        footer: null,
+        onActivated: async () => {},
+      }),
+    );
+  const pending = render();
+  const cancel = pending.match(
+    /<button[^>]*robot-cancel-calibration[^>]*>/,
+  )?.[0];
+  expect(cancel).toBeDefined();
+  expect(cancel).not.toContain('disabled');
+  expect(pending).not.toContain('robot-exploration-progress');
+  value.busy = false;
+  value.session.stage = 'interrupted';
+  value.session.interruptedFrom = 'safety';
+  const stopped = render();
+  expect(stopped).toContain('Recover controller');
+  expect(stopped).toMatch(/class="current"[^>]*>[^<]*边界验证/);
+  expect(stopped).not.toContain('robot-exploration-progress');
+  value.session.interruptedFrom = 'collecting';
+  value.session.collectionFailed = true;
+  expect(render()).toContain('robot-exploration-progress');
 });
 
 it('shows the percent, raw holdout and continuation action for a reviewable fit', () => {

@@ -26,6 +26,7 @@ export const assistedCalibrationZh: Record<string, string> = {
     '采样前，请确认机械臂已使能并已应用工具负载。',
   'No measurement recorded for this step.': '本次标定未保存这一步的测量记录。',
   'Boundary verification': '边界验证',
+  'Preparing boundary verification': '正在准备边界验证',
   'Continue to boundary verification': '继续边界验证',
   'Sampling and fitting are followed by automatic hover and contact boundary verification. Record the Safe Position afterwards, then review and save.':
     '采样拟合后自动执行悬停与接触边界验证，再记录安全位置、检查并保存。',
@@ -319,6 +320,9 @@ export const assistedCalibrationZh: Record<string, string> = {
     '笔尖经过整个屏幕上方时均有足够间隙，悬停路径正确。',
   'Confirm Hover Verification': '确认悬停验证',
   'Calibration complete': '标定完成',
+  'Calibration finished. You can close this tab.': '标定已结束，可以关闭此页。',
+  'Could not finish calibration. Check the connection and try again.':
+    '未能结束标定，请检查连接后重试。',
   'Review measured clicks': '检查点击测量结果',
   'Verifying clicks': '正在验证点击',
   'Mean Error': '平均误差',

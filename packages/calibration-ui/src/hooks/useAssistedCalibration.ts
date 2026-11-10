@@ -25,6 +25,7 @@ export function useAssistedCalibration(
         setup: AssistedCalibrationSetup;
         phone: CalibrationPhoneStatus;
         busy: boolean;
+        cancelling: boolean;
         error?: string;
         connectionError?: string;
       }>(() => ({
@@ -32,18 +33,17 @@ export function useAssistedCalibration(
         setup: { prepared: false, phoneConnected: false },
         phone: { state: 'waiting', links: [] },
         busy: false,
+        cancelling: false,
       })),
     [api, installation, active],
   );
-  const { session, setup, phone, busy, error, connectionError } =
+  const { session, setup, phone, busy, cancelling, error, connectionError } =
     useStore(store);
-  const setBusy = (busy: boolean) => store.setState({ busy });
-  const setError = (error: string | undefined) => store.setState({ error });
   const generation = useRef(0);
-  const working = useRef(false);
+  const requests = useRef({ count: 0, revision: 0, cancelling: false });
   useEffect(() => {
     const current = ++generation.current;
-    working.current = false;
+    requests.current = { count: 0, revision: 0, cancelling: false };
     store.setState({
       session: null,
       setup: { prepared: false, phoneConnected: false },
@@ -51,6 +51,7 @@ export function useAssistedCalibration(
       error: undefined,
       connectionError: undefined,
       busy: false,
+      cancelling: false,
     });
     if (!active) return;
     const announce = calibrationAnnouncements();
@@ -74,24 +75,33 @@ export function useAssistedCalibration(
     };
   }, [store, api, active]);
   const run = useCallback(
-    async <T>(work: () => Promise<T>) => {
-      if (working.current)
+    async <T>(work: () => Promise<T>, cancel = false) => {
+      const pending = requests.current;
+      if (pending.cancelling || (pending.count && !cancel))
         throw new Error(t('A calibration command is already running.'));
-      working.current = true;
-      setBusy(true);
-      setError(undefined);
+      ++pending.count;
+      const revision = ++pending.revision;
+      pending.cancelling = cancel;
+      store.setState({ busy: true, cancelling: cancel, error: undefined });
       const current = generation.current;
       try {
         return await work();
       } catch (e) {
-        if (generation.current === current)
-          setError(e instanceof Error ? e.message : String(e));
+        if (generation.current !== current || pending.revision !== revision)
+          throw new DOMException(
+            'Calibration command superseded',
+            'AbortError',
+          );
+        store.setState({ error: e instanceof Error ? e.message : String(e) });
         throw e;
       } finally {
-        if (generation.current === current) {
-          working.current = false;
-          setBusy(false);
-        }
+        --pending.count;
+        if (cancel) pending.cancelling = false;
+        if (generation.current === current)
+          store.setState({
+            busy: pending.count > 0,
+            cancelling: pending.cancelling,
+          });
       }
     },
     [store],
@@ -115,7 +125,7 @@ export function useAssistedCalibration(
         confirmed,
         attemptId,
       );
-    });
+    }, action === 'cancel');
   const safety = (type: CalibrationCommand['type'], accepted?: boolean) =>
     run(() => {
       if (!session?.calibration)
@@ -132,6 +142,7 @@ export function useAssistedCalibration(
     setup,
     phone,
     busy,
+    cancelling,
     error: error ?? connectionError,
     connectionError,
     prepare,
