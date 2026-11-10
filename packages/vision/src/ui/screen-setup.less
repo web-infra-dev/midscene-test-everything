@@ -1,0 +1,360 @@
+.robot-disclosure-body {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  min-width: 0;
+  > p,
+  > .ant-typography,
+  > dl,
+  > pre,
+  > details {
+    margin-block: 0;
+  }
+  > .ant-btn {
+    align-self: flex-start;
+  }
+}
+
+.robot-setup-notice {
+  margin-bottom: 14px;
+  /* Narrow recovery panels cannot hold a message and an inline action side by
+     side: the text wraps one word per line. Stack the action under the copy. */
+  .ant-alert {
+    flex-wrap: wrap;
+  }
+  .ant-alert-action {
+    flex-basis: 100%;
+    margin-inline-start: 0;
+    margin-top: 8px;
+  }
+}
+
+.robot-web-section-heading,
+.robot-web-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.robot-phone-pair {
+  display: grid;
+  justify-items: center;
+  padding: clamp(0px, 2vh, 18px) 0;
+}
+.robot-phone-card.arco-card {
+  width: min(100%, 484px);
+  overflow: hidden;
+  border: 1px solid #d8e1ea;
+  border-radius: 18px;
+  box-shadow: 0 12px 36px -18px #203c5c55;
+  .arco-card-body {
+    padding: 0;
+  }
+  .robot-setup-notice {
+    padding: 12px 20px 0;
+  }
+}
+.robot-phone-scan {
+  --scan-accent: #77a8d3;
+  --ripple: #7eabd32b;
+  --wash: #eaf3fc;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: grid;
+  justify-items: center;
+  gap: 23px;
+  padding: 26px 16px 32px;
+  background: radial-gradient(ellipse at 50% 65%, white, var(--wash) 85%);
+  &::before {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    left: 50%;
+    top: 73px;
+    width: 235px;
+    height: 235px;
+    border-radius: 50%;
+    transform: translateX(-50%);
+    box-shadow:
+      0 0 0 1px var(--ripple),
+      0 0 0 36px #ffffff38,
+      0 0 0 37px var(--ripple),
+      0 0 0 78px #ffffff20,
+      0 0 0 79px var(--ripple);
+  }
+  h4.arco-typography {
+    margin: 0;
+    color: #233c51;
+    font-size: 21px;
+    font-weight: 600;
+  }
+}
+.robot-phone-code {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: min(216px, 100%);
+  aspect-ratio: 1;
+  border-radius: 12px;
+  background: white;
+  box-shadow: 0 6px 18px #50739920;
+  &::before {
+    content: '';
+    position: absolute;
+    inset: -7px;
+    pointer-events: none;
+    background:
+      linear-gradient(var(--scan-accent), var(--scan-accent)) left top / 16px
+        2px,
+      linear-gradient(var(--scan-accent), var(--scan-accent)) left top / 2px
+        16px,
+      linear-gradient(var(--scan-accent), var(--scan-accent)) right top / 16px
+        2px,
+      linear-gradient(var(--scan-accent), var(--scan-accent)) right top / 2px
+        16px,
+      linear-gradient(var(--scan-accent), var(--scan-accent)) left bottom / 16px
+        2px,
+      linear-gradient(var(--scan-accent), var(--scan-accent)) left bottom / 2px
+        16px,
+      linear-gradient(var(--scan-accent), var(--scan-accent)) right bottom /
+        16px 2px,
+      linear-gradient(var(--scan-accent), var(--scan-accent)) right bottom / 2px
+        16px;
+    background-repeat: no-repeat;
+  }
+  .ant-qrcode {
+    max-width: 88%;
+  }
+  .robot-phone-success {
+    font-size: 50px;
+    color: #218463;
+    padding: 15px;
+    box-sizing: content-box;
+    border-radius: 50%;
+    background: #e8f5ee;
+  }
+}
+.robot-phone-card[data-connected='true'] .robot-phone-scan {
+  --wash: #e9f5ef;
+  --ripple: #6fa78e30;
+  .robot-phone-code {
+    background: transparent;
+    box-shadow: none;
+  }
+  .robot-phone-code::before {
+    display: none;
+  }
+}
+.robot-phone-info {
+  display: grid;
+  justify-items: center;
+  gap: 9px;
+  text-align: center;
+  color: #42576a;
+  .robot-phone-tags {
+    display: flex;
+    align-items: center;
+    font-size: 13px;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .arco-tag {
+    background: #ffffffd9;
+    color: #314d5d;
+    border-radius: 6px;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    height: auto;
+    white-space: normal;
+  }
+}
+.robot-phone-card[data-phone-state='paused'] .robot-phone-scan {
+  --wash: #fbf3e2;
+  --ripple: #bc974b29;
+  --scan-accent: #be9444;
+}
+.robot-phone-card[data-phone-state='reconnecting'] .robot-phone-scan {
+  --wash: #eef0f8;
+  --scan-accent: #8e99c4;
+}
+.robot-phone-address {
+  min-width: 0;
+  padding: 16px clamp(16px, 4%, 22px) 20px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 12px;
+  .arco-typography-operation-copy,
+  .arco-typography-operation-copied {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    border-radius: 6px;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    margin: 0;
+    color: #426684;
+    &:hover {
+      background: #edf4fb;
+    }
+  }
+  details {
+    grid-column: 1 / -1;
+  }
+  code {
+    color: #344e62;
+    overflow-wrap: anywhere;
+    user-select: all;
+    font:
+      13px/1.6 ui-monospace,
+      monospace;
+  }
+  details {
+    margin-top: 2px;
+    font-size: 12px;
+    color: var(--color-text-3);
+  }
+  summary {
+    cursor: pointer;
+  }
+  select {
+    margin-top: 6px;
+    max-width: 100%;
+  }
+}
+
+// Corner rings follow robot-vision CalibrationPreview's appearance.
+.camera-corner-editor {
+  margin: 24px 18px;
+  .camera-corner-frame {
+    position: relative;
+    width: 100%;
+    background: #f5f5f5;
+  }
+  img {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+  svg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+  polygon {
+    fill: none;
+    stroke: #52c41a;
+    stroke-width: 2;
+    vector-effect: non-scaling-stroke;
+  }
+  button {
+    position: absolute;
+    z-index: 2;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    transform: translate(-50%, -50%);
+    border: 0;
+    background: transparent;
+    cursor: crosshair;
+    touch-action: none;
+  }
+  .camera-corner-ring {
+    position: absolute;
+    inset: 8px;
+    border: 2px solid white;
+    border-radius: 50%;
+    box-shadow:
+      0 0 0 2px rgb(0 0 0 / 45%),
+      0 1px 6px rgb(0 0 0 / 45%);
+  }
+  button:hover .camera-corner-ring,
+  button:focus-visible .camera-corner-ring {
+    border-color: #52c41a;
+  }
+  .camera-corner-label {
+    position: absolute;
+    top: -18px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: white;
+    font-size: 11px;
+    font-weight: 700;
+    text-shadow: 0 1px 3px rgb(0 0 0 / 70%);
+    white-space: nowrap;
+  }
+}
+
+.screen-range-card {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  border: 1px solid var(--rv-border);
+  border-radius: 12px;
+  overflow: hidden;
+  > section + section {
+    border-left: 1px solid var(--rv-border);
+  }
+  header {
+    min-height: 48px;
+    padding: 0 16px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 1px solid var(--rv-border);
+  }
+  header small {
+    color: var(--rv-text-secondary);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  .range-actions {
+    margin-left: auto;
+    display: flex;
+    gap: 4px;
+    align-items: center;
+  }
+  .screen-range-stage {
+    display: grid;
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+    place-items: center;
+    height: clamp(170px, 38dvh, 390px);
+    padding: 12px;
+    background: #f5f6f8;
+    container-type: size;
+  }
+  .camera-corner-editor {
+    width: 100%;
+    display: grid;
+    place-items: center;
+    margin: 0;
+  }
+  .range-output {
+    position: relative;
+    display: grid;
+    place-items: center;
+    color: var(--rv-text-secondary);
+    width: 100%;
+    height: 100%;
+  }
+  .range-output > div {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    overflow: hidden;
+  }
+  @media (max-width: 680px) {
+    grid-template-columns: 1fr;
+    > section + section {
+      border-left: 0;
+      border-top: 1px solid var(--rv-border);
+    }
+  }
+}

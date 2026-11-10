@@ -1,1 +1,1 @@
-export * from '@midscene/arm-kit-shared/camera/vision-types';
+export * from '@midscene/robotics-vision/camera/vision-types';

@@ -15,7 +15,7 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
-      '@midscene/arm-kit-shared': path.resolve(__dirname, '../shared/src'),
+      '@midscene/robotics-shared': path.resolve(__dirname, '../shared/src'),
       '@midscene/arm-kit/internal/camera/vision-geometry$': path.resolve(
         __dirname,
         '../arm-kit/src/camera/vision-geometry.ts',

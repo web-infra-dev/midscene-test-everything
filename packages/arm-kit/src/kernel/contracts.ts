@@ -1,1 +1,1 @@
-export * from '@midscene/arm-kit-shared/kernel/contracts';
+export * from '@midscene/robotics-shared/kernel/contracts';

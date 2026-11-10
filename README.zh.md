@@ -2,7 +2,7 @@
 
 [English](./README.md) · 简体中文 · [Midscene.js](https://midscenejs.com/zh/)
 
-用摄像头和机械臂，让 Midscene 操作真实触摸屏。提供浏览器工作台、Node.js SDK 和 DOBOT MG400 适配器。
+通过摄像头和机械臂，或 Mac 蓝牙键鼠，让 Midscene 操作真实触摸屏和 iPhone。提供浏览器工作台、Node.js SDK 和 DOBOT MG400 适配器。
 
 ## 快速开始
 
@@ -64,13 +64,67 @@ MG400 使用竖直向下的触笔时，「触笔长度」可以留空。确认�
 
 使用方式见 [SDK 示例](./examples/mg400/run.mjs)。`RobotArmDevice.perform(action)` 可按屏幕像素执行绝对的点击、长按、滑动或拖拽；Device 会自行解析已接受的标定和相机映射，并拒绝屏幕范围外的点。接入其他机械臂时，实现 `@midscene/arm-kit/adapter-development` 中的 `RobotArmAdapter`，可参考 [MG400 适配器](./packages/adapter-mg400/src/mg400.ts)。
 
+## iOS HID（实验中）
+
+需要 macOS、用于编译原生辅助程序的 Xcode Command Line Tools，以及 iPhone。手机无需安装 App。安装依赖并构建后，启动专用工作台：
+
+```sh
+pnpm dev:ios-hid
+```
+
+脚本可以使用 workspace SDK 或打包后的 SDK：
+
+```js
+import { IOSHIDDevice, IOSHIDAgent } from '@midscene/ios-hid';
+
+const phone = new IOSHIDDevice({ name: '测试手机', screen: { source: 'usb' } });
+try {
+  await phone.connect();
+  const agent = new IOSHIDAgent(phone);
+  try {
+    await agent.aiAct('打开设置');
+  } finally {
+    await agent.destroy();
+  }
+} finally {
+  await phone.destroy();
+}
+```
+
+模型使用 Midscene 的正常配置方式，凭据不写入设备配置。Playground 在自身界面内完成画面选择、配对引导和摄像头校正。JS 脚本的 USB、AirPlay 设置通过终端引导，只有摄像头校正会打开浏览器；首次选择与绑定设备需要交互式终端，无人值守脚本可复用已在 Playground 配置的设备。连接时：通过 USB 信任 Mac，在 iPhone 蓝牙设置中配对这台 Mac（可能显示电脑名或 **Midscene**），启用辅助触控（AssistiveTouch），预览画面并确认蓝牙连接属于同一台手机。检测指针方向时，保持静态、明亮画面。内部自动生成设备 ID，`name` 用于选择已保存配置；后续脚本省略 `screen` 即可复用画面来源。
+
+支持 `usb`、`camera` 和 `airplay` 三种画面来源。摄像头首次设置包含四角透视校正。AirPlay 需要在 Host 的 PATH 中提供 UxPlay 1.74+、相关 GStreamer 解码器，并开启 macOS 隔空播放接收器以支持点对点发现；辅助页会显示接收器名称与配对码。SDK 不内置或自动安装 UxPlay。
+
+IOSHIDAgent 默认包含简短英文指引：中文通过屏幕键盘慢速点击字母和候选词，并检查已提交的文本；这段指引会与按优先级选中的用户 aiAct 上下文合并，不改变其他 API 的上下文。Input 动作说明也明确要求非 ASCII 文本改用页面建议或屏幕键盘；不支持的文本会在清空或输入前拒绝，并提示 Agent 改用其他动作。底层 Input 仍只支持 ASCII，不代表所有 App 的自动中文输入均已验证。
+
+设备提供 `home()`、`back()`，Agent 的动作列表同时包含 `Home`、`Back`。Home 发送 HID Consumer AC Home 按键；Back 执行左边缘右滑，仅适用于支持该手势的页面。两者沿用设备队列、取消与新画面检查。目前不提供 AppSwitcher 动作。
+
+首次滑动通过画面帧差测量相对指针移动，再用独立的横向、纵向和斜向移动复核，全程不点击。通过后的样本、曲线系数、测量范围、发送间隔、画面几何、验证误差与算法版本按设备保存在 `~/.midscene/ios-hid/devices.json`。重连时重新测量指针方向，兼容的旧曲线复核通过后才复用；绑定条件变化或复核失败时重新测量。绑定包含蓝牙身份、画面来源、尺寸、方向及摄像头校正参数。测量时保持手机静止、显示明亮且静态的画面；低对比、反光或动画可能导致失败。这些检查验证的是悬停移动，不代表应用实际滚动距离，也不会额外打开手机辅助网页。
+
+拖动使用向量长度不超过 8 个 HID 单位的相对报告，目标发送间隔为 16 ms，快起步、慢收尾。规划器在合法整数移动量中搜索，并累计补偿量化误差。必要时可将计划时长最多延长到请求的两倍，自动延长上限为 1 秒（主动指定更长时长仍支持到 5 秒）；仍然无法规划时，在按下前报错，不发送不完整的拖动。松开后用绝对定位恢复指针位置，这不能补偿应用滚动距离。新的时序默认值仍需跨设备、跨应用真机验证。
+
+Playground 自动以「手机名 - 手机型号」（例如「我的 iPhone - iPhone 13」）展示 USB 手机，不再提供手填名称。型号通过 macOS MobileDevice 框架读取已信任的 USB 手机；无法读取或可靠匹配时仅显示手机名。SDK 脚本仍可传入 `name` 选择已保存配置。
+
+更换画面来源、USB 设备或摄像头时，需要重新确认画面与蓝牙手机的绑定，系统蓝牙配对会保留。指定 `cameraId` 时，辅助页只提供该摄像头；切换摄像头需要重新选择屏幕四角。
+
+原生进程由 Host 按需启动并管理：蓝牙共用一个助手，USB 发现共用一个长期运行的助手，刷新复用同一个发现会话；各 USB 画面和摄像头采集流按各自会话管理。USB 发现不会启动录屏，也不代表当前一定能收到新画面。Host 关闭时结束发现助手，助手异常退出后在下次请求时重建。
+
+本机唯一 Host 持有 iOS 采集和蓝牙会话，不依赖脚本持续运行。配置和 Host 发现信息保存在 `~/.midscene/ios-hid/`，启动问题记录在 `host.log`。重新构建后，可用 `pnpm ios-hid:stop` 停止共享 Host，再启动工作台加载新版本。`destroy()` 释放设备占用，`agent.destroy()` 只释放 Agent 资源；失联客户端在 30 秒后回收。Host 默认监听本机地址并要求令牌；远端可通过转发连接，使用 `new HostClient({ url, token })`。`/devices` 列出已保存设备，`/tasks` 接收设备 ID、任务指令和请求 ID，每台设备独立排队。任务记录保存在内存中，服务重启后不重放任务。Host 执行任务时使用该进程环境中的模型配置。
+
+目前已在一台 iPhone 上验证 USB 采集、蓝牙点击、测量后的滑动、英文输入与中途取消输入。键盘文本暂支持美式 ASCII 布局，需要切换到英文输入法，不支持的文本会在输入前拒绝。指针测量使用帧差，动画或低对比背景可能导致失败。AirPlay 集成和多手机并发仍需真机验证。Host 分别管理每台设备的画面来源与蓝牙连接占用；当前 AirPlay 后端同一时间只支持一个接收器。
+
+摄像头输入复用机械臂的扫码辅助页、屏幕标记检测和校正组件。React 连接面板沿用原版 Playground 布局。每台设备拥有独立的上游 Playground 会话、Agent、任务与取消状态、报告和界面历史。设备标签页只切换视图，不会断开其他手机或停止其任务。「添加设备」进入 `#/connect/<workspace-id>`，工作台使用 `#/workspace/<workspace-id>`；Playground 服务运行期间刷新会恢复选中的设备及设置进度。连接处理期间首页保留表单，连接按钮显示 loading；异常通过全局提示展示。连接进度与工作区状态共用 SSE 推送，刷新或重连时发送完整快照，连接面板不再轮询；服务端保留画面健康检查。右侧预览旁的蓝牙图标打开设备详情。蓝牙订阅变化通过 SSE 推送工作台，画面健康检查独立进行；Host 在每次输入前要求新画面。蓝牙或画面异常时禁用执行，保留工作区和记录；右侧遮罩只提供「刷新」：按原配置重建连接，确认输入和新画面均可用后恢复；保留当前设备标签、Agent 与任务记录，不自动重放任务。正在执行任务时须先停止再刷新。脚本可调用 `device.refreshConnection()` 恢复同一个设备对象。画面来源在添加设备时确定，需要更换时移除后重新添加。移除只影响当前设备。新增连接排除已占用的蓝牙手机；USB 和摄像头列表保留全部已发现设备，已占用项标注「使用中」并禁用，数量包含这些设备，全部占用时提示「设备均在使用中」。每次绑定一台尚未分配的手机即可，已有设备可以保持连接。Host 继续负责资源占用检查。浏览器模型配置共用，任务记录、提示词历史按设备隔离。先选画面来源：USB 列出已连接手机，AirPlay 启动接收器，独立摄像头先选择具体相机。选择相机后即在连接界面显示实时预览，点击连接直接进入共用的扫码和校正流程；在带返回按钮的完整页面内按「扫码连接 → 相机校正」操作，复用机械臂的画面对照、检测工具栏和模型设置交互。相机校正提供标记识别和与机械臂共用的 AI 检测；模型设置复用 Playground 任务设置表单，支持表单／环境变量编辑和 Verify 连通性检查，机械臂校正弹窗同步生效。核对屏幕边缘后保存。手机需要能访问电脑的局域网地址；临时手机服务仅开放带会话令牌的辅助页和连接协议，不开放设备控制。网页标记无法确定完整屏幕边界时，保留手动调整与映射校验。
+
 ## 目录结构
 
 ```text
 packages/arm-kit/           Node.js SDK
 packages/adapter-mg400/     MG400 适配器
 packages/calibration-ui/    标定界面
-packages/shared/            共享类型与工具
+packages/shared/            @midscene/robotics-shared：浏览器安全的协议与几何
+packages/vision/            共用摄像头采集、校正与辅助页面
+packages/ios-hid/           iOS SDK、Host 与原生 HID/USB 实现
+packages/ios-hid-playground/ 基于上游 @midscene/playground 的 iOS 工作台
 packages/playground/        可复用工作台
 apps/playground/            MG400 工作台启动入口
 examples/mg400/             SDK 示例
@@ -81,3 +135,7 @@ examples/mg400/             SDK 示例
 ## 许可证
 
 [MIT](./LICENSE)。
+
+蓝牙首页纯展示服务名与当前连接的设备，不提供设备选择。连接状态通过原生订阅事件与 SSE 推送，页面首次连接及重连会取得完整快照；不轮询蓝牙列表。只有一台尚未绑定的手机时自动使用，已有工作区的手机可以保持连接；多台尚未绑定时需先仅保留目标新手机连接。广播名为 `Midscene`；手机系统可能保留这台 Mac 的历史名称，应用不能保证覆盖系统配对界面的名称。蓝牙公开接口不能直接读取连接方手机名称或具体型号。
+
+新增的 iOS HID 和 vision 包统一使用 Rstest。构建后分别运行：`pnpm --filter @midscene/ios-hid test`、`pnpm --filter @midscene/ios-hid-playground test`、`pnpm --filter @midscene/robotics-vision test`。

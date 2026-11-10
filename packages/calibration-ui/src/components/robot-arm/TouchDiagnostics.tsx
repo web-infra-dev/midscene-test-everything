@@ -1,4 +1,4 @@
-import type { CalibrationPhoneStatus } from '@midscene/arm-kit-shared/assisted-contracts';
+import type { CalibrationPhoneStatus } from '@midscene/robotics-shared/assisted-contracts';
 import { t } from '../../i18n';
 
 const names = {

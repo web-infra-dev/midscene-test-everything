@@ -429,6 +429,8 @@ export interface PlaygroundExecutionStatus {
 
 // main component config interface
 export interface UniversalPlaygroundConfig {
+  /** Host hardware readiness guard. */
+  disableExecution?: boolean;
   /** Optional host translator for playground controls. Receives English source messages. */
   translate?: (message: string, values?: readonly unknown[]) => string;
   showContextPreview?: boolean;

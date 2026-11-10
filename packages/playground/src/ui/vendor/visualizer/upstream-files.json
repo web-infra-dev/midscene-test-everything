@@ -75,7 +75,15 @@
     "utils/progress-action-icon.tsx": "6249c873a0777558c14b965ac120dfd7c43ee43ebe123f1c0fbb59e0738a3b09",
     "utils/prompt-input-utils.ts": "6c14bac29ad4a35ec93a96a6e278b560cdf41becd972964519a67c50489f1ca0",
     "utils/prompt-placeholder.ts": "6b51b1e0973c1f535a8cd27d87a9f90d7e6b30958cb80a0950ca80228f6670cf",
-    "utils/replay-scripts.ts": "d19e7966a9d02c6305ff3627539f0c44218e50bae1922f212228c46bb931fa18"
+    "utils/replay-scripts.ts": "d19e7966a9d02c6305ff3627539f0c44218e50bae1922f212228c46bb931fa18",
+    "component/nav-actions/style.less": "664243ea872c9130f64157c1ca98a3d1b51dc67691ddaf313e18d7154e8f0ef8",
+    "component/screenshot-viewer/index.tsx": "dc5cee8a55bbb94a678066daabb9ec6f4199df9beb48e4fa51918e78ce30fb8f",
+    "component/screenshot-viewer/index.less": "ee908c9ab9c3b8f6509395747c29f2e667d2cb24d683a347a0a3568c07f58214",
+    "utils/color.ts": "d251b3bb7c1102845995ec42261e996f6dd9e82fd88f54064b99d7b4128804e1",
+    "component/logo/index.tsx": "d7a1072db65956620aa07c0c13b662bf8babf441376663c8e96508de9834fac2",
+    "component/logo/index.less": "94323f73b0bde3282ef16df188551eb62f914d9cbc4b12d5de55aad302e2822f",
+    "component/nav-actions/index.tsx": "19f35f4604ecc170c06cf60fd17582d830ad1be875538708fc528dd08d3d5973",
+    "hooks/useTheme.ts": "9463dbd8279bd9e0af5a876df2e052197a002f5f727dad04532e5d5e17b1cc53"
   },
   "localChanges": {
     "component/config-modal/index.less": "Align the connection verification button icon with its label.",
@@ -93,7 +101,8 @@
     "utils/replay-scripts.ts": "Replace upstream @/utils alias with relative import."
   },
   "addedFiles": {
-    "component/universal-playground/translation.tsx": "Generic translation context with English fallback; adapted from midscene-private i18n commit 60935b003, not part of official baseline."
+    "component/universal-playground/translation.tsx": "Generic translation context with English fallback; adapted from midscene-private i18n commit 60935b003, not part of official baseline.",
+    "shell.ts": "Narrow exports for the reusable upstream Playground React shell."
   },
   "archiveSha256": "865fcb074eec6f8fa79976af7eda699e3d24149ec93bd8f407095b39404376b3"
 }

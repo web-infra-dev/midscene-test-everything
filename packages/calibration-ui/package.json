@@ -12,7 +12,11 @@
     },
     "./styles.less": "./src/styles.less",
     "./standalone": "./dist/index.html",
-    "./styles.css": "./lib/styles.css"
+    "./styles.css": "./lib/styles.css",
+    "./model-config": {
+      "types": "./lib/components/ModelConfigModal.d.ts",
+      "import": "./lib/components/ModelConfigModal.js"
+    }
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -22,11 +26,13 @@
     "test": "rstest run"
   },
   "dependencies": {
-    "@midscene/arm-kit-shared": "workspace:*",
+    "@midscene/robotics-shared": "workspace:*",
     "@arco-design/web-react": "2.66.18",
     "antd": "^5.21.6",
     "zustand": "^5.0.0",
-    "lucide-react": "0.553.0"
+    "lucide-react": "0.553.0",
+    "@midscene/robotics-vision": "workspace:*",
+    "@midscene/core": "1.17.5"
   },
   "peerDependencies": {
     "react": "^18.3.1",

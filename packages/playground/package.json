@@ -9,7 +9,7 @@
     "prepack": "pnpm build"
   },
   "dependencies": {
-    "@midscene/arm-kit-shared": "workspace:*",
+    "@midscene/robotics-shared": "workspace:*",
     "@ant-design/icons": "^5.3.1",
     "@midscene/arm-calibration-ui": "workspace:*",
     "@midscene/arm-kit": "workspace:*",
@@ -22,7 +22,11 @@
     "lucide-react": "0.553.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "zustand": "^5.0.0"
+    "zustand": "^5.0.0",
+    "react-resizable-panels": "2.0.22",
+    "@yume-chan/scrcpy": "2.3.0",
+    "@yume-chan/scrcpy-decoder-webcodecs": "2.5.0",
+    "socket.io-client": "4.8.1"
   },
   "devDependencies": {
     "@rsbuild/core": "^1.6.15",
@@ -51,7 +55,9 @@
     "./host": {
       "types": "./dist/server/index.d.ts",
       "import": "./dist/server/index.js"
-    }
+    },
+    "./shell": "./src/ui/vendor/playground-app/PlaygroundApp.tsx",
+    "./shell/*": "./src/ui/vendor/playground-app/*"
   },
   "files": ["dist/server", "dist/ui", "src/ui"]
 }

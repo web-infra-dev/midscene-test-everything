@@ -1,1 +1,1 @@
-export type { CameraProfile } from '@midscene/arm-kit-shared/contracts';
+export type { CameraProfile } from '@midscene/robotics-shared/contracts';

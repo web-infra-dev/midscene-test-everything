@@ -1,1 +1,1 @@
-export * from '@midscene/arm-kit-shared/assisted-contracts';
+export * from '@midscene/robotics-shared/assisted-contracts';

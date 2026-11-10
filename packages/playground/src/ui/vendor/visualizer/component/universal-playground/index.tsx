@@ -391,8 +391,8 @@ function UniversalPlaygroundContent({
   // Check if run button should be enabled
   const configAlreadySet = Object.keys(config || {}).length >= 1;
   const runButtonEnabled =
-    componentConfig.serverMode ||
-    (!dryMode && !actionSpaceLoading && configAlreadySet);
+    !componentConfig.disableExecution && (componentConfig.serverMode ||
+    (!dryMode && !actionSpaceLoading && configAlreadySet));
 
   // Get the currently selected type.
   // `Form.useWatch` returns `undefined` on the first render before the form

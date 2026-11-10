@@ -7,7 +7,7 @@ import type {
   CalibrationCommand,
   CalibrationPhoneStatus,
   CalibrationSnapshot,
-} from '@midscene/arm-kit-shared/contracts';
+} from '@midscene/robotics-shared/contracts';
 export interface CalibrationClientOptions {
   baseUrl: string;
   timeoutMs?: number;
@@ -34,6 +34,12 @@ export class CalibrationClient {
   private readonly baseUrl: string;
   constructor(private readonly options: CalibrationClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '');
+  }
+  verifyModel(env: Record<string, string>) {
+    return this.request<import('@midscene/core').ConnectivityTestResult>(
+      '/camera/verify-model',
+      env,
+    );
   }
   private async request<T>(path: string, body?: unknown): Promise<T> {
     const response = await (this.options.fetch ?? globalThis.fetch)(

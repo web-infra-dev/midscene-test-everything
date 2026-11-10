@@ -9,7 +9,7 @@ Copy from: https://github.com/web-infra-dev/midscene/tree/v1.17.5/packages/visua
 - License: MIT; see `LICENSE` copied from the same upstream revision.
 - Scope: the relative dependency closure of `UniversalPlayground` and `EnvConfig`,
   plus their types, styles, icons and original context-preview fixture. This is
-  not a full copy of the monorepo or the visualizer package.
+  not a full copy of the monorepo or the visualizer package. The shared React shell also reuses Logo, NavActions, ScreenshotViewer and the upstream theme through shell.ts.
 
 `upstream-files.json` records the original SHA-256 of every copied file, the
 source archive checksum, and an explicit list of locally changed/added files.
@@ -74,3 +74,5 @@ are replaced. The host owns execution readiness checks via upstream
 Do not run bulk formatting over untouched upstream files: keep the provenance
 comparison useful. This directory is excluded from the repository's bulk lint
 and format commands; TypeScript/build and the host integration tests still run.
+
+The config-modal entry delegates to `@midscene/arm-calibration-ui/model-config` so task settings and camera calibration share the same form and Verify UI. Translation remains supplied by the Playground context.

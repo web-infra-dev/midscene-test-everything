@@ -1,7 +1,7 @@
 import type {
   EffectiveCapabilities,
   RuntimeState,
-} from '@midscene/arm-kit-shared/contracts';
+} from '@midscene/robotics-shared/contracts';
 import { expect, it } from '@rstest/core';
 import { calibrationPowerControl } from '../src/power-state';
 

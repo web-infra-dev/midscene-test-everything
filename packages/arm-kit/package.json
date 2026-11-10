@@ -10,7 +10,7 @@
     "build": "rslib build",
     "typecheck": "tsc --noEmit -p tsconfig.build.json",
     "test": "rstest run",
-    "prepack": "pnpm --filter @midscene/arm-kit-shared build && pnpm build"
+    "prepack": "pnpm --filter @midscene/robotics-shared build && pnpm build"
   },
   "exports": {
     ".": {
@@ -32,13 +32,13 @@
   },
   "dependencies": {
     "@midscene/arm-calibration-ui": "workspace:*",
-    "@midscene/arm-kit-shared": "workspace:*",
+    "@midscene/robotics-shared": "workspace:*",
     "@midscene/shared": "1.17.5",
-    "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "ws": "8.22.1",
     "js-aruco2": "2.0.0",
     "sharp": "^0.34.3",
-    "@midscene/core": "1.17.5"
+    "@midscene/core": "1.17.5",
+    "@midscene/robotics-vision": "workspace:*"
   },
   "devDependencies": {
     "@types/ws": "8.18.2",

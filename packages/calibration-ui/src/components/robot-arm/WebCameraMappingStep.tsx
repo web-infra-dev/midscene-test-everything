@@ -1,7 +1,7 @@
 import {
   type CameraMappingAccuracy,
   mappingQualityWarnings,
-} from '@midscene/arm-kit-shared/assisted-contracts';
+} from '@midscene/robotics-shared/assisted-contracts';
 import { Button, Spin } from 'antd';
 import { type ReactNode, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';

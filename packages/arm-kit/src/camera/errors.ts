@@ -1,1 +1,1 @@
-export * from '@midscene/arm-kit-shared/camera/errors';
+export * from '@midscene/robotics-vision/camera/errors';

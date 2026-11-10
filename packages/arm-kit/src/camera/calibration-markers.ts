@@ -1,6 +1,6 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import { markerNoiseAllowancePx } from '@midscene/arm-kit-shared/marker-contracts';
-import aruco from 'js-aruco2';
+import { markerNoiseAllowancePx } from '@midscene/robotics-shared/marker-contracts';
+import { decodeArucoMarkers } from '@midscene/robotics-vision/camera/aruco-markers';
 import sharp from 'sharp';
 import type { CalibrationPageLayout } from '../assisted-contracts.js';
 import { RobotVisionError } from './errors.js';
@@ -15,9 +15,7 @@ import {
   quadToArray,
 } from './vision-geometry.js';
 
-const dictionaryName = 'ARUCO_MIP_36h12';
-const dictionary = new aruco.AR.Dictionary(dictionaryName);
-export const markerSvg = (id: number) => dictionary.generateSVG(id);
+export { markerSvg } from '@midscene/robotics-vision/camera/aruco-markers';
 type Markers = CalibrationPageLayout['markers'];
 
 export function hasMappingMarkerCoverage(fit: number, check: number) {
@@ -33,26 +31,9 @@ export function hasMappingMarkerCoverage(fit: number, check: number) {
 }
 
 export async function detectCalibrationMarkers(jpeg: Buffer, markers: Markers) {
-  const detector = new aruco.AR.Detector({
-    dictionaryName,
-    maxHammingDistance: 5,
-  });
-  async function decode(enhanced: boolean) {
-    const image = sharp(jpeg, { limitInputPixels: 16_777_216 }).toColourspace(
-      'srgb',
-    );
-    if (enhanced) image.normalise().sharpen();
-    const { data, info } = await image
-      .ensureAlpha()
-      .raw()
-      .toBuffer({ resolveWithObject: true });
-    return detector.detect({
-      data,
-      width: info.width,
-      height: info.height,
-    });
-  }
-  function uniqueContours(found: Awaited<ReturnType<typeof decode>>) {
+  function uniqueContours(
+    found: Awaited<ReturnType<typeof decodeArucoMarkers>>,
+  ) {
     // A sharp, front-facing border can decode twice, from its outer and inner contours.
     // Use the outside corners for fitting and keep spatially distinct copies ambiguous.
     const diagonal = (m: (typeof found)[number]) =>
@@ -73,13 +54,16 @@ export async function detectCalibrationMarkers(jpeg: Buffer, markers: Markers) {
     }
     return unique;
   }
-  let observed = uniqueContours(await decode(false));
+  let observed = uniqueContours(await decodeArucoMarkers(jpeg));
   const counts = markers.map(
     ({ code }) => observed.filter((m) => m.id === code).length,
   );
   // Enhance only an incomplete read. A duplicate ID is already ambiguous.
   if (counts.includes(0) && counts.every((count) => count <= 1))
-    observed = uniqueContours([...observed, ...(await decode(true))]);
+    observed = uniqueContours([
+      ...observed,
+      ...(await decodeArucoMarkers(jpeg, true)),
+    ]);
   const pairs = markers.flatMap((m) => {
     const matches = observed.filter((o) => o.id === m.code);
     if (!matches.length) return [];

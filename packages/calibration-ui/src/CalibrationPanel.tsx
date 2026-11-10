@@ -1,4 +1,4 @@
-import type { CameraMappingAccuracy } from '@midscene/arm-kit-shared/assisted-contracts';
+import type { CameraMappingAccuracy } from '@midscene/robotics-shared/assisted-contracts';
 import { Alert, Button, Spin, Steps } from 'antd';
 import {
   type ReactNode,

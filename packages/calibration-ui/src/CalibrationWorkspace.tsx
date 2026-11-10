@@ -1,10 +1,10 @@
-import { armUiTheme } from '@midscene/arm-kit-shared';
-import type { CalibrationPreviewPositions } from '@midscene/arm-kit-shared/assisted-contracts';
-import type { PerspectiveTarget } from '@midscene/arm-kit-shared/camera/vision-types';
+import { armUiTheme } from '@midscene/robotics-shared';
+import type { CalibrationPreviewPositions } from '@midscene/robotics-shared/assisted-contracts';
+import type { PerspectiveTarget } from '@midscene/robotics-shared/camera/vision-types';
 import type {
   CameraCorrection,
   PerspectiveValiditySummary,
-} from '@midscene/arm-kit-shared/contracts';
+} from '@midscene/robotics-shared/contracts';
 import {
   Alert,
   Button,

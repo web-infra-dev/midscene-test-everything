@@ -20,7 +20,9 @@
     "test": "pnpm -r --if-present test",
     "prepare": "husky",
     "commitlint": "commitlint",
-    "lint:staged": "lint-staged"
+    "lint:staged": "lint-staged",
+    "dev:ios-hid": "pnpm --filter @midscene/ios-hid-playground start",
+    "ios-hid:stop": "pnpm --filter @midscene/ios-hid stop:host"
   },
   "devDependencies": {
     "@biomejs/biome": "1.9.4",

@@ -4,7 +4,7 @@ import {
   useBrowserVoice,
   useCalibrationLanguage,
 } from '@midscene/arm-calibration-ui';
-import { armUiTheme } from '@midscene/arm-kit-shared';
+import { armUiTheme } from '@midscene/robotics-shared';
 import { App as AntApp, Badge, Button, ConfigProvider } from 'antd';
 import enUS from 'antd/locale/en_US';
 import zhCN from 'antd/locale/zh_CN';

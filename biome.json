@@ -13,7 +13,8 @@
       "**/dist/**",
       "**/coverage/**",
       "packages/calibration-ui/lib/**",
-      "packages/playground/src/ui/vendor/visualizer/**"
+      "packages/playground/src/ui/vendor/visualizer/**",
+      "packages/playground/src/ui/vendor/playground-app/**"
     ]
   },
   "javascript": {
