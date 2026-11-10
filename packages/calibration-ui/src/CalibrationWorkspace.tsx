@@ -1,4 +1,5 @@
 import { armUiTheme } from '@midscene/arm-kit-shared';
+import type { CalibrationPreviewPositions } from '@midscene/arm-kit-shared/assisted-contracts';
 import type {
   CameraCorrection,
   PerspectiveValiditySummary,
@@ -29,6 +30,7 @@ import { CameraCornerEditor } from './CameraCornerEditor';
 import { CorrectedPreview } from './CorrectedPreview';
 import { createCalibrationClient } from './client';
 import { PerspectiveObservationCard } from './components/PerspectiveObservationCard';
+import { CalibrationPositionMarkers } from './components/robot-arm/CalibrationPositionMarkers';
 import { WebCameraMappingStep } from './components/robot-arm/WebCameraMappingStep';
 import { useAssistedCalibration } from './hooks/useAssistedCalibration';
 import { usePerspectiveValidity } from './hooks/usePerspectiveValidity';
@@ -55,6 +57,7 @@ export interface Configuration {
   output?: AssistedMappingInput;
   camera: CameraProfile;
   correction?: CameraCorrection;
+  previewPositions?: CalibrationPreviewPositions;
   correctionOutput?: { width: number; height: number };
   correctionKey?: string;
   perspectiveValidity?: PerspectiveValiditySummary;
@@ -386,11 +389,20 @@ export function CalibrationWorkspace({
                       config.ready && perspective.summary?.state !== 'invalid'
                     }
                     preview={
-                      <img
-                        className="calibration-preview"
-                        src={`${base}/camera/preview`}
-                        alt={config.camera.name}
-                      />
+                      <div className="calibration-position-frame">
+                        <img
+                          className="calibration-preview"
+                          src={`${base}/camera/preview`}
+                          alt={config.camera.name}
+                        />
+                        {config.correction &&
+                          perspective.summary?.state !== 'invalid' && (
+                            <CalibrationPositionMarkers
+                              correction={config.correction}
+                              positions={config.previewPositions}
+                            />
+                          )}
+                      </div>
                     }
                     onReviewCamera={
                       config.correction

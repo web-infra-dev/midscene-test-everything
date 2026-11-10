@@ -8,8 +8,16 @@ import type {
   CalibrationSession,
 } from '../src/calibration/exploration/types.js';
 
-import type { CartesianPose } from '../src/contracts.js';
+import type {
+  CartesianPose,
+  MotionAcceleration,
+  MotionSpeed,
+} from '../src/contracts.js';
 import { contactPoint } from '../src/domain.js';
+import {
+  scaleAcceleration,
+  scaleSpeed,
+} from '../src/screen-interaction/motion-policy.js';
 import { fixture, pose } from './fixtures.js';
 
 describe('first-time automatic exploration', () => {
@@ -209,6 +217,8 @@ describe('first-time automatic exploration', () => {
           joints: { min: 0.01, max: 360 },
         },
       };
+      let finalPress = false;
+      let finalPressCount = 0;
       const host = {
         adapter: {
           ...f.adapter,
@@ -225,14 +235,24 @@ describe('first-time automatic exploration', () => {
         ready: async () => undefined,
         drag: async () => undefined,
         target: () => undefined,
-        preflight: async () => undefined,
+        preflight: async ([step]: Parameters<
+          AutoExplorationHost['preflight']
+        >[0]) => {
+          finalPress = step.name.endsWith(' press');
+        },
         move: async (
           target: CartesianPose,
           _ctx: unknown,
-          speed: { kind: string; value?: number },
+          speed: MotionSpeed,
+          acceleration: MotionAcceleration,
         ) => {
-          if (finishedSampling && speed.kind === 'ratio')
-            expect(speed.value).toBeCloseTo(0.1, 8);
+          const factor = isFast || finalPress ? 0.25 : 0.1;
+          expect(speed).toEqual(scaleSpeed(ctx.screen.actionSpeed, factor));
+          expect(acceleration).toEqual(
+            scaleAcceleration(ctx.screen.actionAcceleration, factor),
+          );
+          if (finalPress) finalPressCount++;
+          finalPress = false;
           const point = contactPoint(target, f.tool.offsetMm);
           const previous = contactPoint(actualPose, f.tool.offsetMm);
           if (
@@ -358,6 +378,7 @@ describe('first-time automatic exploration', () => {
         const collection = await job;
         expect(collection.probes).toHaveLength(3);
         expect(collection.grid).toHaveLength(isFast ? 6 : 9);
+        if (mode === 'standard') expect(finalPressCount).toBe(12);
         const fit = () =>
           fitExploration(
             collection,

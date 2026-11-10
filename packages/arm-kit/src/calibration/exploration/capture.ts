@@ -84,6 +84,10 @@ export class AutomaticCapture {
                     explorationTargets(this.layout, this.mode !== 'standard')
                   ).map((target) => target.point)
                 : undefined,
+            measuredPoints:
+              this.phase === 'grid' && this.mode === 'standard'
+                ? this.points.map((sample) => sample.point)
+                : undefined,
             heightSearch: this.heightSearch && { ...this.heightSearch },
             phase: this.captured
               ? ('captured' as const)

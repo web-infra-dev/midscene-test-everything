@@ -1,3 +1,49 @@
+#capture-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+#capture-grid span {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+}
+
+.capture-grid-point {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid #94a3b8;
+  background: white;
+  color: #64748b;
+  font-size: 14px;
+}
+
+.capture-grid-point.is-current {
+  outline: 3px solid #1677ff;
+  outline-offset: 5px;
+}
+
+body[data-stage="interrupted"] .capture-grid-point.is-current {
+  outline-color: #cf1322;
+}
+
+.capture-measured-point {
+  width: 12px;
+  height: 12px;
+  background: #21866a;
+}
+
+body[data-display-ready="false"] #capture-grid {
+  visibility: hidden;
+}
+
+#capture-grid:not([hidden]) ~ :is(#target, #mapping-hit, #mapping-trail) {
+  visibility: hidden;
+}
+
 /* Fixed screen references for approach observation, never optical mapping. */
 #approach-guides {
   position: absolute;

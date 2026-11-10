@@ -1,4 +1,5 @@
 import { armUiTheme } from '@midscene/arm-kit-shared';
+import type { CalibrationPreviewPositions } from '@midscene/arm-kit-shared/assisted-contracts';
 import type {
   CalibrationBatchState,
   WorkstationScreenState,
@@ -79,6 +80,7 @@ interface BoundScreen {
   hasSavedPerspective?: boolean;
   markerSlot?: number;
   correction?: CameraCorrection;
+  previewPositions?: CalibrationPreviewPositions;
 }
 
 interface SingleStatus {
@@ -273,6 +275,8 @@ function GuidedContent({
     setApplying(false);
     setError(undefined);
   }, []);
+  const currentStep = useRef(step);
+  currentStep.current = step;
   const refreshSequence = useRef(0);
   const currentBase = useRef(base);
   currentBase.current = base;
@@ -286,7 +290,7 @@ function GuidedContent({
         sequence !== refreshSequence.current;
       const [next, listed] = await Promise.all([
         markerRequest<Configuration>(
-          `${base}/configuration`,
+          `${base}/configuration${currentStep.current === 2 ? '?teaching' : ''}`,
           undefined,
           signal,
         ),
@@ -542,6 +546,12 @@ function GuidedContent({
         id: entry.id,
         name: entry.name,
         correction: quad,
+        previewPositions:
+          entry.id === activeId && !outlineBlocked
+            ? activeConfig
+              ? activeConfig.previewPositions
+              : entry.previewPositions
+            : undefined,
         active: entry.id === activeId,
         validity:
           entry.id === activeId ? perspective.summary?.state : undefined,

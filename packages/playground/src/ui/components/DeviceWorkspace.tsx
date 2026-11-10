@@ -250,6 +250,10 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
                 id: screen.id,
                 name: screen.name,
                 correction: screen.correction,
+                previewPositions:
+                  screen.id === activeScreen?.id && !perspectiveBlocked
+                    ? screen.previewPositions
+                    : undefined,
                 active: screen.id === activeScreen?.id,
                 validity:
                   screen.id === deviceId
@@ -662,6 +666,7 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
                 <DeviceSettings
                   key={`${deviceId}:${configurationRevision}`}
                   id={deviceId!}
+                  onRecorded={() => void refresh(false)}
                 />
               )}
             </section>

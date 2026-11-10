@@ -1,12 +1,15 @@
+import type { CalibrationPreviewPositions } from '@midscene/arm-kit-shared/assisted-contracts';
 import type { CameraCorrection } from '@midscene/arm-kit-shared/contracts';
 import { useLayoutEffect, useRef, useState } from 'react';
 import { t } from '../../i18n';
+import { CalibrationPositionMarkers } from './CalibrationPositionMarkers';
 
 /** One screen the camera already holds a perspective for. */
 export interface ScreenOutlineEntry {
   id: string;
   name: string;
   correction: CameraCorrection;
+  previewPositions?: CalibrationPreviewPositions;
   /** The screen the checklist is currently working on. */
   active?: boolean;
   validity?: 'valid' | 'invalid' | 'suspected' | 'unverified';
@@ -67,6 +70,10 @@ function ScreenOutline({ outline }: { outline: ScreenOutlineEntry }) {
             .join(' ')}
         />
       </svg>
+      <CalibrationPositionMarkers
+        correction={correction}
+        positions={outline.previewPositions}
+      />
       {name && (
         <span
           aria-hidden="true"

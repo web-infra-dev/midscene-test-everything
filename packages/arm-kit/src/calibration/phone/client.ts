@@ -519,6 +519,39 @@ export function mountCalibrationPhonePage(
   let paintedKey: string | undefined;
   let paintingKey: string | undefined;
   let lastGridKey: string | undefined;
+  function renderCaptureGrid(capture?: CalibrationPageReply['capture']) {
+    const grid = element('capture-grid');
+    if (capture?.mode !== 'standard' || !capture.targets?.length) {
+      grid.hidden = true;
+      lastGridKey = undefined;
+      return;
+    }
+    grid.hidden = false;
+    const { targets, index, measuredPoints = [] } = capture;
+    const key = JSON.stringify([targets, index, measuredPoints]);
+    if (key === lastGridKey) return;
+    lastGridKey = key;
+    element('capture-route').setAttribute(
+      'points',
+      targets.map(({ x, y }) => `${x},${y}`).join(' '),
+    );
+    const marker = (point: WebPoint, className: string) => {
+      const dot = document.createElement('span');
+      dot.className = className;
+      dot.style.left = `${point.x}px`;
+      dot.style.top = `${point.y}px`;
+      return dot;
+    };
+    element('capture-points').replaceChildren(
+      ...targets.map((point, i) => {
+        const dot = marker(point, 'capture-grid-point');
+        dot.textContent = String(i + 1);
+        if (i + 1 === index) dot.className += ' is-current';
+        return dot;
+      }),
+      ...measuredPoints.map((point) => marker(point, 'capture-measured-point')),
+    );
+  }
   function paint(next: CalibrationPageReply) {
     if (next.pairingToken && /^[a-f0-9-]{36}$/.test(next.pairingToken)) {
       history.replaceState(
@@ -599,27 +632,7 @@ export function mountCalibrationPhonePage(
     const capture = ['collect', 'interrupted'].includes(next.view)
       ? next.capture
       : undefined;
-    if (capture?.targets) {
-      const key = JSON.stringify([
-        capture.targets,
-        capture.index,
-        capture.phase,
-      ]);
-      if (key !== lastGridKey) {
-        lastGridKey = key;
-        const grid = element('capture-grid');
-        grid.replaceChildren(
-          ...capture.targets.map((point, index) => {
-            const marker = document.createElement('span');
-            marker.className = `capture-grid-point${index < capture.index - 1 || (index === capture.index - 1 && capture.phase === 'captured') ? ' is-complete' : ''}`;
-            marker.style.left = `${point.x}px`;
-            marker.style.top = `${point.y}px`;
-            marker.textContent = String(index + 1);
-            return marker;
-          }),
-        );
-      }
-    }
+    renderCaptureGrid(capture);
     message.textContent =
       (next.error ===
       'No touch before the safe descent limit; collected points are retained'
@@ -1112,6 +1125,7 @@ export function mountCalibrationPhonePage(
       readyTarget = undefined;
       phoneStep = undefined;
       renderGuide();
+      renderCaptureGrid();
       clearMappingTouch();
       state = undefined;
       hideGuidance();

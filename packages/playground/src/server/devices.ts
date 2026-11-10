@@ -7,6 +7,7 @@ import {
   listCameras,
 } from '@midscene/arm-kit';
 import { CalibrationHost } from '@midscene/arm-kit/internal/calibration-server/host';
+import { calibrationPreviewPositions } from '@midscene/arm-kit/internal/calibration-server/preview-positions';
 import { controllerRuntime } from '@midscene/arm-kit/internal/controller-runtime';
 import { CalibrationBatch } from './calibration-batch.js';
 import type { PhonePairings } from './phone-pairings.js';
@@ -77,14 +78,15 @@ export class PlaygroundDevices {
     this.phoneEntryAtRoot = phoneEntryAtRoot;
     this.pairings = pairings;
   }
-  screens() {
+  screens(includePreviewPositions = false) {
     const saved =
       controllerRuntime(this.arm).profileStore.list().screenTargets ?? [];
     const defaults = [...this.entries]
       .filter(([id, e]) => id === e.cameraId && !saved.some((s) => s.id === id))
       .map(([id, e]) => ({ id, cameraId: id, name: e.camera.camera.name }));
     return [...defaults, ...saved.filter((t) => !t.archived)].map((target) => {
-      const camera = this.entries.get(target.id)?.camera;
+      const entry = this.entries.get(target.id);
+      const camera = entry?.camera;
       const correction = camera?.getCorrection();
       return {
         ...target,
@@ -95,6 +97,16 @@ export class PlaygroundDevices {
         ...(correction
           ? {
               correction,
+              previewPositions:
+                includePreviewPositions && camera
+                  ? entry?.host
+                    ? entry.host.previewPositions()
+                    : calibrationPreviewPositions(
+                        controllerRuntime(this.arm),
+                        camera,
+                        target.id,
+                      )
+                  : undefined,
               perspectiveTarget: camera?.getRectifiedPreviewTarget(),
             }
           : {}),

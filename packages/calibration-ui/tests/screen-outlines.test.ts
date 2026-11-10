@@ -44,3 +44,52 @@ it('renders nothing for a camera without a saved perspective', () => {
   );
   expect(html).toBe('');
 });
+
+it('labels all three positions concisely and reports off-frame parking', () => {
+  const html = renderToStaticMarkup(
+    createElement(ScreenOutlines, {
+      outlines: [
+        {
+          id: 'phone',
+          name: '',
+          correction,
+          previewPositions: {
+            reference: { x: 240, y: 180 },
+            safe: { x: 700, y: 300 },
+            cameraBoundary: { x: 0, y: 120 },
+          },
+        },
+      ],
+    }),
+  );
+  expect(html).toContain('标定参考位');
+  expect(html).not.toContain('估算');
+  expect(html).toContain('安全避让位 · 画面外');
+  expect(html).toContain('translate(240 180)');
+  expect(html).not.toContain('translate(700');
+  expect(html).toContain('相机侧边界');
+  expect(html).toContain('translate(0 120)');
+});
+
+it.each([
+  { x: -1, y: 100 },
+  { x: 640, y: 100 },
+  { x: 100, y: 480 },
+  { x: 100, y: -1 },
+])('omits a boundary beyond the camera frame', (cameraBoundary) => {
+  const html = renderToStaticMarkup(
+    createElement(ScreenOutlines, {
+      outlines: [
+        {
+          id: 'phone',
+          name: '',
+          correction,
+          previewPositions: { cameraBoundary },
+        },
+      ],
+    }),
+  );
+  expect(html).not.toContain('相机侧边界');
+  expect(html).not.toContain('画面外');
+  expect(html).not.toContain('calibration-position-markers');
+});

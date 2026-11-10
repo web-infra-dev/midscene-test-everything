@@ -155,6 +155,8 @@ export interface CalibrationPointProgress {
     | 'slide'
     | 'recover';
   targets?: WebPoint[];
+  /** Recorded grid contacts in page CSS pixels, excluding direction probes. */
+  measuredPoints?: WebPoint[];
   heightSearch?: {
     precision?: boolean;
     predictedZ: number;
@@ -305,6 +307,12 @@ export interface WebCalibrationMapping {
   /** Marker shape residual, not the four-centre interpolation residual. */
   markerErrorPx: number;
   accuracy: CameraMappingAccuracy;
+}
+/** Approximate stylus footprints in the original camera image, in source pixels. */
+export interface CalibrationPreviewPositions {
+  reference?: WebPoint;
+  cameraBoundary?: WebPoint;
+  safe?: WebPoint;
 }
 /** Configuration prepared before any calibration task exists. */
 export interface AssistedCalibrationSetup {

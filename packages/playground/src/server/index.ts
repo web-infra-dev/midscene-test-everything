@@ -715,7 +715,7 @@ export async function startPlaygroundHost({
       if (url.pathname === '/api/screens') {
         if (!devices) return send(409, { error: 'Connect the arm first' });
         if (req.method === 'GET')
-          return send(200, { screens: devices.screens() });
+          return send(200, { screens: devices.screens(true) });
         if (req.method === 'POST') {
           const input = await readBody(req, 16384);
           if (
@@ -906,7 +906,7 @@ export async function startPlaygroundHost({
         });
         const registry = devices;
         const deviceSession = registry ? setup.session : null;
-        const screens = registry?.screens();
+        const screens = registry?.screens(true);
         const entries = await Promise.all(
           cameras.map(async (camera) => {
             const entry = registry?.entries.get(camera.id);

@@ -6,7 +6,10 @@ import { t, useLanguage } from '../../i18n';
 import { MotionSettings } from './MotionSettings';
 
 /** Original safe-position operations, bound to the selected camera's Device. */
-export function DeviceSettings({ id }: { id: string }) {
+export function DeviceSettings({
+  id,
+  onRecorded,
+}: { id: string; onRecorded?(): void }) {
   const arm = useDeviceControls(id);
   const language = useLanguage();
   const [open, setOpen] = useState(false);
@@ -20,7 +23,13 @@ export function DeviceSettings({ id }: { id: string }) {
     state.dragMode ||
     arm.state?.operation?.status === 'running';
   const submit = (mode: 'return' | 'record') => {
-    void arm.run(() => arm.api.safePosition(mode)).catch(() => undefined);
+    void arm
+      .run(async () => {
+        const result = await arm.api.safePosition(mode);
+        if (mode === 'record') onRecorded?.();
+        return result;
+      })
+      .catch(() => undefined);
   };
   return (
     <>

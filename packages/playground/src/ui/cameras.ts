@@ -1,3 +1,4 @@
+import type { CalibrationPreviewPositions } from '@midscene/arm-kit-shared/assisted-contracts';
 import type { PerspectiveTarget } from '@midscene/arm-kit-shared/camera/vision-types';
 import type { CameraCorrection } from '@midscene/arm-kit-shared/contracts';
 import { create } from 'zustand';
@@ -7,6 +8,7 @@ export interface CameraScreen {
   name: string;
   hasCorrection?: boolean;
   correction?: CameraCorrection;
+  previewPositions?: CalibrationPreviewPositions;
   perspectiveTarget?: PerspectiveTarget;
 }
 export interface CameraEntry extends CameraScreen {

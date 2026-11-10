@@ -43,7 +43,7 @@ it.each([
     let current = pose(50, -50, 40);
     let sequence = 0;
     let touching = false;
-    const motions: Array<{ z: number; speed: unknown }> = [];
+    const motions: Array<{ z: number; speedRatio: number }> = [];
     let collector: AutomaticCapture;
     const send = () => {
       const capture = collector.snapshot().capture;
@@ -97,7 +97,12 @@ it.each([
           read: async () => current,
           move: async (target, options) => {
             current = structuredClone(target);
-            motions.push({ z: target.positionMm.z, speed: options?.speed });
+            if (options?.speed?.kind !== 'ratio')
+              throw new Error('Expected a speed ratio');
+            motions.push({
+              z: target.positionMm.z,
+              speedRatio: options.speed.value,
+            });
             touching = current.positionMm.z <= (touching ? 32 : 30);
             if (mode === 'cancel' && motions.length === 2)
               abort.abort(new Error('operator stopped'));
@@ -127,10 +132,22 @@ it.each([
         expect(error).toBeUndefined();
         expect(collector.localPoints).toHaveLength(3);
         expect(collector.points).toHaveLength(mode === 'standard' ? 9 : 6);
-        for (const motion of motions)
-          expect((motion.speed as { value: number }).value).toBeCloseTo(
-            mode === 'standard' ? 0.08 : 0.2,
+        if (mode === 'standard') {
+          const finalPresses = motions.filter(
+            (motion) => motion.speedRatio === 0.2,
           );
+          const samples = [...collector.localPoints, ...collector.points];
+          expect(finalPresses.map((motion) => motion.z)).toEqual(
+            samples.map((sample) => sample.probeStep!.after.positionMm.z),
+          );
+          for (const motion of motions.filter(
+            (motion) => motion.speedRatio !== 0.2,
+          ))
+            expect(motion.speedRatio).toBeCloseTo(0.08);
+        } else {
+          for (const motion of motions)
+            expect(motion.speedRatio).toBeCloseTo(0.2);
+        }
         expect(collector.upstreamResult).toBeDefined();
       } else {
         expect(error).toBeInstanceOf(Error);

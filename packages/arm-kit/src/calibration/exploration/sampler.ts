@@ -1,6 +1,6 @@
 // Ported from avatr-robot/midscene-private dev, commit
 // 710f60809eac3dbe824f91a5cf8b3b0e72386282, calibration/auto-exploration.ts.
-// The sampling body is unchanged. Phone transport, persistence and motion ownership
+// Phone transport, persistence and motion ownership
 // are supplied by the Arm Kit bridge; boundary verification remains in its workflow.
 import { randomUUID } from 'node:crypto';
 import { RobotArmError } from '../../contracts.js';
@@ -56,7 +56,9 @@ const PRESS_MM = 0.5;
 const DWELL_MS = 250;
 const ACK_POLL_MS = 25;
 const ACK_POLL_ATTEMPTS = 100;
-const MOTION_FACTOR = 0.1;
+const STANDARD_MOTION_FACTOR = 0.1;
+const FAST_MOTION_FACTOR = 0.25;
+const STANDARD_PRESS_FACTOR = 0.25;
 const STEP_TIMEOUT_MS = 10000;
 export const MIN_COVERAGE = 0.6;
 /** Residual tolerances are physical and use both measured pixel-axis scales. */
@@ -161,7 +163,6 @@ export async function runAutoExploration(
     session.auto.horizontalConfirmed = options.horizontalConfirmed === true;
   }
   const start = options.startPose;
-  const motionFactor = fast ? 0.25 : MOTION_FACTOR;
   const dwellMs = fast ? 100 : DWELL_MS;
   const searchStepMm = fast ? FAST_SEARCH_STEP_MM : SEARCH_STEP_MM;
   const searchWaitMs = fast ? FAST_SEARCH_WAIT_MS : SEARCH_WAIT_MS;
@@ -173,29 +174,33 @@ export async function runAutoExploration(
     );
   const screen = ctx.screen;
   const tool = ctx.tool;
-  const speed = scaleSpeed(screen.actionSpeed, motionFactor);
-  const acceleration = scaleAcceleration(
-    screen.actionAcceleration,
-    motionFactor,
+  const motionAtFactor = (factor: number) => ({
+    speed: scaleSpeed(screen.actionSpeed, factor),
+    acceleration: scaleAcceleration(screen.actionAcceleration, factor),
+  });
+  const moveOptions = motionAtFactor(
+    fast ? FAST_MOTION_FACTOR : STANDARD_MOTION_FACTOR,
   );
-  const moveOptions = { speed, acceleration };
+  const pressOptions = fast
+    ? moveOptions
+    : motionAtFactor(STANDARD_PRESS_FACTOR);
   const poseAt = (contact: { x: number; y: number; z: number }) =>
     flangePose(contact, start.orientation, tool.offsetMm);
   const preflight = async (
     contact: { x: number; y: number; z: number },
     name: string,
-  ) =>
-    host.preflight(
-      [{ name, pose: poseAt(contact), options: moveOptions }],
-      ctx,
-    );
-  const moveTo = async (contact: { x: number; y: number; z: number }) => {
+    motion = moveOptions,
+  ) => host.preflight([{ name, pose: poseAt(contact), options: motion }], ctx);
+  const moveTo = async (
+    contact: { x: number; y: number; z: number },
+    motion = moveOptions,
+  ) => {
     const pose = poseAt(contact);
     await assertPage();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
-        host.move(pose, ctx, speed, acceleration),
+        host.move(pose, ctx, motion.speed, motion.acceleration),
         new Promise<never>((_, reject) => {
           timer = setTimeout(() => {
             Promise.resolve(host.stop?.()).catch(() => undefined);
@@ -508,7 +513,7 @@ export async function runAutoExploration(
         const contactZ = (clearZ + touchingZ) / 2;
         const pressedZ = contactZ - PRESS_MM;
         checkDepth(pressedZ);
-        await preflight({ x, y, z: pressedZ }, `${label} press`);
+        const pressTarget = { x, y, z: pressedZ };
         let pressed: Awaited<ReturnType<typeof observe>> | undefined;
         let pressRetried = false;
         for (
@@ -520,7 +525,8 @@ export async function runAutoExploration(
             pressRetried = true;
             await release(pressedZ);
           }
-          await moveTo({ x, y, z: pressedZ });
+          await preflight(pressTarget, `${label} press`, pressOptions);
+          await moveTo(pressTarget, pressOptions);
           pressed = await observe(dwellMs);
           reportProbe('press', pressedZ, pressed);
           if (pressed.screen) break;

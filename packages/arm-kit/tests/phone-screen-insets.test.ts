@@ -395,6 +395,69 @@ test('reports actual missing-inset evidence without changing geometry revisions'
   expect(phone.last().layout.revision).toBe(revision);
 });
 
+test('regular sampling displays the ordered grid, current target and recorded contacts', () => {
+  const phone = openPhone(700, 47, 34);
+  const targets = [70, 350, 630].flatMap((y) =>
+    [39, 195, 351].map((x) => ({ x, y })),
+  );
+  const directionProbe = { x: 193, y: 348 };
+  const capture = {
+    mode: 'standard',
+    index: 4,
+    target: { id: 'fourth', point: targets[3] },
+    targets,
+    measuredPoints: [{ x: 42, y: 68 }],
+  };
+  const progress = {
+    view: 'collect',
+    anchors: [directionProbe, ...capture.measuredPoints],
+    capture,
+  };
+  phone.receive(progress);
+  const grid = phone.elements.get('capture-grid')!;
+  const points = phone.elements.get('capture-points')!;
+  expect(grid.hidden).toBe(false);
+  expect(phone.elements.get('capture-route')?.attributes.points).toBe(
+    targets.map(({ x, y }) => `${x},${y}`).join(' '),
+  );
+  expect(points.children).toHaveLength(10);
+  expect(points.children[3]).toMatchObject({
+    textContent: '4',
+    className: 'capture-grid-point is-current',
+    style: { left: '39px', top: '350px' },
+  });
+  expect(points.children[9]).toMatchObject({
+    className: 'capture-measured-point',
+    style: { left: '42px', top: '68px' },
+  });
+  phone.receive({
+    ...progress,
+    capture: {
+      ...capture,
+      measuredPoints: [...capture.measuredPoints, { x: 191, y: 72 }],
+    },
+  });
+  expect(points.children).toHaveLength(11);
+  phone.receive({ ...progress, view: 'interrupted' });
+  expect(grid.hidden).toBe(false);
+  phone.receive({
+    ...progress,
+    automaticPhase: 'local',
+    capture: { ...capture, targets: undefined },
+  });
+  expect(grid.hidden).toBe(true);
+  phone.receive({
+    ...progress,
+    capture: { ...capture, index: 1, measuredPoints: [] },
+  });
+  expect(points.children).toHaveLength(9);
+  expect(points.children[0]).toMatchObject({
+    className: 'capture-grid-point is-current',
+  });
+  phone.disconnect(1006);
+  expect(grid.hidden).toBe(true);
+});
+
 test('phone follows six-point sliding progress and preserves the failed endpoint', () => {
   const phone = openPhone(700, 47, 34);
   const targets = [
@@ -422,7 +485,7 @@ test('phone follows six-point sliding progress and preserves the failed endpoint
     anchors: [],
     capture,
   });
-  expect(phone.elements.get('capture-grid')?.children).toHaveLength(6);
+  expect(phone.elements.get('capture-grid')?.hidden).toBe(true);
   expect(phone.elements.get('message')?.textContent).toContain('Sliding');
   expect(phone.elements.get('connection')?.textContent).toContain('5 / 6');
   phone.receive({

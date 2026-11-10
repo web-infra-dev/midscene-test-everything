@@ -29,6 +29,7 @@ import { sharedCalibrationTool } from '../runtime/profile-store.js';
 import { createCalibrationHandler } from './handler.js';
 
 import { PhoneSocketServer } from './phone-socket.js';
+import { calibrationPreviewPositions } from './preview-positions.js';
 
 export interface CalibrationHostOptions {
   arm: ArmController;
@@ -277,7 +278,21 @@ export class CalibrationHost {
     return { width: bounded(screen.width), height: bounded(screen.height) };
   }
 
-  async configuration() {
+  previewPositions(teachingView = false) {
+    const { arm, camera, deviceId } = this.options;
+    if (!camera.getCorrection()) return;
+    return calibrationPreviewPositions(
+      controllerRuntime(arm),
+      camera,
+      deviceId,
+      {
+        selection: this.input,
+        session: this.service.status(),
+        teachingView,
+      },
+    );
+  }
+  async configuration(teachingView = false) {
     if (!this.input) await this.prepare();
     const { camera, deviceId } = this.options;
     const arm = controllerRuntime(this.options.arm);
@@ -306,6 +321,7 @@ export class CalibrationHost {
         profileKey: correction ? camera.camera.id : undefined,
       },
       correction,
+      previewPositions: correction && this.previewPositions(teachingView),
       perspectiveValidity: camera.getPerspectiveValidity(),
       correctionKey:
         correction && selection
@@ -587,7 +603,8 @@ export class CalibrationHost {
       return true;
     }
     if (await this.control(req, res, assertAssistedWrite)) return true;
-    const path = new URL(req.url ?? '/', 'http://localhost').pathname;
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    const path = url.pathname;
     if (!path.startsWith(`${this.basePath}/`)) return false;
     const send = (status: number, value: unknown) => {
       res.writeHead(status, {
@@ -677,7 +694,7 @@ export class CalibrationHost {
             );
         }
       } else if (relative === '/configuration' && req.method === 'GET')
-        send(200, await this.configuration());
+        send(200, await this.configuration(url.searchParams.has('teaching')));
       else if (relative === '/configuration' && req.method === 'POST')
         send(200, await this.configure(await readJson(req)));
       else if (

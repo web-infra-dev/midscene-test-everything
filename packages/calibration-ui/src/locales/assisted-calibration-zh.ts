@@ -1,4 +1,7 @@
 export const assistedCalibrationZh: Record<string, string> = {
+  'Calibration positions': '标定位置',
+  'Safe Parking Position': '安全避让位',
+  '{0} · outside frame': '{0} · 画面外',
   'Resume the robot to continue calibration.':
     '请在顶部恢复机械臂运行，再继续标定。',
   'Check controller recovery before collecting points.':
