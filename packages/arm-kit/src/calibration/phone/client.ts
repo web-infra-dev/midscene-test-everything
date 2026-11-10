@@ -31,6 +31,10 @@ export function mountCalibrationPhonePage(
     new URLSearchParams(location.search).get('lang') || navigator.language
   ).startsWith('zh');
   const text = {
+    keepOpen: [
+      '保持本页打开，在电脑端选择此设备。',
+      'Keep this page open and select this device on your computer.',
+    ],
     waiting: [
       '已连接，请在电脑端继续。',
       'Connected. Continue on your computer.',
@@ -137,6 +141,7 @@ export function mountCalibrationPhonePage(
     return value;
   };
   const message = element('message');
+  const pageTitle = element('page-title');
   const connection = element('connection');
   const target = element('target');
   const number = element('target-number');
@@ -149,6 +154,20 @@ export function mountCalibrationPhonePage(
     crypto.randomUUID
       ? crypto.randomUUID()
       : Math.random().toString(36).slice(2) + Date.now();
+  const browserInstanceId = pageId;
+  const instanceKey = `midscene-screen-instance:${location.search}`;
+  let resumeBrowserInstanceId: string | undefined;
+  let claimBrowserInstance = false;
+  try {
+    const navigation = performance.getEntriesByType('navigation')[0] as
+      | PerformanceNavigationTiming
+      | undefined;
+    if (navigation?.type === 'reload')
+      resumeBrowserInstanceId =
+        sessionStorage.getItem(instanceKey) ?? undefined;
+  } catch {
+    // Storage restrictions only prevent automatic refresh recovery.
+  }
   const pairing = { revision: 1, layoutKey: '' };
   let sequence = 0;
   let eventSequence = 0;
@@ -405,7 +424,8 @@ export function mountCalibrationPhonePage(
           }),
       devicePixelRatio: window.devicePixelRatio,
     };
-    const topInset = forced ? 0 : iosTopInset(screen.height - viewport.height);
+    const gap = Math.max(0, screen.height - viewport.height);
+    const topInset = forced ? 0 : (iosTopInset(gap) ?? gap);
     const value = {
       width: viewport.width,
       height: viewport.height,
@@ -472,7 +492,7 @@ export function mountCalibrationPhonePage(
     css: WebPoint,
     phase: 'down' | 'move' | 'up' | 'cancel',
   ) {
-    if (!state || state.view === 'markers') return;
+    if (!state || state.view === 'markers' || state.view === 'waiting') return;
     element('touch-status').textContent =
       `${css.x.toFixed(1)}, ${css.y.toFixed(1)}`;
     const hit = element('mapping-hit');
@@ -570,6 +590,14 @@ export function mountCalibrationPhonePage(
     if (next.insetMarkers !== undefined)
       document.body.dataset.insetMarkers = String(next.insetMarkers);
     document.body.dataset.stage = next.view;
+    const title =
+      next.view === 'waiting'
+        ? zh
+          ? '屏幕页面'
+          : 'Screen page'
+        : 'Midscene · Calibration';
+    pageTitle.textContent = title;
+    document.title = title;
     document.body.dataset.imageTrial = String(Boolean(next.imageTrial));
     document.body.dataset.connectionError = String(Boolean(next.error));
     document.body.dataset.probePhase = next.automaticPhase ?? 'grid';
@@ -602,6 +630,7 @@ export function mountCalibrationPhonePage(
     }
     const stages = {
       markers: 'waiting',
+      waiting: 'keepOpen',
       'touch-preview': 'preview',
       positioning: 'position',
       collect: 'collect',
@@ -776,6 +805,24 @@ export function mountCalibrationPhonePage(
       matchesMode('fullscreen')
     )
       return 'fullscreen';
+    if (platform !== 'ios' && (window.visualViewport?.scale ?? 1) === 1) {
+      const width = window.visualViewport?.width ?? window.innerWidth;
+      const height = window.visualViewport?.height ?? window.innerHeight;
+      const covers = (screenWidth: number, screenHeight: number) =>
+        screenWidth > 0 &&
+        screenHeight > 0 &&
+        Math.max(
+          Math.min(screenWidth, screenHeight) - Math.min(width, height),
+          Math.max(screenWidth, screenHeight) - Math.max(width, height),
+        ) *
+          window.devicePixelRatio <=
+          24;
+      if (
+        covers(window.screen.width, window.screen.height) ||
+        covers(window.screen.availWidth, window.screen.availHeight)
+      )
+        return 'fullscreen';
+    }
     return 'browser';
   };
   const fullscreenReady = () =>
@@ -920,11 +967,16 @@ export function mountCalibrationPhonePage(
     try {
       await enter.call(root, { navigationUI: 'hide' });
       await lockPortraitAfterFullscreen();
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      );
     } catch {
       // Browsers requiring transient activation can retry from the phone button.
     } finally {
       switching = false;
-      if (!displayFinished) void awake.resume();
+      setTimeout(() => {
+        if (!displayFinished) void awake.resume();
+      }, 1000);
       send();
     }
   }
@@ -984,6 +1036,9 @@ export function mountCalibrationPhonePage(
           : undefined;
     const body: CalibrationPageUpdate = {
       pageId,
+      browserInstanceId,
+      resumeBrowserInstanceId,
+      claimBrowserInstance,
       touchEvents,
       touchDiagnosticsVersion: 2,
       wakeState: wakeState(),
@@ -1106,7 +1161,16 @@ export function mountCalibrationPhonePage(
     };
     socket.onmessage = (event) => {
       lastReply = performance.now();
-      if (event.data !== 'pong') paint(JSON.parse(event.data));
+      if (event.data !== 'pong') {
+        claimBrowserInstance = false;
+        resumeBrowserInstanceId = undefined;
+        try {
+          sessionStorage.setItem(instanceKey, browserInstanceId);
+        } catch {
+          // The live connection is already active.
+        }
+        paint(JSON.parse(event.data));
+      }
     };
     socket.onclose = (event) => {
       clearInterval(heartbeat);
@@ -1141,6 +1205,24 @@ export function mountCalibrationPhonePage(
         displayControls();
         reconnectStopped = true;
         if (reconnectTimer) clearTimeout(reconnectTimer);
+        if (replaced) {
+          const claim = document.createElement('button');
+          claim.type = 'button';
+          claim.textContent = zh
+            ? '\u4f7f\u7528\u6b64\u9875\u9762'
+            : 'Use This Page';
+          claim.onclick = () => {
+            if (document.hidden) return;
+            claim.remove();
+            claimBrowserInstance = true;
+            reconnectStopped = false;
+            reconnectTimer = undefined;
+            displayFinished = false;
+            void awake.start();
+            reconnectPage();
+          };
+          element('fullscreen-controls').append(claim);
+        }
       } else reconnectPage();
     };
   }

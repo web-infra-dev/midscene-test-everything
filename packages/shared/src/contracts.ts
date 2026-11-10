@@ -629,7 +629,7 @@ export interface ProfileData {
     pageKey: string;
     token: string;
     name: string;
-    cameraId: string;
+    cameraId?: string;
     targetId?: string;
   }[];
   installationTeachingDrafts?: InstallationTeachingDraft[];

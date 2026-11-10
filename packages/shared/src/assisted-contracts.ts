@@ -227,6 +227,9 @@ export interface CalibrationPageUpdate {
   model?: string;
   /** Issued by the host when it serves this document. */
   pageId: string;
+  browserInstanceId?: string;
+  resumeBrowserInstanceId?: string;
+  claimBrowserInstance?: boolean;
   sequence: number;
   visible: boolean;
   layout: CalibrationPageLayout;
@@ -262,6 +265,7 @@ export interface CalibrationPageReply {
   imageTrial?: boolean;
   view:
     | 'markers'
+    | 'waiting'
     | 'touch-preview'
     | 'collect'
     | 'reference-required'
