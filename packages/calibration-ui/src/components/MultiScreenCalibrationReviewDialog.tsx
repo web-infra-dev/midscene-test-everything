@@ -147,7 +147,11 @@ export function MultiScreenCalibrationReviewDialog({
                     </span>
                   </Space>
                 ) : (
-                  <Alert showIcon type="error" message={target.error} />
+                  <Alert
+                    showIcon
+                    type="error"
+                    message={target.error ? t(target.error) : ''}
+                  />
                 )}
               </Card>
             );

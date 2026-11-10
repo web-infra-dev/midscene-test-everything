@@ -2328,6 +2328,10 @@ export const migratedZh: Record<string, string> = {
   'Waiting for the service': '正在等待服务',
   Capture: '拍照',
   'Perspective Correction': '透视校正',
+  'Place the corners manually': '手动调整四角',
+  'The camera frame could not be loaded': '无法加载相机画面',
+  'Check that the camera is streaming, then retry.':
+    '请确认相机正在出图，然后重试。',
   'Open Last Photo': '打开最近一张照片',
   'Stop Camera': '停止相机',
   'Retry this camera': '重试此相机',

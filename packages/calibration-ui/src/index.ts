@@ -8,6 +8,10 @@ export type { AssistedCalibrationController } from './hooks/useAssistedCalibrati
 export * from './client';
 export * from './i18n';
 export { WebCameraMappingStep } from './components/robot-arm/WebCameraMappingStep';
+export { CameraMappingStep } from './components/robot-arm/CameraMappingStep';
+export type { CameraMappingScreen } from './components/robot-arm/CameraMappingStep';
+export { ScreenOutlines } from './components/robot-arm/ScreenOutlines';
+export type { ScreenOutlineEntry } from './components/robot-arm/ScreenOutlines';
 export { CalibrationPanel } from './CalibrationPanel';
 
 export {

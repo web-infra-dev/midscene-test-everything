@@ -722,3 +722,156 @@
     border-bottom: 1px solid #e5e7eb;
   }
 }
+
+/* Camera-mapping checklist, migrated from robot-vision's PlaygroundShell. */
+.camera-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.camera-checklist-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+
+  li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+    min-height: 40px;
+    padding: 6px 12px;
+    border: 1px solid var(--rv-border);
+    border-radius: 8px;
+    background: var(--midscene-surface);
+  }
+
+  .camera-checklist-text {
+    flex: 1 1 150px;
+    display: flex;
+    flex-flow: row wrap;
+    align-items: baseline;
+    gap: 2px 8px;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  /*
+   * Actions wrap onto their own line instead of squeezing the label; a control
+   * that renders a long value can never shrink the text to one character.
+   */
+  .camera-checklist-action {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 4px;
+    min-width: 0;
+    margin-left: auto;
+  }
+}
+.camera-checklist-index {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--rv-border);
+  color: var(--rv-text-secondary);
+  font-size: 11px;
+}
+.camera-checklist-list li[data-done='true'] .camera-checklist-index {
+  background: #52c41a;
+  color: #fff;
+}
+.camera-checklist-status {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  margin: 0;
+  border-radius: 999px;
+
+  svg {
+    flex: none;
+  }
+}
+.camera-checklist .robot-setup-media-content {
+  aspect-ratio: auto;
+  height: 200px;
+}
+.camera-checklist .robot-setup-media-content img,
+.camera-checklist .robot-setup-media-content video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.guided-mapping-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.camera-mapping-outline-layer,
+.camera-mapping-outlines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.camera-mapping-outline-layer {
+  --camera-mapping-outline-color: #12b76a;
+}
+
+.camera-mapping-outlines {
+  width: 100%;
+  height: 100%;
+
+  polygon {
+    fill: rgb(22 196 127 / 5%);
+    stroke: var(--camera-mapping-outline-color);
+    stroke-width: 4;
+    opacity: 0.65;
+    vector-effect: non-scaling-stroke;
+  }
+}
+
+.camera-mapping-outline-label {
+  position: absolute;
+  z-index: 3;
+  max-width: min(180px, 45%);
+  padding: 2px 7px;
+  overflow: hidden;
+  color: #fff;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  background: rgb(20 32 28 / 72%);
+  border: 1px solid rgb(255 255 255 / 35%);
+  border-radius: 999px;
+  transform: translateX(-50%);
+}
+
+.camera-mapping-outline-layer[data-active='true'] {
+  polygon {
+    fill: rgb(22 196 127 / 12%);
+    stroke-width: 5;
+    opacity: 1;
+  }
+
+  .camera-mapping-outline-label {
+    background: var(--camera-mapping-outline-color);
+    border-color: rgb(255 255 255 / 65%);
+  }
+}
+
+.camera-mapping-applied {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}

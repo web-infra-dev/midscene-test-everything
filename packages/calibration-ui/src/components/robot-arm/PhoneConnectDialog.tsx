@@ -3,6 +3,7 @@ import {
   Button,
   Input,
   Modal,
+  Popconfirm,
   QRCode,
   Select,
   Space,
@@ -62,6 +63,8 @@ export function PhoneConnectDialog({
   onRenamePage,
   onRenameScreens,
   onRestoreHome,
+  onWake,
+  onForget,
   connectingDeviceId,
   connectError,
 }: {
@@ -88,6 +91,10 @@ export function PhoneConnectDialog({
   ) => Promise<void> | void;
   /** Releases the page to its waiting home view, keeping its camera binding. */
   onRestoreHome?: (deviceId: string) => Promise<void> | void;
+  /** Re-opens the transport of a page that stopped reporting. */
+  onWake?: (deviceId: string) => Promise<void> | void;
+  /** Forgets an offline page record whose browser identity is gone. */
+  onForget?: (deviceId: string) => Promise<void> | void;
   connectingDeviceId?: string;
   connectError?: string;
 }) {
@@ -237,7 +244,7 @@ export function PhoneConnectDialog({
   );
   const otherCameraPages = (readiness?.connection?.devices ?? []).filter(
     (device) => device.cameraId && cameraId && device.cameraId !== cameraId,
-  ).length;
+  );
   /*
    * Two different facts, and the dialog must not conflate them. A page is
    * "ready" for this camera once it is open, fullscreen and bound to the
@@ -296,7 +303,6 @@ export function PhoneConnectDialog({
     (device) => device.visible && !device.fullscreen,
   );
   const publicUrl = readiness?.connection?.publicUrl;
-  const pairing = readiness?.connection?.pairing;
   /*
    * The green success belongs to pages that are actually connected. Pages that
    * are open and bound but still at their home view get an informational
@@ -382,7 +388,7 @@ export function PhoneConnectDialog({
             pages.length > 1
               ? 'Saved and connected screen pages are listed below. Keep one active page per screen.'
               : pages.length
-                ? 'Open the page on the phone, then connect it below. You do not need to type the pairing code.'
+                ? 'Open the page on the phone, then select the device below.'
                 : 'Open the screen page on the phone. It appears here automatically.',
           )}
         </Typography.Paragraph>
@@ -410,14 +416,18 @@ export function PhoneConnectDialog({
                             ? 'green'
                             : state === 'markers'
                               ? 'blue'
-                              : undefined
+                              : state === 'offline'
+                                ? 'red'
+                                : undefined
                         }
                       >
                         {state === 'connected'
                           ? t('Connected')
                           : state === 'markers'
                             ? t('Marker Calibration')
-                            : t('Not connected')}
+                            : state === 'offline'
+                              ? t('Page offline')
+                              : t('Not connected')}
                       </Tag>
                       {device.fullscreen || state === 'offline' ? null : (
                         <Tag color="orange">{t('Not fullscreen')}</Tag>
@@ -427,6 +437,43 @@ export function PhoneConnectDialog({
                       )}
                     </div>
                     <div className="phone-connect-page-actions">
+                      {state === 'offline' && onWake ? (
+                        <Space size={4}>
+                          <Tooltip
+                            title={t(
+                              'Unlock the phone and bring this page back to the foreground, then reconnect it.',
+                            )}
+                          >
+                            <Button
+                              aria-label={t('Reconnect {0}', [device.label])}
+                              loading={device.id === connectingDeviceId}
+                              onClick={() => onWake(device.id)}
+                              size="small"
+                            >
+                              {t('Reconnect page')}
+                            </Button>
+                          </Tooltip>
+                          {onForget ? (
+                            <Popconfirm
+                              title={t(
+                                'Remove this offline page with its screen and perspective? This cannot be undone.',
+                              )}
+                              okText={t('Remove page')}
+                              onConfirm={() => onForget(device.id)}
+                            >
+                              <Button
+                                aria-label={t('Remove page {0}', [
+                                  device.label,
+                                ])}
+                                size="small"
+                                type="text"
+                              >
+                                {t('Remove page')}
+                              </Button>
+                            </Popconfirm>
+                          ) : null}
+                        </Space>
+                      ) : null}
                       {state !== 'waiting' &&
                       state !== 'offline' &&
                       onRestoreHome ? (
@@ -455,6 +502,7 @@ export function PhoneConnectDialog({
                             device.label,
                             selectedCamera?.name ?? '',
                           ])}
+                          disabled={!device.visible}
                           size="small"
                           type="primary"
                           loading={device.id === connectingDeviceId}
@@ -602,14 +650,23 @@ export function PhoneConnectDialog({
             })}
           </div>
         ) : null}
-        {otherCameraPages ? (
-          <Typography.Paragraph type="secondary">
-            {t(
-              'Screen pages bound to another camera are not listed here ({0}).',
-              [String(otherCameraPages)],
-            )}
-          </Typography.Paragraph>
-        ) : null}
+        {cameraId && otherCameraPages.length > 0 && (
+          <details className="robot-device-pairing">
+            <summary>{t('Pages on other cameras')}</summary>
+            {otherCameraPages.map((device) => (
+              <div key={device.id} className="phone-connect-screen-row">
+                <Typography.Text>{device.name ?? device.label}</Typography.Text>
+                <Button
+                  size="small"
+                  loading={device.id === connectingDeviceId}
+                  onClick={() => onAssignCamera(device.id, cameraId)}
+                >
+                  {t('Bind to this camera')}
+                </Button>
+              </div>
+            ))}
+          </details>
+        )}
         {connectError && <Alert type="error" message={connectError} />}
         {readiness?.error && <Alert type="error" message={readiness.error} />}
         {backgrounded && (
@@ -624,16 +681,12 @@ export function PhoneConnectDialog({
           type={connectionNotice.tone}
           message={connectionNotice.message}
         />
-        {(publicUrl || pairing) && (
+        {publicUrl && (
           <details className="robot-device-pairing">
-            <summary>{t('Scan or enter a pairing code')}</summary>
+            <summary>{t('Phone page address')}</summary>
             {publicUrl && (
               <div className="robot-device-phone-link">
-                <QRCode
-                  value={new URL(pairing?.path ?? '/', publicUrl).href}
-                  size={120}
-                  type="svg"
-                />
+                <QRCode value={publicUrl} size={120} type="svg" />
                 <div className="robot-device-phone-address">
                   <Typography.Text type="secondary">
                     {t('Phone page address')}
@@ -648,17 +701,6 @@ export function PhoneConnectDialog({
                     </Typography.Link>
                   </Typography.Paragraph>
                 </div>
-              </div>
-            )}
-            {pairing && (
-              <div>
-                <Typography.Text>{t('Pairing code')}</Typography.Text>
-                <Typography.Title level={3} copyable={{ text: pairing.code }}>
-                  {pairing.code}
-                </Typography.Title>
-                <Typography.Text type="secondary">
-                  {t('Or enter this code on the phone page.')}
-                </Typography.Text>
               </div>
             )}
           </details>

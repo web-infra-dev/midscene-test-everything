@@ -26,8 +26,10 @@ export class RobotVisionApiError extends Error {
 export async function markerRequest<T>(
   path: string,
   body?: unknown,
+  signal?: AbortSignal,
 ): Promise<T> {
   const response = await fetch(path, {
+    signal,
     method: body === undefined ? 'GET' : 'POST',
     headers:
       body === undefined ? undefined : { 'Content-Type': 'application/json' },
@@ -96,8 +98,11 @@ export class RobotVisionClient {
       ...options,
     });
   }
-  applyMarkerCalibration(id: string, token: string) {
-    return this.request<{ screenIds: string[] }>('apply', { id, token });
+  applyMarkerCalibration(id: string, token: string, allowMismatch = false) {
+    return this.request<{
+      screenIds: string[];
+      mappingErrors: Record<string, string>;
+    }>('apply', { id, token, allowMismatch });
   }
 }
 export function screenDeviceUrl(publicUrl: string, address?: string) {
@@ -148,11 +153,31 @@ export class ScreenCalibClient {
       ...input,
     });
   }
+  assignScreenDeviceCamera(id: string, cameraId: string) {
+    return this.request<{ device: ScreenDeviceSummary }>('assign-camera', {
+      id,
+      cameraId,
+    });
+  }
   releaseScreenDevice(id: string) {
     return this.request<void>('release', { id });
   }
   restoreScreenDeviceHome(id: string) {
     return this.request<void>('release', { id, keepBinding: true });
+  }
+  /** Drops and re-opens the page transport so a suspended page reports again. */
+  wakeScreenDevice(id: string) {
+    return this.request<void>('wake', { id });
+  }
+  /** Forgets an offline page record whose browser identity is gone. */
+  forgetScreenDevice(id: string) {
+    return this.request<void>('forget', { id });
+  }
+  deleteScreen(cameraId: string, id: string) {
+    return this.request<void>('delete-screen', { cameraId, id });
+  }
+  deletePerspective(cameraId: string, id: string) {
+    return this.request<void>('delete-perspective', { cameraId, id });
   }
   renameScreen(cameraId: string, id: string, name: string) {
     return this.request<void>('rename-screen', { cameraId, id, name });

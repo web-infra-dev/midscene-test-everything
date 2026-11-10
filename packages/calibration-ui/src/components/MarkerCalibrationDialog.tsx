@@ -104,6 +104,7 @@ export function MarkerCalibrationDialog({
   firstScreenCalibration = false,
   includeSucceededTargets = false,
   keepSessionOnClose = false,
+  onAdjustManually,
   onClose,
   onDetected,
   onSessionCreated,
@@ -152,6 +153,11 @@ export function MarkerCalibrationDialog({
   /** Reopens succeeded targets instead of treating them as already finished. */
   includeSucceededTargets?: boolean;
   keepSessionOnClose?: boolean;
+  /**
+   * The markers could not be read, so the caller can place the four corners by
+   * hand instead. The dialog closes itself first: only one editor at a time.
+   */
+  onAdjustManually?: () => void;
   onClose: () => void;
   onDetected: (
     session: MarkerCalibrationSession,
@@ -498,6 +504,15 @@ export function MarkerCalibrationDialog({
    */
   useEffect(() => {
     if (!session) return;
+    for (const device of devices) {
+      if (!device.targetDisplayId) continue;
+      const target = session.targets.find(
+        (item) => displays[item.id]?.id === device.targetDisplayId,
+      );
+      if (!target) continue;
+      claimedDevices.current.delete(device.id);
+      claimedTargets.current.delete(target.id);
+    }
     const used = new Set(claimedDevices.current);
     const savedPageKeys = new Map(
       initialScreensRef.current.flatMap((screen) =>
@@ -522,23 +537,19 @@ export function MarkerCalibrationDialog({
        * different phone just because that phone is visible: a multi-screen
        * recalibration must map each target to its own page.
        */
-      const candidate = savedPageKey
-        ? devices.find(
-            (device) =>
-              device.visible &&
-              !used.has(device.id) &&
-              pageCanBeClaimed(device) &&
-              device.pageKey === savedPageKey,
-          )
-        : devices.find(
-            (device) =>
-              device.visible &&
-              !used.has(device.id) &&
-              pageCanBeClaimed(device) &&
-              (device.screenId === target.id ||
-                !device.pageKey ||
-                !reservedPageKeys.has(device.pageKey)),
-          );
+      const available = devices.filter(
+        (device) =>
+          device.visible && !used.has(device.id) && pageCanBeClaimed(device),
+      );
+      const candidate =
+        available.find((device) => device.screenId === target.id) ??
+        available.find(
+          (device) =>
+            !device.screenId &&
+            (savedPageKey
+              ? device.pageKey === savedPageKey
+              : !device.pageKey || !reservedPageKeys.has(device.pageKey)),
+        );
       if (!candidate) continue;
       used.add(candidate.id);
       claims.push({
@@ -650,7 +661,6 @@ export function MarkerCalibrationDialog({
   const bindUrl =
     pageUrl && bindFragment ? `${pageUrl}${bindFragment}` : undefined;
   const qrValue = bindUrl ?? pageUrl;
-  const pairingCode = nextTargetId ? displays[nextTargetId]?.code : undefined;
 
   const close = useCallback(() => {
     detectionController.current?.abort();
@@ -1275,6 +1285,22 @@ export function MarkerCalibrationDialog({
       footer={
         <Space wrap>
           <Button onClick={close}>{t('Cancel')}</Button>
+          {/*
+            Detection is the primary path, but the glass is sometimes visible
+            when the markers are not (glare, focus, a cropped marker). Offer the
+            manual corner editor exactly when a pass has failed, and close this
+            panel first so the operator sees one editor at a time.
+          */}
+          {onAdjustManually && session && (error || retryingAfterFailure) && (
+            <Button
+              onClick={() => {
+                close();
+                onAdjustManually();
+              }}
+            >
+              {t('Place the corners manually')}
+            </Button>
+          )}
           {existingScreensKey && error && !session && (
             <Button
               onClick={() => setReconnectAttempt((value) => value + 1)}
@@ -1473,20 +1499,6 @@ export function MarkerCalibrationDialog({
               )}
               {!simplified && (
                 <div className="marker-pairing-controls">
-                  <Typography.Text strong>{t('Pairing code')}</Typography.Text>
-                  {pairingCode ? (
-                    <Typography.Text
-                      className="marker-pairing-manual-code"
-                      code
-                      copyable={{ text: pairingCode }}
-                    >
-                      {pairingCode}
-                    </Typography.Text>
-                  ) : (
-                    <Typography.Text type="secondary">
-                      {t('Waiting for the pairing code…')}
-                    </Typography.Text>
-                  )}
                   <Typography.Text strong>
                     {t('Screen page address')}
                   </Typography.Text>

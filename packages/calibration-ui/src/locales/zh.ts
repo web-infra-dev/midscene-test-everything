@@ -1,6 +1,30 @@
 import { assistedCalibrationZh } from './assisted-calibration-zh';
 import { migratedZh } from './migrated-zh';
 const calibrationZh: Record<string, string> = {
+  'Open the page on the phone, then select the device below.':
+    '在手机上打开页面，再在下方选择该设备。',
+  'Delete Screen': '删除屏幕',
+  'Delete this screen binding?': '删除此屏幕绑定？',
+  'Delete Saved Perspective': '删除已保存的透视',
+  'Delete the saved perspective for this screen?': '删除此屏幕已保存的透视？',
+  'The outline does not match the phone screen. Apply it anyway?':
+    '轮廓与手机屏幕不符。仍要应用吗？',
+  Apply: '应用',
+  Cancel: '取消',
+  'Perspective applied': '已应用透视',
+  'Perspective not applied': '尚未应用透视',
+  'Clear Perspective': '清除透视',
+  'Enter full screen on the page first.':
+    '请先在手机页面点「进入全屏」，再连接设备。',
+  'Page offline': '页面离线',
+  'Reconnect page': '重新连接页面',
+  'Reconnect {0}': '重新连接 {0}',
+  'Unlock the phone and bring this page back to the foreground, then reconnect it.':
+    '请解锁手机、把该页面切回前台，然后再重新连接。',
+  'Remove page': '移除页面',
+  'Remove page {0}': '移除页面 {0}',
+  'Remove this offline page with its screen and perspective? This cannot be undone.':
+    '移除这个离线页面，以及它对应的屏幕和透视？此操作不可撤销。',
   'Saved and connected screen pages are listed below. Keep one active page per screen.':
     '以下为已保存和已连接的页面；每块屏幕保持一个页面在线。',
   'Connect the computer to Wi-Fi before pairing a phone':
@@ -116,7 +140,7 @@ const calibrationZh: Record<string, string> = {
   'Page marker fit verified; screen edges require visual confirmation':
     '页面标记拟合通过；屏幕边界仍需目视确认',
   'The browser did not report the page position within the screen. Automatic screen boundary detection is unavailable.':
-    '浏览器未提供网页在屏幕中的位置，无法自动推算完整屏幕边界。',
+    '浏览器未提供网页在屏幕中的位置（通常是没有全屏），无法自动推算完整屏幕边界。请让该页面进入全屏后重试。',
   'Open Workspace': '进入工作台',
   'Confirm Screen Area': '确认屏幕范围',
   'Drag the four corners to fit the phone display area.':

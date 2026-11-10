@@ -1,3 +1,7 @@
+import {
+  type ScreenOutlineEntry,
+  ScreenOutlines,
+} from '@midscene/arm-calibration-ui';
 import type { CameraCorrection } from '@midscene/arm-kit-shared/contracts';
 import { Button } from 'antd';
 import { Maximize, Minimize } from 'lucide-react';
@@ -9,7 +13,14 @@ export function CameraStagePreview({
   children,
   available = true,
   outline,
-}: { children: ReactNode; available?: boolean; outline?: CameraCorrection }) {
+  outlines,
+}: {
+  children: ReactNode;
+  available?: boolean;
+  outline?: CameraCorrection;
+  /** Every screen of the camera, drawn at once on the raw view. */
+  outlines?: readonly ScreenOutlineEntry[];
+}) {
   const frame = useRef<HTMLDivElement>(null);
   const [native, setNative] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -55,29 +66,16 @@ export function CameraStagePreview({
       className={`camera-stage-preview${expanded ? ' is-expanded' : ''}`}
     >
       {children}
-      {outline && available && (
-        <svg
-          className="camera-stage-outline"
-          viewBox={`0 0 ${outline.sourceWidth} ${outline.sourceHeight}`}
-          role="img"
-          aria-label={zh ? '已识别的屏幕轮廓' : 'Detected screen outline'}
-        >
-          <polygon
-            points={[
-              outline.points.topLeft,
-              outline.points.topRight,
-              outline.points.bottomRight,
-              outline.points.bottomLeft,
-            ]
-              .map((p) => `${p.x},${p.y}`)
-              .join(' ')}
-            fill="none"
-            stroke="#f43f5e"
-            strokeWidth="3"
-            vectorEffect="non-scaling-stroke"
-          />
-        </svg>
-      )}
+      {outlines?.length
+        ? available && <ScreenOutlines outlines={outlines} />
+        : outline &&
+          available && (
+            <ScreenOutlines
+              outlines={[
+                { id: 'active', name: '', correction: outline, active: true },
+              ]}
+            />
+          )}
       {(available || full) && (
         <Button
           className="camera-fullscreen"

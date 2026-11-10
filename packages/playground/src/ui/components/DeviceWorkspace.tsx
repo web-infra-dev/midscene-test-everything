@@ -1,7 +1,9 @@
 import {
   PerspectiveObservationCard,
+  type ScreenOutlineEntry,
   usePerspectiveValidity,
 } from '@midscene/arm-calibration-ui';
+import type { CameraCorrection } from '@midscene/arm-kit-shared/contracts';
 import {
   Alert,
   Button,
@@ -95,7 +97,13 @@ export function DeviceWorkspace() {
     return () => clearTimeout(timer);
   }, [cameras, status, refresh]);
   const [screenTargets, setScreenTargets] = useState<
-    Array<{ id: string; cameraId: string; name: string }>
+    Array<{
+      id: string;
+      cameraId: string;
+      name: string;
+      hasCorrection?: boolean;
+      correction?: CameraCorrection;
+    }>
   >([]);
   const [preferredScreenId, setPreferredScreenId] = useState<string>();
   useEffect(() => {
@@ -115,6 +123,19 @@ export function DeviceWorkspace() {
   const activeScreen =
     availableScreens.find((s) => s.id === preferredScreenId) ??
     availableScreens.find((s) => s.id === selectedId);
+  /*
+   * The stage always works on a screen of the selected camera. Without a saved
+   * screen the camera itself is the device, so the picker would otherwise show
+   * the raw camera id; fall back to the camera's own screen, then the first.
+   */
+  const screenKey = availableScreens.map((screen) => screen.id).join('|');
+  useEffect(() => {
+    if (!screenKey) return;
+    const ids = screenKey.split('|');
+    if (preferredScreenId && ids.includes(preferredScreenId)) return;
+    if (selectedId && ids.includes(selectedId)) return;
+    setPreferredScreenId(ids[0]);
+  }, [screenKey, preferredScreenId, selectedId]);
   const deviceId = activeScreen?.id ?? selectedId ?? undefined;
   const selected = cameras.find((camera) => camera.id === selectedId);
   const running = selected?.stream?.state === 'running';
@@ -132,6 +153,27 @@ export function DeviceWorkspace() {
   const ready = readiness?.status === 'ready';
   const cameraView = ready ? preferredView : 'raw';
   const previewKey = `${deviceId}:${cameraView}:${previewRevision}`;
+  /*
+   * The raw view draws every screen the camera holds a perspective for, the way
+   * the workstation stage did. The corrected view is already rectified, so an
+   * outline there would double up with the transformed image.
+   */
+  const stageOutlines: ScreenOutlineEntry[] =
+    cameraView === 'raw'
+      ? screenTargets.flatMap((screen) => {
+          if (screen.cameraId !== selectedId || !screen.correction) return [];
+          return [
+            {
+              id: screen.id,
+              name: screen.name,
+              correction: screen.correction,
+              active: screen.id === deviceId,
+              validity:
+                screen.id === deviceId ? perspective.summary?.state : undefined,
+            },
+          ];
+        })
+      : [];
   return (
     <>
       <RobotStatusBar
@@ -225,15 +267,16 @@ export function DeviceWorkspace() {
                 </div>
               </div>
               <div className="camera-stage-actions">
-                {availableScreens.length > 1 && (
+                {availableScreens.length > 1 && activeScreen && (
                   <Select
-                    value={deviceId}
+                    aria-label={language === 'zh' ? '标定屏幕' : 'Screen'}
+                    value={activeScreen.id}
                     onChange={setPreferredScreenId}
                     options={availableScreens.map((s) => ({
                       value: s.id,
                       label: s.name,
                     }))}
-                    style={{ minWidth: 140 }}
+                    style={{ width: 160 }}
                   />
                 )}
 
@@ -295,7 +338,7 @@ export function DeviceWorkspace() {
               screenName={activeScreen?.name ?? selected.name}
               onRecalibrate={openCameraCorrection}
             />
-            <CameraStagePreview available={running}>
+            <CameraStagePreview available={running} outlines={stageOutlines}>
               {selected.stream?.state === 'running' &&
               previewError === previewKey ? (
                 <Empty

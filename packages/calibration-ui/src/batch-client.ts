@@ -8,21 +8,29 @@ import { markerRequest } from './marker-client';
 import type { TeachingBinding } from './teaching-client';
 export class BatchClient {
   constructor(readonly cameraId: string) {}
-  private async request<T>(action: string, input: object = {}): Promise<T> {
-    return markerRequest<T>('/api/calibration-batch', {
-      action,
-      cameraId: this.cameraId,
-      ...input,
-    });
+  private async request<T>(
+    action: string,
+    input: object = {},
+    signal?: AbortSignal,
+  ): Promise<T> {
+    return markerRequest<T>(
+      '/api/calibration-batch',
+      {
+        action,
+        cameraId: this.cameraId,
+        ...input,
+      },
+      signal,
+    );
   }
-  calibrationBatch() {
-    return this.request<CalibrationBatchState | null>('read');
+  calibrationBatch(signal?: AbortSignal) {
+    return this.request<CalibrationBatchState | null>('read', {}, signal);
   }
   calibrationBatchPlan(cameraId: string) {
     return this.request<CalibrationBatchPlan>('plan', { cameraId });
   }
-  screens() {
-    return this.request<WorkstationScreenState[]>('screens');
+  screens(signal?: AbortSignal) {
+    return this.request<WorkstationScreenState[]>('screens', {}, signal);
   }
   startCalibrationBatch(input: {
     cameraId: string;

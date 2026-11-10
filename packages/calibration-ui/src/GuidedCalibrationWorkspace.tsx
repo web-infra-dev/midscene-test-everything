@@ -47,15 +47,18 @@ import {
   CalibrationBatchPanel,
   type CalibrationBatchPanelHandle,
 } from './components/robot-arm/CalibrationBatchPanel';
+import { CameraMappingStep } from './components/robot-arm/CameraMappingStep';
 import { ExplorationProgress } from './components/robot-arm/ExplorationProgress';
 import { InstallationTeaching } from './components/robot-arm/InstallationTeaching';
 import { PhoneConnectDialog } from './components/robot-arm/PhoneConnectDialog';
+import { ScreenOutlines } from './components/robot-arm/ScreenOutlines';
 import { WebCalibrationWorkspace } from './components/robot-arm/WebCalibrationWorkspace';
 import { useAssistedCalibration } from './hooks/useAssistedCalibration';
 import { useCameraPhoneReadiness } from './hooks/useCameraPhoneReadiness';
 import { usePerspectiveValidity } from './hooks/usePerspectiveValidity';
 import { CalibrationLanguageProvider, t, useLanguage } from './i18n';
 import {
+  RobotVisionApiError,
   RobotVisionClient,
   ScreenCalibClient,
   markerRequest,
@@ -70,7 +73,9 @@ interface BoundScreen {
   name: string;
   pageKey?: string;
   hasCorrection?: boolean;
+  hasSavedPerspective?: boolean;
   markerSlot?: number;
+  correction?: CameraCorrection;
 }
 
 /** The original camera → teaching → calibration flow inside the host's wizard. */
@@ -102,19 +107,26 @@ function GuidedContent({
   initialStep,
 }: { id: string; cameraId: string; onClose(): void; initialStep: 0 | 1 }) {
   useLanguage();
+  const { message } = App.useApp();
   const [selectedId, setSelectedId] = useState(id);
   const [step, setStep] = useState<number>(initialStep);
-  const initialStepPending = useRef(initialStep === 1);
+  const initialStepPending = useRef(true);
   const [config, setConfig] = useState<Configuration>();
   const [screens, setScreens] = useState<BoundScreen[]>([]);
   const [states, setStates] = useState<WorkstationScreenState[]>([]);
   const [error, setError] = useState<string>();
+  const [loadError, setLoadError] = useState<string>();
+  const [closing, setClosing] = useState(false);
   const [footer, setFooter] = useState<HTMLDivElement | null>(null);
   const [phonesOpen, setPhonesOpen] = useState(false);
   const [markerOpen, setMarkerOpen] = useState(initialStep === 1);
+  /** The manual corner editor, handed over from a failed marker pass. */
+  const [perspectiveEditor, setPerspectiveEditor] = useState(false);
   const [retryId, setRetryId] = useState<string>();
   const [markerSession, setMarkerSession] =
     useState<MarkerCalibrationCreateResult>();
+  /** The session credential, kept outside state so detection can apply. */
+  const markerToken = useRef<string>();
   const [review, setReview] = useState<MarkerCalibrationDetectionResponse>();
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewing, setReviewing] = useState<{
@@ -187,6 +199,19 @@ function GuidedContent({
       s.cameraId === cameraId &&
       (s.hasCorrection || s.markerSlot !== undefined),
   );
+  /*
+   * The page reports its viewport only in fullscreen, so the camera mapping —
+   * and the marker pass it depends on — waits for the operator to open the
+   * page full screen. The selected screen's own page decides, with the first
+   * page of the camera as the fallback for a page that is only page-key bound.
+   */
+  const cameraPages = (phoneReadiness.connection?.devices ?? []).filter(
+    (device) => device.visible && device.cameraId === cameraId,
+  );
+  const phonePage =
+    cameraPages.find((device) => device.screenId === selectedId) ??
+    cameraPages[0];
+  const phoneFullscreen = Boolean(phonePage?.fullscreen);
   const savedIds = knownScreens
     .map((s) => `${s.id}:${s.name}:${s.pageKey}`)
     .join('|');
@@ -197,57 +222,210 @@ function GuidedContent({
   );
   const currentBase = useRef(base);
   currentBase.current = base;
-  const refresh = useCallback(async () => {
-    const [next, listed, nextStates, running, singleStatus] = await Promise.all(
-      [
-        markerRequest<Configuration>(`${base}/configuration`),
-        markerRequest<{ screens: BoundScreen[] }>('/api/screens'),
-        batchClient.screens(),
-        batchClient.calibrationBatch(),
-        markerRequest<{ phase: string; error?: string }>(`${base}/status`),
-      ],
-    );
-    if (currentBase.current !== base) return;
-    setConfig(next);
-    if (initialStepPending.current) {
-      initialStepPending.current = false;
-      if (!next.input) {
-        setStep(0);
-        setMarkerOpen(false);
+  const refresh = useCallback(
+    async (signal = AbortSignal.timeout(15000)) => {
+      const [next, listed] = await Promise.all([
+        markerRequest<Configuration>(
+          `${base}/configuration`,
+          undefined,
+          signal,
+        ),
+        markerRequest<{ screens: BoundScreen[] }>(
+          '/api/screens',
+          undefined,
+          signal,
+        ),
+      ]);
+      if (signal.aborted || currentBase.current !== base) return;
+      setConfig(next);
+      setScreens(listed.screens);
+      /*
+       * The camera step edits a screen, not the camera: a device id that has no
+       * screen target cannot be selected, and showing it would render the raw
+       * device path. Fall back to the camera's own screen, then the first one.
+       */
+      const selectable = listed.screens.filter(
+        (screen) => screen.cameraId === cameraId,
+      );
+      const fallback = selectable.some((screen) => screen.id === selectedId)
+        ? undefined
+        : (selectable.find((screen) => screen.id === cameraId) ??
+          selectable[0]);
+      if (fallback) setSelectedId(fallback.id);
+      else if (initialStepPending.current) {
+        initialStepPending.current = false;
+        if (!next.input) {
+          setStep(0);
+          setMarkerOpen(false);
+        } else if (
+          initialStep === 1 ||
+          !next.correction ||
+          next.perspectiveValidity?.state === 'invalid'
+        ) {
+          setStep(1);
+        } else {
+          setStep(next.installationTaught ? 3 : 2);
+        }
       }
-    }
-    setScreens(listed.screens);
-    setStates(nextStates);
-    setBatch(running);
-    if (singlePending.current && singleStatus.phase !== 'queued') {
-      singlePending.current = false;
-      setSingleQueued(false);
-      if (['running', 'completed'].includes(singleStatus.phase))
-        setSingleActive(true);
-      else setError(singleStatus.error ?? t('Calibration cancelled'));
-    }
-  }, [base, batchClient]);
+      const [running, status] = await Promise.allSettled([
+        batchClient.calibrationBatch(signal),
+        markerRequest<{ phase: string; error?: string }>(
+          `${base}/status`,
+          undefined,
+          signal,
+        ),
+      ]);
+      if (signal.aborted || currentBase.current !== base) return;
+      if (running.status === 'fulfilled') setBatch(running.value);
+      const singleStatus =
+        status.status === 'fulfilled' ? status.value : undefined;
+      if (
+        singlePending.current &&
+        singleStatus &&
+        singleStatus.phase !== 'queued'
+      ) {
+        singlePending.current = false;
+        setSingleQueued(false);
+        if (['running', 'completed'].includes(singleStatus.phase))
+          setSingleActive(true);
+        else setError(singleStatus.error ?? t('Calibration cancelled'));
+      }
+    },
+    [base, batchClient, cameraId, initialStep, selectedId],
+  );
+  const [connectingPage, setConnectingPage] = useState<string>();
+  const connectPage = useCallback(
+    async (id: string, camera: string, assignCamera = false) => {
+      setConnectingPage(id);
+      try {
+        if (assignCamera) await pageClient.assignScreenDeviceCamera(id, camera);
+        else
+          await pageClient.assignScreenDevice(id, {
+            role: 'mapping',
+            cameraId: camera,
+          });
+        await refresh();
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      } finally {
+        setConnectingPage(undefined);
+      }
+    },
+    [pageClient, refresh],
+  );
+  /**
+   * Saving the perspective is what confirms the camera mapping: the host keeps
+   * the correction on that screen's camera session and rebuilds the page
+   * mapping, so the later steps and the marker review read one geometry.
+   */
+  const applyCorrection = useCallback(
+    async (correction: CameraCorrection) => {
+      await markerRequest(`${base}/camera/correction`, correction);
+      // Page mapping needs the saved tool setup; a bench that has not saved it
+      // yet keeps the perspective and maps during the tool step.
+      if (config?.input) {
+        try {
+          await client.mapAssistedCalibration();
+        } catch (cause) {
+          setError(cause instanceof Error ? cause.message : String(cause));
+        }
+      }
+      await refresh();
+    },
+    [base, client, config?.input, refresh],
+  );
+  /**
+   * Clearing keeps the screen, its page link and its marker slot; only the
+   * framing the camera was applying is released, so the same glass can be
+   * mapped again without pairing it a second time.
+   */
+  const clearCorrection = useCallback(async () => {
+    const response = await fetch(`${base}/camera/correction`, {
+      method: 'DELETE',
+    });
+    const data = await response.json();
+    if (!response.ok)
+      throw new Error(
+        data?.error?.message ??
+          data?.error ??
+          'Could not clear the perspective correction',
+      );
+    // Keep the correction cleared until the operator starts a new pass.
+    autoDetectStarted.current = selectedId;
+    await refresh();
+  }, [base, refresh, selectedId]);
   useEffect(() => {
-    let alive = true;
+    const abort = new AbortController();
+    let opened = false;
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
+      const signal = AbortSignal.any([
+        abort.signal,
+        AbortSignal.timeout(15000),
+      ]);
       try {
-        await markerRequest(`${base}/open`, {});
-        if (alive) await refresh();
+        if (!opened) {
+          const { screens: available } = await markerRequest<{
+            screens: BoundScreen[];
+          }>('/api/screens', undefined, signal);
+          const selectable = available.filter(
+            (screen) => screen.cameraId === cameraId,
+          );
+          if (!selectable.some((screen) => screen.id === selectedId)) {
+            const fallback =
+              selectable.find((screen) => screen.id === cameraId) ??
+              selectable[0];
+            if (fallback) {
+              setSelectedId(fallback.id);
+              return;
+            }
+          }
+          await markerRequest(`${base}/open`, {}, signal);
+          opened = true;
+        }
+        await refresh(signal);
+        if (!abort.signal.aborted) setLoadError(undefined);
       } catch (cause) {
-        if (alive)
-          setError(cause instanceof Error ? cause.message : String(cause));
+        opened = false;
+        if (!abort.signal.aborted)
+          setLoadError(cause instanceof Error ? cause.message : String(cause));
       } finally {
-        if (alive) timer = setTimeout(() => void poll(), 1500);
+        if (!abort.signal.aborted) timer = setTimeout(() => void poll(), 1500);
       }
     };
     setConfig(undefined);
+    setLoadError(undefined);
     void poll();
     return () => {
-      alive = false;
+      abort.abort();
       clearTimeout(timer);
     };
-  }, [base, refresh]);
+  }, [base, cameraId, refresh, selectedId]);
+  useEffect(() => {
+    if (step !== 3) return;
+    const abort = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      const signal = AbortSignal.any([
+        abort.signal,
+        AbortSignal.timeout(15000),
+      ]);
+      try {
+        const nextStates = await batchClient.screens(signal);
+        if (!abort.signal.aborted) setStates(nextStates);
+      } catch (cause) {
+        if (!abort.signal.aborted)
+          setError(cause instanceof Error ? cause.message : String(cause));
+      } finally {
+        if (!abort.signal.aborted) timer = setTimeout(() => void poll(), 1500);
+      }
+    };
+    void poll();
+    return () => {
+      abort.abort();
+      clearTimeout(timer);
+    };
+  }, [batchClient, step]);
   const markerKey = useMemo(
     () => ({ id: cameraId, deviceId: cameraId }),
     [cameraId],
@@ -259,7 +437,28 @@ function GuidedContent({
     Boolean(config?.correction),
     config?.correctionKey,
   );
-  const outlineBlocked = perspective.summary?.state === 'invalid';
+  const outlineBlocked =
+    (perspective.summary ?? config?.perspectiveValidity)?.state === 'invalid';
+  /*
+   * Every screen with a saved perspective is drawn on the live preview at
+   * once; the selected one carries the freshest correction and the verdict.
+   */
+  const asideOutlines = knownScreens.flatMap((entry) => {
+    const fresh = config?.deviceId === entry.id ? config.correction : undefined;
+    const quad =
+      entry.id === activeId ? (fresh ?? entry.correction) : entry.correction;
+    if (!quad) return [];
+    return [
+      {
+        id: entry.id,
+        name: entry.name,
+        correction: quad,
+        active: entry.id === activeId,
+        validity:
+          entry.id === activeId ? perspective.summary?.state : undefined,
+      },
+    ];
+  });
   const single = useMemo(
     () =>
       createCalibrationClient({
@@ -277,6 +476,7 @@ function GuidedContent({
     beforeLeave.current = handler;
   }, []);
   const close = async () => {
+    setClosing(true);
     try {
       if (batchActive && batch)
         await batchClient.calibrationBatchCommand(batch.id, {
@@ -286,21 +486,94 @@ function GuidedContent({
       await beforeLeave.current?.();
       if (config?.armState?.state.dragMode && teaching)
         await teaching.exitDrag();
-      await markerRequest(`${base}/cancel`, {});
+      await markerRequest(`${base}/cancel`, {}, AbortSignal.timeout(15000));
       onClose();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
+      setClosing(false);
     }
   };
   const detected = useCallback(
     async (_session: unknown, result: MarkerCalibrationDetectionResponse) => {
-      setReview(result);
-      setReviewOpen(true);
       setRetryId(undefined);
+      const { session } = result;
+      /*
+       * A result the workstation would trust is applied without a review pass:
+       * the operator connected the screen to get a perspective, not a dialog.
+       * Weak evidence still opens the review so nothing is applied blindly. The
+       * layout check inside the detector already rejects a windowed page, so the
+       * gate here is about frame evidence only.
+       */
+      const confident =
+        session.targets.length > 0 &&
+        session.targets.every(
+          (target) =>
+            target.state === 'succeeded' &&
+            target.result !== undefined &&
+            target.display?.fullscreen === true &&
+            target.result.validFrames >= 4 &&
+            target.result.cornerJitterPx <= 4 &&
+            target.result.reprojectionRmsePx <= 4,
+        );
+      if (!confident) {
+        setReview(result);
+        setReviewOpen(true);
+        return;
+      }
+      const token = markerToken.current;
+      if (!token) {
+        setReview(result);
+        setReviewOpen(true);
+        return;
+      }
+      setApplying(true);
+      try {
+        const result = await markerClient.applyMarkerCalibration(
+          session.id,
+          token,
+        );
+        const failures = Object.values(result.mappingErrors);
+        if (failures.length) setError(failures.join('\n'));
+        else void message.success(t('Camera mapping applied automatically'));
+        await refresh();
+        setReview(undefined);
+        setReviewOpen(false);
+        setMarkerOpen(false);
+      } catch (cause) {
+        setReview(result);
+        setReviewOpen(true);
+        setError(cause instanceof Error ? cause.message : String(cause));
+      } finally {
+        setApplying(false);
+      }
     },
-    [],
+    [markerClient, message, refresh],
   );
   const markerClosed = useCallback(() => setMarkerOpen(false), []);
+  /**
+   * A screen that is connected and bound has its markers on the page already,
+   * so the camera step starts the perspective pass by itself: the dialog
+   * detects, the result is applied above and the status flips to applied.
+   * Closing the dialog keeps it closed for that screen.
+   */
+  const autoDetectStarted = useRef<string>();
+  const phoneConnected = cameraPages.some((page) => page.mode !== 'waiting');
+  useEffect(() => {
+    if (step !== 1 || markerOpen || !config || config.correction) return;
+    // Markers are only reported from a fullscreen page; opening the dialog
+    // earlier would detect against a viewport the camera cannot trust.
+    if (!phoneConnected || !phoneFullscreen) return;
+    if (autoDetectStarted.current === selectedId) return;
+    autoDetectStarted.current = selectedId;
+    setMarkerOpen(true);
+  }, [
+    step,
+    markerOpen,
+    config?.correction,
+    phoneConnected,
+    phoneFullscreen,
+    selectedId,
+  ]);
   const startSingle = async () => {
     setSingleQueued(true);
     try {
@@ -346,7 +619,9 @@ function GuidedContent({
                 {t('View Phone Page')}
               </Button>
             )}
-            <Button onClick={() => void close()}>{t('Close')}</Button>
+            <Button loading={closing} onClick={() => void close()}>
+              {t('Close')}
+            </Button>
           </Space>
         </div>
         <Steps
@@ -359,7 +634,9 @@ function GuidedContent({
           onChange={(next) => {
             if (canVisit(next)) {
               setStep(next);
-              if (next === 1) setMarkerOpen(true);
+              // The camera step opens on its checklist; marker detection is an
+              // explicit action from the perspective row.
+              if (next === 1) setMarkerOpen(false);
             }
           }}
         />
@@ -388,12 +665,14 @@ function GuidedContent({
                 onClose={() => setError(undefined)}
               />
             )}
+            {loadError && <Alert type="error" showIcon message={loadError} />}
             {!config ? (
-              <Spin />
+              !loadError && <Spin />
             ) : (
               <>
                 {step === 0 && (
                   <CalibrationSetup
+                    key={`${config.deviceId}:${config.input?.toolProfileId ?? ''}`}
                     capabilities={config.capabilities}
                     initial={config.measuredSetup}
                     footer={footer}
@@ -401,7 +680,7 @@ function GuidedContent({
                       await markerRequest(`${base}/configuration`, value);
                       await refresh();
                       setStep(1);
-                      setMarkerOpen(true);
+                      setMarkerOpen(false);
                     }}
                   />
                 )}
@@ -422,98 +701,161 @@ function GuidedContent({
                       resumeSession={retryId ? markerSession : undefined}
                       includeSucceededTargets={Boolean(retryId)}
                       keepSessionOnClose
+                      onAdjustManually={() => {
+                        // The operator chose the manual path, so the automatic
+                        // pass must not reopen over the editor.
+                        autoDetectStarted.current = selectedId;
+                        setPerspectiveEditor(true);
+                      }}
                       onClose={markerClosed}
                       onDetected={detected}
-                      onSessionCreated={setMarkerSession}
+                      onSessionCreated={(created) => {
+                        markerToken.current = created.token;
+                        setMarkerSession(created);
+                      }}
                       existingScreenNames={screens
                         .filter((s) => s.cameraId === cameraId)
                         .map((s) => s.name)}
                     />
                   ) : (
-                    <>
-                      <Space wrap>
-                        <Button
-                          onClick={() => {
-                            setRetryId(undefined);
-                            setMarkerOpen(true);
-                          }}
-                        >
-                          {t(
-                            savedScreens.length
-                              ? 'Recalibrate All Screens'
-                              : 'Pair Phone',
-                          )}
-                        </Button>
-                        <Button
-                          onClick={async () => {
-                            try {
-                              const created =
-                                await markerClient.createMarkerCalibration(
-                                  cameraId,
-                                  [
-                                    `Screen ${screens.filter((s) => s.cameraId === cameraId).length + 1}`,
-                                  ],
-                                );
-                              setMarkerSession(created);
-                              setRetryId(created.targets[0].id);
-                              setMarkerOpen(true);
-                            } catch (cause) {
-                              setError(
-                                cause instanceof Error
-                                  ? cause.message
-                                  : String(cause),
-                              );
-                            }
-                          }}
-                        >
-                          {t('Add Screen')}
-                        </Button>
-                        {review && (
-                          <Button onClick={() => setReviewOpen(true)}>
-                            {t('Review and Apply')}
-                          </Button>
-                        )}
-                        <Select
-                          aria-label={t('Calibration Screen')}
-                          value={selectedId}
-                          style={{ minWidth: 180 }}
-                          options={savedScreens.map((s) => ({
-                            value: s.id,
-                            label: s.name,
-                          }))}
-                          onChange={setSelectedId}
-                        />
-                      </Space>
-                      <div className="robot-setup-task-layout">
-                        <div>
-                          {savedScreens.map((s) => (
-                            <div
-                              className="robot-calibration-screen"
-                              key={s.id}
+                    <CameraMappingStep
+                      camera={{
+                        name: config.camera.name,
+                        online: Boolean(config.camera.online),
+                      }}
+                      screens={knownScreens}
+                      screenId={selectedId}
+                      base={base}
+                      correction={config.correction}
+                      perspectiveOpen={perspectiveEditor}
+                      onPerspectiveOpenChange={(open) => {
+                        // Placing the corners by hand is a deliberate choice:
+                        // keep the automatic pass from opening over the editor.
+                        if (open) autoDetectStarted.current = selectedId;
+                        setPerspectiveEditor(open);
+                      }}
+                      output={config.correctionOutput ?? config.output}
+                      validity={perspective.summary?.state}
+                      phoneConnected={phoneConnected}
+                      phoneFullscreen={phoneFullscreen}
+                      mappingReady={Boolean(controller.setup.mapping)}
+                      footer={footer}
+                      busy={controller.busy}
+                      extra={
+                        <Space wrap>
+                          {review && (
+                            <Button
+                              size="small"
+                              onClick={() => setReviewOpen(true)}
                             >
-                              <Typography.Text strong>{s.name}</Typography.Text>
-                              <Typography.Text type="secondary">
-                                {t('Perspective preset ready')}
-                              </Typography.Text>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                      {footer && (
-                        <WizardFooter container={footer}>
-                          <Button
-                            type="primary"
-                            disabled={
-                              !config.correction ||
-                              !controller.setup.phoneConnected
-                            }
-                            onClick={() => setStep(2)}
-                          >
-                            {t('Next Step')}
-                          </Button>
-                        </WizardFooter>
-                      )}
-                    </>
+                              {t('Review and Apply')}
+                            </Button>
+                          )}
+                          {selected?.hasSavedPerspective &&
+                            !selected.hasCorrection && (
+                              <Button
+                                size="small"
+                                danger
+                                disabled={controller.busy}
+                                onClick={async () => {
+                                  if (
+                                    !window.confirm(
+                                      t(
+                                        'Delete the saved perspective for this screen?',
+                                      ),
+                                    )
+                                  )
+                                    return;
+                                  try {
+                                    await pageClient.deletePerspective(
+                                      cameraId,
+                                      selectedId,
+                                    );
+                                    await refresh();
+                                  } catch (cause) {
+                                    setError(
+                                      cause instanceof Error
+                                        ? cause.message
+                                        : String(cause),
+                                    );
+                                  }
+                                }}
+                              >
+                                {t('Delete Saved Perspective')}
+                              </Button>
+                            )}
+                          {knownScreens.some(
+                            (screen) => screen.id === selectedId,
+                          ) && (
+                            <Button
+                              size="small"
+                              danger
+                              disabled={controller.busy}
+                              onClick={async () => {
+                                if (
+                                  !window.confirm(
+                                    t('Delete this screen binding?'),
+                                  )
+                                )
+                                  return;
+                                try {
+                                  await pageClient.deleteScreen(
+                                    cameraId,
+                                    selectedId,
+                                  );
+                                  setReview(undefined);
+                                  setMarkerSession(undefined);
+                                  setRetryId(undefined);
+                                  await refresh();
+                                } catch (cause) {
+                                  setError(
+                                    cause instanceof Error
+                                      ? cause.message
+                                      : String(cause),
+                                  );
+                                }
+                              }}
+                            >
+                              {t('Delete Screen')}
+                            </Button>
+                          )}
+                        </Space>
+                      }
+                      onSelectScreen={setSelectedId}
+                      onAddScreen={async () => {
+                        try {
+                          const created =
+                            await markerClient.createMarkerCalibration(
+                              cameraId,
+                              [
+                                `Screen ${screens.filter((s) => s.cameraId === cameraId).length + 1}`,
+                              ],
+                            );
+                          setMarkerSession(created);
+                          setRetryId(created.targets[0].id);
+                          setMarkerOpen(true);
+                        } catch (cause) {
+                          setError(
+                            cause instanceof Error
+                              ? cause.message
+                              : String(cause),
+                          );
+                        }
+                      }}
+                      onPair={() => setPhonesOpen(true)}
+                      onDetect={() => {
+                        setRetryId(undefined);
+                        setMarkerOpen(true);
+                      }}
+                      onApply={applyCorrection}
+                      onConfirm={async () => {
+                        await client.mapAssistedCalibration();
+                        await refresh();
+                      }}
+                      onClear={config.correction ? clearCorrection : undefined}
+                      onContinue={() => setStep(2)}
+                      refresh={refresh}
+                    />
                   ))}
                 {step === 2 && teaching && (
                   <>
@@ -660,39 +1002,13 @@ function GuidedContent({
                   data-testid="calibration-live-camera"
                   alt={config.camera.name}
                 />
-                {perspective.summary?.state === 'invalid' &&
-                  config.deviceId === activeId &&
-                  config.correction && (
-                    <svg
-                      className="guided-outline"
-                      viewBox={`0 0 ${config.correction.sourceWidth} ${config.correction.sourceHeight}`}
-                      role="img"
-                      aria-label={t('Saved screen outline')}
-                    >
-                      <title>{t('Saved screen outline')}</title>
-                      <polygon
-                        points={[
-                          'topLeft',
-                          'topRight',
-                          'bottomRight',
-                          'bottomLeft',
-                        ]
-                          .map((key) => {
-                            const p =
-                              config.correction!.points[
-                                key as keyof CameraCorrection['points']
-                              ];
-                            return `${p.x},${p.y}`;
-                          })
-                          .join(' ')}
-                        fill="none"
-                        stroke="#f43f5e"
-                        strokeWidth="3"
-                        vectorEffect="non-scaling-stroke"
-                      />
-                    </svg>
-                  )}
+                <ScreenOutlines outlines={asideOutlines} />
               </div>
+              {step === 1 && (
+                <Typography.Text type="secondary">
+                  {t('Keep the entire phone visible in the camera preview.')}
+                </Typography.Text>
+              )}
               {step === 2 && (
                 <Typography.Text type="secondary">
                   {t('Check the whole arm directly before recording.')}
@@ -710,21 +1026,18 @@ function GuidedContent({
         onClose={() => setPhonesOpen(false)}
         readiness={phoneReadiness}
         cameras={phoneCameras}
-        onConnect={(id, camera) => {
-          void pageClient
-            .assignScreenDevice(id, { role: 'mapping', cameraId: camera })
-            .catch((cause) =>
-              setError(cause instanceof Error ? cause.message : String(cause)),
-            );
-        }}
-        onAssignCamera={(id, camera) => {
-          void pageClient
-            .assignScreenDevice(id, { role: 'mapping', cameraId: camera })
-            .catch((cause) =>
-              setError(cause instanceof Error ? cause.message : String(cause)),
-            );
-        }}
+        connectingDeviceId={connectingPage}
+        onConnect={(id, camera) => void connectPage(id, camera)}
+        onAssignCamera={(id, camera) => void connectPage(id, camera, true)}
         onRestoreHome={(id) => pageClient.restoreScreenDeviceHome(id)}
+        onWake={async (id) => {
+          await pageClient.wakeScreenDevice(id);
+          await refresh();
+        }}
+        onForget={async (id) => {
+          await pageClient.forgetScreenDevice(id);
+          await refresh();
+        }}
         onRenamePage={async (id, name) => {
           await pageClient.renameScreenDevice(id, name);
           await refresh();
@@ -740,6 +1053,7 @@ function GuidedContent({
         frames={review?.frames ?? {}}
         open={reviewOpen}
         applying={applying}
+        error={error}
         retryingTargetId={retryId}
         onClose={() => setReviewOpen(false)}
         onReview={(target, frame) => setReviewing({ target, frame })}
@@ -750,11 +1064,32 @@ function GuidedContent({
         }}
         onApply={() => {
           if (!review || !markerSession) return;
+          setError(undefined);
           setApplying(true);
           void markerClient
             .applyMarkerCalibration(review.session.id, markerSession.token)
-            .then(async () => {
+            .catch((cause) => {
+              if (
+                cause instanceof RobotVisionApiError &&
+                cause.code === 'CALIBRATION_MISMATCH' &&
+                window.confirm(
+                  t(
+                    'The outline does not match the phone screen. Apply it anyway?',
+                  ),
+                )
+              )
+                return markerClient.applyMarkerCalibration(
+                  review.session.id,
+                  markerSession.token,
+                  true,
+                );
+              throw cause;
+            })
+            .then(async (result) => {
               await refresh();
+              const failures = Object.values(result.mappingErrors);
+              if (failures.length) setError(failures.join('\n'));
+              setReview(undefined);
               setReviewOpen(false);
               setMarkerOpen(false);
             })
