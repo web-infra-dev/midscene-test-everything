@@ -13,6 +13,7 @@ export function createCalibrationHandler(options: {
   return async (
     req: IncomingMessage,
     res: ServerResponse,
+    assertWrite?: () => void,
   ): Promise<boolean> => {
     const path = new URL(req.url ?? '/', 'http://localhost').pathname;
     if (!path.startsWith(`${base}/assisted-calibration`)) return false;
@@ -68,13 +69,16 @@ export function createCalibrationHandler(options: {
           'Expected a JSON object',
           400,
         );
+      assertWrite?.();
       if (relative === '/assisted-calibration')
         send(200, { session: await service.create() });
       else if (relative === '/assisted-calibration/setup')
         send(200, { setup: await service.prepare(input) });
-      else if (relative === '/assisted-calibration/setup/mapping')
-        send(200, { setup: await service.mapSetup(input) });
-      else {
+      else if (relative === '/assisted-calibration/setup/mapping') {
+        // An empty POST confirms the output already prepared for this screen.
+        const output = Object.keys(input).length ? input : undefined;
+        send(200, { setup: await service.mapSetup(output) });
+      } else {
         const match =
           /^\/assisted-calibration\/([^/]+)\/(commands|safety)$/.exec(relative);
         if (!match) {

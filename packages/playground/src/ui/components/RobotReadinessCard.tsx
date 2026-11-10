@@ -8,7 +8,15 @@ export function RobotReadinessCard({
   camera,
   onOpenSetup,
   connected = true,
-}: { camera?: CameraEntry; onOpenSetup(): void; connected?: boolean }) {
+  disabled = false,
+  actionLabel,
+}: {
+  camera?: CameraEntry;
+  onOpenSetup(): void;
+  connected?: boolean;
+  disabled?: boolean;
+  actionLabel?: string;
+}) {
   const zh = usePreferences((s) => s.language) === 'zh';
   const steps = [
     {
@@ -80,15 +88,17 @@ export function RobotReadinessCard({
       <Button
         type="primary"
         icon={connected ? undefined : <Cable size={16} />}
+        disabled={disabled}
         onClick={onOpenSetup}
       >
-        {connected
-          ? zh
-            ? '进入标定'
-            : 'Open calibration'
-          : zh
-            ? '连接机械臂'
-            : 'Connect robot'}
+        {actionLabel ??
+          (connected
+            ? zh
+              ? '进入标定'
+              : 'Open calibration'
+            : zh
+              ? '连接机械臂'
+              : 'Connect robot')}
       </Button>
     </section>
   );

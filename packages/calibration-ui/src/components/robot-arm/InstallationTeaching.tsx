@@ -32,6 +32,7 @@ export function InstallationTeaching({
   footer,
   preview,
   externalPreview = false,
+  illustrationContainer,
 }: {
   api: RobotArmApi;
   binding: ProfileBinding;
@@ -41,6 +42,7 @@ export function InstallationTeaching({
   footer?: HTMLElement | null;
   preview?: ReactNode;
   externalPreview?: boolean;
+  illustrationContainer?: HTMLElement | null;
   onSaved?: () => void;
 }) {
   const [saved, setSaved] = useState<SavedTeaching | null>(null);
@@ -266,7 +268,9 @@ export function InstallationTeaching({
                   )
                 : t(prompts[stage])}
             </Typography.Paragraph>
-            <TeachingDiagram stage={stage} />
+            {illustrationContainer === undefined && (
+              <TeachingDiagram stage={stage} />
+            )}
             <Typography.Paragraph type="secondary">
               {t('Hold still, then record. Drag Mode can stay on.')}
             </Typography.Paragraph>
@@ -304,6 +308,13 @@ export function InstallationTeaching({
             </details>
           </>
         )}
+        {illustrationContainer &&
+          createPortal(
+            <TeachingDiagram
+              stage={stage === 'review' ? 'cameraBoundary' : stage}
+            />,
+            illustrationContainer,
+          )}
         {footer ? createPortal(controls, footer) : controls}
       </section>
       {(!externalPreview || saved) && (

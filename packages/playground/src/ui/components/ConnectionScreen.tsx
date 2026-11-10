@@ -69,11 +69,9 @@ export function ConnectionScreen({ onSkip }: { onSkip(): void }) {
               <Spin />
             </div>
           )}
-          {arm.setup && !connecting && (
-            <Button type="link" onClick={onSkip}>
-              {label('skipToCamera')}
-            </Button>
-          )}
+          <Button type="link" onClick={onSkip}>
+            {label('skipToCamera')}
+          </Button>
         </div>
         {showDiagram && (
           <div className="connection-diagram">

@@ -3,6 +3,7 @@ import { Video, VideoOff } from 'lucide-react';
 import { cameraPreviewUrl } from '../camera-preview';
 import { type CameraEntry, cameraStateLabel } from '../cameras';
 import { useT } from '../i18n';
+import { LiveCameraImage } from './LiveCameraImage';
 
 export function CameraRail({
   entries,
@@ -34,7 +35,10 @@ export function CameraRail({
               )
             ) : camera.stream?.state === 'running' ? (
               // The stage already owns the selected camera's preview stream.
-              <img src={cameraPreviewUrl(camera.id)} alt={camera.name} />
+              <LiveCameraImage
+                src={cameraPreviewUrl(camera.id)}
+                alt={camera.name}
+              />
             ) : (
               <VideoOff size={18} />
             )}

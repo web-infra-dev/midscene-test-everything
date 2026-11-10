@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { checkDeviceCalibration } from '../device-readiness';
 
-type Result = { id: string; revision: number } & (
+type Result = { id: string; revision: string } & (
   | { status: 'ready' | 'required' }
   | { status: 'error'; error: string }
 );
 
-export function useDeviceReadiness(id: string | undefined, revision: number) {
+export function useDeviceReadiness(id: string | undefined, revision: string) {
   const [result, setResult] = useState<Result>();
   useEffect(() => {
     if (!id) return;

@@ -3,8 +3,6 @@ import {
   type ScreenOutlineEntry,
   usePerspectiveValidity,
 } from '@midscene/arm-calibration-ui';
-import type { PerspectiveTarget } from '@midscene/arm-kit-shared/camera/vision-types';
-import type { CameraCorrection } from '@midscene/arm-kit-shared/contracts';
 import {
   Alert,
   Button,
@@ -35,10 +33,12 @@ import { useViews } from '../extensions';
 import { useDeviceReadiness } from '../hooks/useDeviceReadiness';
 import { useRobotArm } from '../hooks/useRobotArm';
 import { usePreferences, useT } from '../i18n';
+import { CameraPerspectiveActions } from './CameraPerspectiveActions';
 import { CameraRail } from './CameraRail';
 import { CameraStagePreview } from './CameraStagePreview';
 import { DeviceCalibration } from './DeviceCalibration';
 import { DeviceTransfer } from './DeviceTransfer';
+import { LiveCameraImage } from './LiveCameraImage';
 import { RobotConnectionDialog } from './RobotConnectionDialog';
 import { RobotReadinessCard } from './RobotReadinessCard';
 import { TaskWorkspace } from './TaskWorkspace';
@@ -49,7 +49,7 @@ import { DeviceSettings } from './robot-arm/DeviceSettings';
 import { RobotStatusBar } from './robot-arm/RobotStatusBar';
 import './CameraStage.less';
 
-export function DeviceWorkspace() {
+export function DeviceWorkspace({ connected }: { connected: boolean }) {
   const t = useT();
   const { ConnectionForm } = useViews();
   const arm = useRobotArm();
@@ -57,18 +57,20 @@ export function DeviceWorkspace() {
   const [connectionOpen, setConnectionOpen] = useState(false);
   const language = usePreferences((state) => state.language);
   const [configurationRevision, setConfigurationRevision] = useState(0);
-  const [calibrationId, setCalibrationId] = useState<string>();
-  const [calibrationStep, setCalibrationStep] = useState<0 | 1>(0);
-  const openCameraCorrection = () => {
-    setCalibrationStep(1);
-    setCalibrationId(deviceId);
-  };
+  const [wizard, setWizard] = useState<{
+    id: string;
+    cameraId: string;
+    step: 0 | 1;
+    session: string;
+  }>();
+  const [wizardScreen, setWizardScreen] = useState<string>();
   const [transferId, setTransferId] = useState<string>();
   const [preferredView, setCameraView] = useState<CameraView>('raw');
   const [previewError, setPreviewError] = useState<string>();
   const [previewRevision, setPreviewRevision] = useState(0);
   const {
     cameras,
+    deviceSession,
     selectedId,
     select,
     status,
@@ -78,16 +80,42 @@ export function DeviceWorkspace() {
     pendingId,
     error,
   } = useCameras();
-  const closeCalibration = useCallback(() => {
-    setCalibrationId(undefined);
-    setCalibrationStep(0);
-    setConfigurationRevision((value) => value + 1);
-    void refresh();
-  }, [refresh]);
-  const { host, disconnect } = useConnection();
+  const closeCalibration = useCallback(
+    (screenId?: string) => {
+      if (screenId) setPreferredScreenId(screenId);
+      setWizard(undefined);
+      setWizardScreen(undefined);
+      setConfigurationRevision((value) => value + 1);
+      void refresh();
+    },
+    [refresh],
+  );
+  const { host, disconnect, setupSession, check } = useConnection();
+  const [pausedCamera, setPausedCamera] = useState<string>();
+  const [frame, setFrame] = useState<{
+    key: string;
+    width: number;
+    height: number;
+  }>();
+  const [preferredScreenId, setPreferredScreenId] = useState<string>();
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+    const onFocus = () => void refresh(false);
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [refresh, connected, setupSession]);
+  useEffect(() => {
+    if (connected) setConnectionOpen(false);
+    else setPreferredScreenId(undefined);
+  }, [connected]);
+  useEffect(() => {
+    setSettingsOpen(false);
+    setTransferId(undefined);
+    setWizardScreen(undefined);
+    setWizard(undefined);
+    setPausedCamera(undefined);
+    setPreferredScreenId(undefined);
+  }, [setupSession]);
   useEffect(() => {
     if (
       status === 'loading' ||
@@ -99,53 +127,114 @@ export function DeviceWorkspace() {
   }, [cameras, status, refresh]);
   const selected = cameras.find((camera) => camera.id === selectedId);
   const streamState = selected?.stream?.state;
-  const [screenTargets, setScreenTargets] = useState<
-    Array<{
-      id: string;
-      cameraId: string;
-      name: string;
-      hasCorrection?: boolean;
-      correction?: CameraCorrection;
-      perspectiveTarget?: PerspectiveTarget;
-    }>
-  >([]);
-  const [preferredScreenId, setPreferredScreenId] = useState<string>();
+  const robotReady =
+    connected && Boolean(setupSession && setupSession === deviceSession);
   useEffect(() => {
-    const abort = new AbortController();
-    void fetch('/api/screens', { signal: abort.signal })
-      .then(async (response) => {
-        if (!response.ok) throw new Error('Could not list screens');
-        const data = await response.json();
-        if (!abort.signal.aborted) setScreenTargets(data.screens);
-      })
-      .catch(() => {});
-    return () => abort.abort();
-  }, [configurationRevision, selectedId, streamState, previewRevision]);
-  const availableScreens = screenTargets.filter(
-    (s) => s.cameraId === selectedId,
+    if (
+      !connected ||
+      !setupSession ||
+      deviceSession === undefined ||
+      robotReady ||
+      status !== 'ready'
+    )
+      return;
+    const timer = setTimeout(() => void refresh(false), 1000);
+    return () => clearTimeout(timer);
+  }, [connected, setupSession, deviceSession, robotReady, status, refresh]);
+  const availableScreens = robotReady ? (selected?.screens ?? []) : [];
+  const transferTargets = cameras.flatMap((camera) =>
+    camera.stream?.state === 'running' ? (camera.screens ?? []) : [],
   );
   const activeScreen =
     availableScreens.find((s) => s.id === preferredScreenId) ??
+    availableScreens.find((s) => s.id === selected?.previewScreenId) ??
     availableScreens.find((s) => s.id === selectedId) ??
-    availableScreens[0];
-  const deviceId = activeScreen?.id ?? selectedId ?? undefined;
-  const running = streamState === 'running';
-  const starting = streamState === 'starting';
+    availableScreens[0] ??
+    (!connected ? selected : undefined);
+  const deviceId =
+    robotReady && streamState === 'running'
+      ? (activeScreen?.id ?? selectedId ?? undefined)
+      : undefined;
+  const activeWizard =
+    robotReady && wizard?.session === setupSession ? wizard : undefined;
+  const openCalibration = (step: 0 | 1 = 0) => {
+    if (!deviceId || !selectedId || !setupSession) return;
+    setWizardScreen(deviceId);
+    setWizard({
+      id: deviceId,
+      cameraId: selectedId,
+      step,
+      session: setupSession,
+    });
+  };
+  const openCameraCorrection = () => openCalibration(1);
+  const controlScreen = activeWizard ? wizardScreen : deviceId;
+  const standalone = !connected && deviceSession === null;
+  useEffect(() => {
+    if (!standalone || !selectedId || pausedCamera === selectedId) return;
+    const abort = new AbortController();
+    // The preview itself reports startup errors. This extra owner only
+    // bridges the instant between detaching one MJPEG image and loading another.
+    void fetch(`/api/cameras/lease?id=${encodeURIComponent(selectedId)}`, {
+      signal: abort.signal,
+    })
+      .then((response) => response.arrayBuffer())
+      .catch(() => {});
+    return () => abort.abort();
+  }, [standalone, selectedId, pausedCamera]);
+  const previewTarget = activeScreen?.perspectiveTarget;
+  const cameraView = previewTarget ? preferredView : 'raw';
+  const previewId = cameraView === 'corrected' ? activeScreen?.id : selectedId;
+  const previewKey = JSON.stringify([
+    previewId,
+    cameraView,
+    previewRevision,
+    standalone,
+    connected,
+    setupSession,
+  ]);
+  const running = standalone
+    ? Boolean(
+        selected &&
+          pausedCamera !== selected.id &&
+          frame?.key === previewKey &&
+          previewError !== previewKey,
+      )
+    : streamState === 'running';
+  const previewEnabled = standalone ? selected?.id !== pausedCamera : running;
+  const starting = !standalone && streamState === 'starting';
   const cameraActionLabel = t(
-    starting ? 'cameraStarting' : running ? 'stopCamera' : 'startCamera',
+    starting ? 'cameraStarting' : previewEnabled ? 'stopCamera' : 'startCamera',
   );
-  const readiness = useDeviceReadiness(deviceId, configurationRevision);
+  const camera =
+    selected && standalone
+      ? {
+          ...selected,
+          stream: {
+            state: !previewEnabled
+              ? 'stopped'
+              : previewError === previewKey
+                ? 'failed'
+                : running
+                  ? 'running'
+                  : 'starting',
+            width: running ? (frame?.width ?? 0) : 0,
+            height: running ? (frame?.height ?? 0) : 0,
+            hasFrame: running,
+          },
+        }
+      : selected;
+  const readiness = useDeviceReadiness(
+    running ? deviceId : undefined,
+    JSON.stringify([setupSession, configurationRevision, previewRevision]),
+  );
   const perspective = usePerspectiveValidity(
     `/api/devices/${encodeURIComponent(deviceId ?? '')}/calibration`,
-    Boolean(running && activeScreen?.correction && !calibrationId),
-    `${configurationRevision}`,
+    Boolean(deviceId && running && activeScreen?.correction && !activeWizard),
+    JSON.stringify([setupSession, configurationRevision, previewRevision]),
   );
   const perspectiveBlocked = perspective.summary?.state === 'invalid';
   const ready = readiness?.status === 'ready';
-  const previewTarget = activeScreen?.perspectiveTarget;
-  const cameraView = previewTarget ? preferredView : 'raw';
-  const previewId = cameraView === 'corrected' ? deviceId : selectedId;
-  const previewKey = `${previewId}:${cameraView}:${previewRevision}`;
   /*
    * The raw view draws every screen the camera holds a perspective for, the way
    * the workstation stage did. The corrected view is already rectified, so an
@@ -153,51 +242,98 @@ export function DeviceWorkspace() {
    */
   const stageOutlines: ScreenOutlineEntry[] =
     cameraView === 'raw'
-      ? screenTargets.flatMap((screen) => {
-          if (screen.cameraId !== selectedId || !screen.correction) return [];
-          return [
-            {
-              id: screen.id,
-              name: screen.name,
-              correction: screen.correction,
-              active: screen.id === deviceId,
-              validity:
-                screen.id === deviceId ? perspective.summary?.state : undefined,
-            },
-          ];
-        })
+      ? (standalone && selected ? [selected] : availableScreens).flatMap(
+          (screen) => {
+            if (!screen.correction) return [];
+            return [
+              {
+                id: screen.id,
+                name: screen.name,
+                correction: screen.correction,
+                active: screen.id === activeScreen?.id,
+                validity:
+                  screen.id === deviceId
+                    ? perspective.summary?.state
+                    : undefined,
+              },
+            ];
+          },
+        )
       : [];
   return (
     <>
-      <RobotStatusBar
-        key={deviceId ?? 'no-camera'}
-        cameraId={deviceId}
-        onConfigure={() => {
-          if (deviceId) setCalibrationId(deviceId);
-        }}
-        preparing={!ready}
-        settings={
-          <Button
-            type="text"
-            disabled={Boolean(calibrationId)}
-            icon={<Settings2 size={16} />}
-            onClick={() => setSettingsOpen(true)}
-          >
-            {language === 'zh' ? '机械臂配置' : 'Robot settings'}
-          </Button>
-        }
-      />
-      {calibrationId ? (
-        <DeviceCalibration
-          id={calibrationId}
-          cameraId={selectedId ?? undefined}
-          onClose={closeCalibration}
-          initialStep={calibrationStep}
+      {connected && (
+        <RobotStatusBar
+          key={JSON.stringify([controlScreen, setupSession])}
+          cameraId={controlScreen}
+          onConfigure={() => {
+            if (!activeWizard) openCalibration();
+          }}
+          preparing={!ready}
+          settings={
+            <Button
+              type="text"
+              disabled={Boolean(activeWizard)}
+              icon={<Settings2 size={16} />}
+              onClick={() => setSettingsOpen(true)}
+            >
+              {language === 'zh' ? '机械臂配置' : 'Robot settings'}
+            </Button>
+          }
         />
-      ) : selected ? (
+      )}
+      {activeWizard ? (
+        <DeviceCalibration
+          id={activeWizard.id}
+          cameraId={activeWizard.cameraId}
+          onScreenChange={setWizardScreen}
+          onClose={closeCalibration}
+          initialStep={activeWizard.step}
+        />
+      ) : camera && selected ? (
         <WorkspaceLayout
           sidebar={
-            perspectiveBlocked ? (
+            (connected && !robotReady) ||
+            (!connected &&
+              deviceSession === undefined &&
+              status === 'ready') ? (
+              <Alert
+                type="warning"
+                showIcon
+                message={
+                  language === 'zh'
+                    ? '设备会话尚未同步'
+                    : 'Device session is out of sync'
+                }
+                description={
+                  deviceSession === undefined && status === 'ready'
+                    ? language === 'zh'
+                      ? '当前服务没有返回设备会话。请在仓库根目录运行 pnpm build，重启 pnpm dev 后重试。'
+                      : 'The server did not return a device session. Run pnpm build at the repository root, restart pnpm dev, then retry.'
+                    : language === 'zh'
+                      ? '正在核对机械臂和相机的连接。若未恢复，请重试。'
+                      : 'Checking the robot and camera connection. Retry if it does not recover.'
+                }
+                action={
+                  <Button
+                    loading={status === 'loading'}
+                    onClick={() => void Promise.all([check(), refresh(false)])}
+                  >
+                    {t('refresh')}
+                  </Button>
+                }
+              />
+            ) : !connected || !running || !deviceId ? (
+              <RobotReadinessCard
+                camera={camera}
+                connected={connected}
+                disabled={connected && (starting || Boolean(pendingId))}
+                actionLabel={connected ? t('startCamera') : undefined}
+                onOpenSetup={() =>
+                  connected ? void start(selected.id) : setConnectionOpen(true)
+                }
+              />
+            ) : perspectiveBlocked ? (
               <RobotReadinessCard
                 camera={{ ...selected, hasCorrection: false }}
                 onOpenSetup={openCameraCorrection}
@@ -206,8 +342,11 @@ export function DeviceWorkspace() {
               <TaskWorkspace cameraId={deviceId!} />
             ) : readiness?.status === 'required' ? (
               <RobotReadinessCard
-                camera={selected}
-                onOpenSetup={() => setCalibrationId(deviceId)}
+                camera={{
+                  ...selected,
+                  hasCorrection: activeScreen?.hasCorrection,
+                }}
+                onOpenSetup={() => openCalibration()}
               />
             ) : readiness?.status === 'error' ? (
               <Alert
@@ -247,14 +386,14 @@ export function DeviceWorkspace() {
                 <div className="camera-stage-meta">
                   <Tag
                     color={
-                      selected.stream?.state === 'running' ? 'green' : undefined
+                      camera.stream?.state === 'running' ? 'green' : undefined
                     }
                   >
-                    {t(cameraStateLabel(selected))}
+                    {t(cameraStateLabel(camera))}
                   </Tag>
                   <Typography.Text type="secondary">
-                    {selected.stream
-                      ? `${selected.stream.width} × ${selected.stream.height}`
+                    {camera.stream?.width
+                      ? `${camera.stream.width} × ${camera.stream.height}`
                       : t('noStream')}
                   </Typography.Text>
                 </div>
@@ -273,13 +412,33 @@ export function DeviceWorkspace() {
                   />
                 )}
 
-                <Button
-                  icon={<ScanLine size={16} />}
-                  disabled={!running}
-                  onClick={openCameraCorrection}
-                >
-                  {language === 'zh' ? '识别屏幕标记' : 'Detect screen markers'}
-                </Button>
+                {activeScreen &&
+                  (standalone || (connected && setupSession)) && (
+                    <CameraPerspectiveActions
+                      key={JSON.stringify([
+                        selected.id,
+                        activeScreen.id,
+                        standalone,
+                        setupSession,
+                      ])}
+                      cameraId={selected.id}
+                      screen={activeScreen}
+                      robot={
+                        connected && setupSession
+                          ? {
+                              session: setupSession,
+                              detect: openCameraCorrection,
+                            }
+                          : undefined
+                      }
+                      disabled={!previewEnabled}
+                      onChanged={async (view) => {
+                        setCameraView(view);
+                        setPreviewRevision((n) => n + 1);
+                        await refresh(false);
+                      }}
+                    />
+                  )}
                 {previewTarget && (
                   <Segmented
                     className="rv-segmented"
@@ -315,12 +474,22 @@ export function DeviceWorkspace() {
                     type="text"
                     aria-label={cameraActionLabel}
                     icon={
-                      running ? <StopCircle size={16} /> : <Play size={16} />
+                      previewEnabled ? (
+                        <StopCircle size={16} />
+                      ) : (
+                        <Play size={16} />
+                      )
                     }
                     loading={starting || pendingId === selected.id}
                     onClick={() => {
                       setPreviewError(undefined);
-                      void (running ? stop(selected.id) : start(selected.id));
+                      if (standalone) {
+                        setPausedCamera(
+                          previewEnabled ? selected.id : undefined,
+                        );
+                        setPreviewRevision((n) => n + 1);
+                      } else if (connected)
+                        void (running ? stop(selected.id) : start(selected.id));
                     }}
                   />
                 </Tooltip>
@@ -332,12 +501,11 @@ export function DeviceWorkspace() {
               onRecalibrate={openCameraCorrection}
             />
             <CameraStagePreview
-              available={running}
+              available={Boolean(previewEnabled && previewError !== previewKey)}
               outlines={stageOutlines}
               frameSize={cameraView === 'corrected' ? previewTarget : undefined}
             >
-              {selected.stream?.state === 'running' &&
-              previewError === previewKey ? (
+              {previewEnabled && previewError === previewKey ? (
                 <Empty
                   description={
                     language === 'zh'
@@ -345,11 +513,23 @@ export function DeviceWorkspace() {
                       : 'Preview unavailable. Refresh to retry.'
                   }
                 />
-              ) : selected.stream?.state === 'running' ? (
-                <img
+              ) : previewEnabled && previewId ? (
+                <LiveCameraImage
                   key={previewKey}
                   className="stream-preview"
-                  src={cameraPreviewUrl(previewId!, cameraView)}
+                  src={`${cameraPreviewUrl(previewId, cameraView)}&revision=${encodeURIComponent(previewKey)}`}
+                  onLoad={(event) => {
+                    const { naturalWidth: width, naturalHeight: height } =
+                      event.currentTarget;
+                    if (width && height)
+                      setFrame((previous) =>
+                        previous?.key === previewKey &&
+                        previous.width === width &&
+                        previous.height === height
+                          ? previous
+                          : { key: previewKey, width, height },
+                      );
+                  }}
                   onError={() => setPreviewError(previewKey)}
                   alt={
                     cameraView === 'corrected'
@@ -372,7 +552,13 @@ export function DeviceWorkspace() {
               </Typography.Text>
             )}
             <CameraRail
-              entries={cameras}
+              entries={
+                standalone
+                  ? cameras.map((entry) =>
+                      entry.id === camera.id ? camera : entry,
+                    )
+                  : cameras
+              }
               selectedId={selectedId}
               onSelect={select}
             />
@@ -392,89 +578,106 @@ export function DeviceWorkspace() {
           >
             {t('refresh')}
           </Button>
+          {!connected && (
+            <Button
+              icon={<Cable size={16} />}
+              onClick={() => setConnectionOpen(true)}
+            >
+              {t('connect')}
+            </Button>
+          )}
           {error && <Typography.Text type="danger">{error}</Typography.Text>}
         </section>
       )}
-      <Drawer
-        rootClassName="robot-drawer robot-settings-drawer"
-        title={language === 'zh' ? '机械臂配置' : 'Robot settings'}
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        width={440}
-        footer={
-          <Button danger block icon={<Unplug size={16} />} onClick={disconnect}>
-            {t('disconnect')}
-          </Button>
-        }
-      >
-        <div className="robot-panel">
-          <div className="robot-panel-heading">
-            <Cable size={19} />
-            <div className="robot-panel-identity">
-              <Typography.Text strong>{arm.adapter?.name}</Typography.Text>
-              <Typography.Text type="secondary">{host}</Typography.Text>
+      {connected && (
+        <Drawer
+          rootClassName="robot-drawer robot-settings-drawer"
+          title={language === 'zh' ? '机械臂配置' : 'Robot settings'}
+          open={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          width={440}
+          footer={
+            <Button
+              danger
+              block
+              icon={<Unplug size={16} />}
+              onClick={disconnect}
+            >
+              {t('disconnect')}
+            </Button>
+          }
+        >
+          <div className="robot-panel">
+            <div className="robot-panel-heading">
+              <Cable size={19} />
+              <div className="robot-panel-identity">
+                <Typography.Text strong>{arm.adapter?.name}</Typography.Text>
+                <Typography.Text type="secondary">{host}</Typography.Text>
+              </div>
+              <Tag color="green">{t('connected')}</Tag>
             </div>
-            <Tag color="green">{t('connected')}</Tag>
-          </div>
-          {(selected || ConnectionForm) && (
+            {(selected || ConnectionForm) && (
+              <section className="robot-settings-group">
+                <Typography.Text type="secondary">
+                  {language === 'zh'
+                    ? '连接与标定'
+                    : 'Connection & calibration'}
+                </Typography.Text>
+                {running && deviceId && (
+                  <Button
+                    icon={<ScanLine size={19} />}
+                    onClick={() => {
+                      setSettingsOpen(false);
+                      openCalibration();
+                    }}
+                  >
+                    {language === 'zh' ? '屏幕标定' : 'Screen Calibration'}
+                  </Button>
+                )}
+                {running && deviceId && transferTargets.length > 1 && (
+                  <Button
+                    icon={<ArrowRightLeft size={18} />}
+                    onClick={() => setTransferId(deviceId)}
+                  >
+                    {t('transferTitle')}
+                  </Button>
+                )}
+                {ConnectionForm && (
+                  <Button
+                    icon={<Cable size={18} />}
+                    onClick={() => setConnectionOpen(true)}
+                  >
+                    {language === 'zh' ? '连接配置' : 'Connection settings'}
+                  </Button>
+                )}
+              </section>
+            )}
             <section className="robot-settings-group">
               <Typography.Text type="secondary">
-                {language === 'zh' ? '连接与标定' : 'Connection & calibration'}
+                {language === 'zh' ? '运动与记录' : 'Motion & history'}
               </Typography.Text>
-              {selected && (
-                <Button
-                  icon={<ScanLine size={19} />}
-                  onClick={() => {
-                    setSettingsOpen(false);
-                    setCalibrationId(deviceId);
-                  }}
-                >
-                  {language === 'zh' ? '屏幕标定' : 'Screen Calibration'}
-                </Button>
-              )}
-              {selected && cameras.length > 1 && (
-                <Button
-                  icon={<ArrowRightLeft size={18} />}
-                  onClick={() => setTransferId(deviceId)}
-                >
-                  {t('transferTitle')}
-                </Button>
-              )}
-              {ConnectionForm && (
-                <Button
-                  icon={<Cable size={18} />}
-                  onClick={() => setConnectionOpen(true)}
-                >
-                  {language === 'zh' ? '连接配置' : 'Connection settings'}
-                </Button>
+              <ControllerMotionSettings arm={arm} />
+              <ActionAudit />
+              {running && deviceId && (
+                <DeviceSettings
+                  key={`${deviceId}:${configurationRevision}`}
+                  id={deviceId!}
+                />
               )}
             </section>
-          )}
-          <section className="robot-settings-group">
-            <Typography.Text type="secondary">
-              {language === 'zh' ? '运动与记录' : 'Motion & history'}
-            </Typography.Text>
-            <ControllerMotionSettings arm={arm} />
-            <ActionAudit />
-            {selected && (
-              <DeviceSettings
-                key={`${deviceId}:${configurationRevision}`}
-                id={deviceId!}
-              />
-            )}
-          </section>
-        </div>
-      </Drawer>
+          </div>
+        </Drawer>
+      )}
       <RobotConnectionDialog
         open={connectionOpen}
         onClose={() => setConnectionOpen(false)}
         title={language === 'zh' ? '连接配置' : 'Connection settings'}
       />
-      {transferId && (
+      {connected && transferId && (
         <DeviceTransfer
           key={transferId}
           id={transferId}
-          cameras={cameras}
+          cameras={transferTargets}
           onClose={() => setTransferId(undefined)}
         />
       )}

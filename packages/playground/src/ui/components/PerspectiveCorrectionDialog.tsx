@@ -54,6 +54,12 @@ function problem(
     return 'Output size and rotation are invalid.';
 }
 
+export type PerspectiveDraft = Pick<
+  CameraMarkerDetection,
+  'correction' | 'screenWidthPx' | 'screenHeightPx' | 'rotation'
+> &
+  ({ source: string } | CameraMarkerDetection);
+
 export function PerspectiveCorrectionDialog({
   open,
   cameraName,
@@ -64,7 +70,7 @@ export function PerspectiveCorrectionDialog({
 }: {
   open: boolean;
   cameraName: string;
-  detection?: CameraMarkerDetection;
+  detection?: PerspectiveDraft;
   onClose(): void;
   onDetectAgain(): void;
   onApply(
@@ -86,7 +92,7 @@ export function PerspectiveCorrectionDialog({
       height: detection.screenHeightPx,
       rotation: detection.rotation,
     });
-    setMode('detected');
+    setMode('source' in detection ? 'manual' : 'detected');
     setError(undefined);
   }, [detection]);
   if (!detection || !points || !target) return null;
@@ -94,7 +100,7 @@ export function PerspectiveCorrectionDialog({
     points,
     sourceWidth: detection.correction.sourceWidth,
     sourceHeight: detection.correction.sourceHeight,
-    rotation: 0,
+    rotation: target.rotation,
   };
   const problemText = problem(
     points,
@@ -102,7 +108,10 @@ export function PerspectiveCorrectionDialog({
     correction.sourceHeight,
     target,
   );
-  const source = `data:image/jpeg;base64,${detection.jpeg}`;
+  const source =
+    'source' in detection
+      ? detection.source
+      : `data:image/jpeg;base64,${detection.jpeg}`;
   const apply = async () => {
     if (problemText || applying) return;
     setApplying(true);
@@ -144,38 +153,42 @@ export function PerspectiveCorrectionDialog({
     >
       <div className="perspective-correction-body">
         <div className="perspective-correction-toolbar">
-          <Space wrap size={6}>
-            <Tag color="success">
-              {detection.markerIds.length}/6 {zh ? '标记' : 'markers'}
-            </Tag>
-            <Tag>
-              {detection.validFrames}/{detection.frameCount}{' '}
-              {zh ? '有效帧' : 'valid frames'}
-            </Tag>
-            <Tag>
-              {zh ? '角点抖动' : 'Corner jitter'}{' '}
-              {detection.jitterPx.toFixed(2)} px
-            </Tag>
-            <Tag>{detection.errorPx.toFixed(2)} px</Tag>
-          </Space>
+          {!('source' in detection) && (
+            <Space wrap size={6}>
+              <Tag color="success">
+                {detection.markerIds.length}/6 {zh ? '标记' : 'markers'}
+              </Tag>
+              <Tag>
+                {detection.validFrames}/{detection.frameCount}{' '}
+                {zh ? '有效帧' : 'valid frames'}
+              </Tag>
+              <Tag>
+                {zh ? '角点抖动' : 'Corner jitter'}{' '}
+                {detection.jitterPx.toFixed(2)} px
+              </Tag>
+              <Tag>{detection.errorPx.toFixed(2)} px</Tag>
+            </Space>
+          )}
           <Space wrap>
-            <Segmented
-              onChange={(value) => setMode(value as 'detected' | 'manual')}
-              options={[
-                { value: 'detected', label: zh ? '识别结果' : 'Detected' },
-                { value: 'manual', label: zh ? '编辑四角' : 'Edit corners' },
-              ]}
-              value={mode}
-            />
+            {!('source' in detection) && (
+              <Segmented
+                onChange={(value) => setMode(value as 'detected' | 'manual')}
+                options={[
+                  { value: 'detected', label: zh ? '识别结果' : 'Detected' },
+                  { value: 'manual', label: zh ? '编辑四角' : 'Edit corners' },
+                ]}
+                value={mode}
+              />
+            )}
             {mode === 'manual' && (
               <Button
                 icon={<RotateCcw size={16} />}
                 onClick={() => {
                   setPoints(structuredClone(detection.correction.points));
-                  setMode('detected');
+                  setMode('source' in detection ? 'manual' : 'detected');
                 }}
               >
-                {zh ? '恢复识别结果' : 'Reset corners'}
+                {zh ? '还原四角' : 'Reset corners'}
               </Button>
             )}
           </Space>

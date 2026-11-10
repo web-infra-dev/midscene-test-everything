@@ -48,5 +48,5 @@ export default defineConfig({
       ],
     },
   },
-  html: { title: 'Midscene Robot Playground' },
+  html: { title: 'Robot Playground' },
 });

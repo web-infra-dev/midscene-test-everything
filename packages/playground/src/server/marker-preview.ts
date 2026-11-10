@@ -8,7 +8,7 @@ import {
 } from '@midscene/arm-kit/internal/calibration/phone/page';
 import { CalibrationPhoneSession } from '@midscene/arm-kit/internal/calibration/phone/session';
 import {
-  recognizeScreenMarkers,
+  captureScreenMarkers,
   screenBoundsProblem,
 } from '@midscene/arm-kit/internal/camera/calibration-markers';
 
@@ -21,7 +21,23 @@ export class MarkerPreview {
   private readonly codes;
   private mappedPageKey?: string;
   private request = randomUUID();
-  handoffToken?: string;
+  private pairing?: {
+    pageId: string;
+    savedToken?: string;
+    newToken: string;
+    handoffToken?: string;
+  };
+  get lastPairing() {
+    return this.pairing;
+  }
+  get activePairing() {
+    return !this.closed && this.phone.presence() === 'connected'
+      ? this.pairing
+      : undefined;
+  }
+  cancelHandoff() {
+    if (this.pairing) this.pairing.handoffToken = undefined;
+  }
   private closed = false;
   private capturing = false;
   constructor(
@@ -34,7 +50,19 @@ export class MarkerPreview {
     this.phone = phone;
     this.phoneSocket = new PhoneSocketServer({
       receivePhone: (update) => {
-        phone.receive(update);
+        const { savedScreenToken, ...observation } = update as typeof update & {
+          savedScreenToken?: unknown;
+        };
+        phone.receive(observation);
+        if (this.pairing?.pageId !== update.pageId)
+          this.pairing = {
+            pageId: update.pageId,
+            savedToken:
+              typeof savedScreenToken === 'string'
+                ? savedScreenToken
+                : undefined,
+            newToken: randomUUID(),
+          };
         // The session normalizes layout revisions across phone reloads.
         if (this.mappedPageKey && this.mappedPageKey !== this.status().pageKey)
           this.mappedPageKey = undefined;
@@ -42,7 +70,7 @@ export class MarkerPreview {
       phoneView: () => ({
         view: this.mappedPageKey ? 'touch-preview' : 'markers',
         markerRequest: this.request,
-        pairingToken: this.handoffToken,
+        pairingToken: this.pairing?.handoffToken,
         anchors: [],
       }),
       phoneHeartbeat: () => {
@@ -51,6 +79,7 @@ export class MarkerPreview {
       },
       disconnectPhone: () => {
         phone.lastSeen = 0;
+        this.cancelHandoff();
         this.mappedPageKey = undefined;
       },
     });
@@ -62,7 +91,12 @@ export class MarkerPreview {
     };
   }
   page() {
-    return calibrationPhonePage(this.phone.openPage(), this.codes);
+    return calibrationPhonePage(
+      this.phone.openPage(),
+      this.codes,
+      undefined,
+      true,
+    );
   }
   status() {
     const update = this.phone.update;
@@ -87,10 +121,24 @@ export class MarkerPreview {
     };
   }
   showMarkers() {
-    this.handoffToken = undefined;
+    this.cancelHandoff();
     this.request = randomUUID();
     this.lastViewed = Date.now();
     this.mappedPageKey = undefined;
+  }
+  assertCaptured(pageKey: unknown) {
+    if (
+      this.closed ||
+      typeof pageKey !== 'string' ||
+      this.mappedPageKey !== pageKey ||
+      this.status().pageKey !== pageKey
+    )
+      throw Object.assign(
+        new Error(
+          'The phone page or layout changed. Detect the markers again.',
+        ),
+        { status: 409 },
+      );
   }
   async capture(
     cameras: CameraSessionManager,
@@ -120,7 +168,7 @@ export class MarkerPreview {
       const layout = this.phone.assertConnected().layout;
       const camera = await cameras.acquire(this.cameraId, this.token);
       try {
-        const result = await recognizeScreenMarkers(() => {
+        const result = await captureScreenMarkers(() => {
           check();
           return camera.rawFrame();
         }, layout);
@@ -128,6 +176,7 @@ export class MarkerPreview {
         this.mappedPageKey = this.status().pageKey;
         return {
           ...result,
+          evidence: { token: this.token, pageKey: this.mappedPageKey },
           screenWidthPx: Math.round(
             layout.screen.width * layout.screen.devicePixelRatio,
           ),

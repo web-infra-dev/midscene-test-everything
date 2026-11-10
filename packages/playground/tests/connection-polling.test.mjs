@@ -70,3 +70,25 @@ test('connecting state keeps polling until automatic camera startup completes', 
   assert.equal(useConnection.getState().phase, 'connected');
   assert.equal(calls, 2);
 });
+
+test('polling during disconnect cannot start a read that later resurrects the old session', async () => {
+  let finish;
+  let reads = 0;
+  globalThis.fetch = (url) => {
+    if (url.endsWith('/disconnect'))
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    reads++;
+    return Promise.resolve(
+      response({ phase: 'connected', setupSession: 'old' }),
+    );
+  };
+  const disconnecting = useConnection.getState().disconnect();
+  await useConnection.getState().check();
+  finish(response({ phase: 'disconnected', setupSession: 'next' }));
+  await disconnecting;
+  assert.equal(reads, 0);
+  assert.equal(useConnection.getState().setupSession, 'next');
+  assert.equal(useConnection.getState().phase, 'disconnected');
+});

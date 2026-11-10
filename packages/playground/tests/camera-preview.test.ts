@@ -50,6 +50,20 @@ test('thumbnail uses the running camera preview and stops showing it when stoppe
   assert.ok(stopped.includes('未启动'));
 });
 
+test('keeps a legacy camera response distinct from a detached or matching installation', async () => {
+  for (const [payload, expected] of [
+    [{ deviceSession: 'connected-1' }, 'connected-1'],
+    [{}, undefined],
+    [{ deviceSession: null }, null],
+    [{ deviceSession: 'connected-2' }, 'connected-2'],
+  ] as const) {
+    globalThis.fetch = async () =>
+      Response.json({ cameras: [camera], ...payload });
+    await useCameras.getState().refresh(false);
+    assert.equal(useCameras.getState().deviceSession, expected);
+    assert.equal(useCameras.getState().selectedId, camera.id);
+  }
+});
 test('a failed list refresh preserves the selected stream and reports the error', async () => {
   useCameras.setState({
     cameras: [camera],

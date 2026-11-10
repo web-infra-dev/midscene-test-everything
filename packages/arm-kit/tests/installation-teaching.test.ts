@@ -1,8 +1,84 @@
-import { expect, it } from '@rstest/core';
+import { expect, it, rstest } from '@rstest/core';
 import { assertCameraBoundary } from '../src/application/teaching-constraints.js';
 import type { InstallationTeaching } from '../src/contracts.js';
 import { ProfileStore } from '../src/runtime/profile-store.js';
 import { fixture, pose } from './fixtures.js';
+
+it('returns from boundary readback noise without commanding a point across the plane, and uses configured motion for both taught positions', async () => {
+  const f = await fixture();
+  try {
+    const tool = await f.store.putTool({
+      ...f.tool,
+      offsetMm: { x: 4, y: -2, z: -10 },
+    });
+    const binding = {
+      ...f.binding,
+      cameraId: 'cam',
+    };
+    const motion = {
+      actionSpeed: { kind: 'ratio' as const, value: 0.35 },
+      actionAcceleration: { kind: 'ratio' as const, value: 0.22 },
+    };
+    const reference = pose(100, -50, 90);
+    const boundary = pose(160, 30, 75);
+    await f.store.saveInstallationTeaching({
+      ...binding,
+      id: 'mount',
+      recordedAt: new Date().toISOString(),
+      robotGeometryRevision: f.robot.geometryRevision,
+      toolGeometryRevision: tool.geometryRevision,
+      referencePose: reference,
+      poses: { reference, cameraBoundary: boundary },
+      cameraBoundary: { point: { x: 164, y: 28 }, normal: { x: 0.6, y: 0.8 } },
+      corridorConfirmed: true,
+    });
+    const justOutside = pose(160 + 0.000006, 30 + 0.000008, 75);
+    const move = rstest.spyOn(f.adapter, 'moveLinear');
+    f.adapter.setPoseForTesting(justOutside);
+    await f.runtime.positionInstallationPoint(
+      { ...binding, motion },
+      'cameraBoundary',
+    );
+    for (const [, options] of move.mock.calls) {
+      expect(options).toMatchObject({
+        speed: motion.actionSpeed,
+        acceleration: motion.actionAcceleration,
+      });
+    }
+    expect(f.adapter.movements.at(-1)).toEqual(boundary);
+    for (const { positionMm: p } of f.adapter.movements) {
+      expect((p.x - 160) * 0.6 + (p.y - 30) * 0.8).toBeLessThanOrEqual(1e-10);
+    }
+    move.mockClear();
+    f.adapter.setPoseForTesting(justOutside);
+    await f.runtime.positionInstallationPoint(
+      { ...binding, motion },
+      'reference',
+    );
+    expect(move.mock.calls.map(([p]) => p.positionMm.z)).toEqual([90, 90, 90]);
+    for (const [, options] of move.mock.calls) {
+      expect(options).toMatchObject({
+        speed: motion.actionSpeed,
+        acceleration: motion.actionAcceleration,
+      });
+    }
+    expect(f.adapter.movements.at(-1)).toEqual(reference);
+    move.mockClear();
+    // The same tiny excess is still rejected when it belongs to a requested target.
+    await expect(
+      f.runtime.collectAutomaticPoints(binding, (host) =>
+        host.move(justOutside),
+      ),
+    ).rejects.toMatchObject({ code: 'CAMERA_BOUNDARY_EXCEEDED' });
+    f.adapter.setPoseForTesting(pose(160.006, 30.008, 75));
+    await expect(
+      f.runtime.positionInstallationPoint({ ...binding, motion }, 'reference'),
+    ).rejects.toMatchObject({ code: 'CAMERA_BOUNDARY_EXCEEDED' });
+    expect(move).not.toHaveBeenCalled();
+  } finally {
+    await f.cleanup();
+  }
+});
 
 it('persists mounting per camera, reuses it across screens and invalidates changed tool geometry', async () => {
   const f = await fixture();

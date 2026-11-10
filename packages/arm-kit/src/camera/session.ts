@@ -503,6 +503,9 @@ export class CameraSessionManager {
       streamStopTimeoutMs,
     );
   }
+  activeCameraIds(): string[] {
+    return [...this.sessions.keys()];
+  }
   /** Directory that owns correction and screen manifest files. */
   get dataDirectory(): string {
     return this.directory;

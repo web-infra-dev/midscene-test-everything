@@ -9,7 +9,11 @@ import {
 } from '../calibration/phone/page.js';
 import { sameLayout } from '../calibration/phone/session.js';
 import { CalibrationWorkflow } from '../calibration/workflow.js';
-import { recognizeScreenMarkers } from '../camera/calibration-markers.js';
+import {
+  MARKER_CAPTURE_ATTEMPTS,
+  captureScreenMarkers,
+  recognizeScreenMarkers,
+} from '../camera/calibration-markers.js';
 import type { CameraSession } from '../camera/session.js';
 import { calibrationAccepted } from '../contracts.js';
 import {
@@ -280,13 +284,14 @@ export class CalibrationHost {
     const state = await arm.state(this.input?.toolProfileId);
     const correction = camera.getCorrection();
     const saved = arm.profileStore.deviceBinding(deviceId);
-    const { selection, teaching } = this.service.setup();
+    const { selection, teaching, mapping } = this.service.setup();
     return {
       deviceId,
       capabilities: arm.describeCapabilities(),
       armState: state,
       input: this.input,
       installationTaught: Boolean(teaching),
+      mappingReady: Boolean(mapping),
       correctionOutput: this.autoOutputSize(),
       output: selection
         ? {
@@ -354,6 +359,7 @@ export class CalibrationHost {
     correction: CameraCorrection,
     allowMismatch = false,
     output?: { width: number; height: number },
+    assertCurrent?: () => void,
   ) {
     const validity = await this.options.camera.checkCorrection(
       correction,
@@ -361,6 +367,7 @@ export class CalibrationHost {
       allowMismatch,
     );
     this.editable();
+    assertCurrent?.();
     if (output)
       await this.options.camera.setPerspective(correction, {
         ...output,
@@ -389,16 +396,23 @@ export class CalibrationHost {
   get cameraId() {
     return this.options.camera.camera.id;
   }
+  async clearAppliedCorrection() {
+    this.editable();
+    await this.service.clearMapping();
+    await this.options.camera.clearCorrection();
+  }
   async applyMarkerCorrection(
     correction: CameraCorrection,
     allowMismatch = false,
     output?: { width: number; height: number },
+    assertCurrent?: () => void,
   ) {
     this.editable();
     const validity = await this.saveCorrection(
       correction,
       allowMismatch,
       output,
+      assertCurrent,
     );
     if (validity.state === 'invalid') {
       await this.service.clearMapping();
@@ -502,7 +516,7 @@ export class CalibrationHost {
             continue;
           }
           if (
-            attempt >= 3 ||
+            attempt >= MARKER_CAPTURE_ATTEMPTS ||
             !error ||
             typeof error !== 'object' ||
             !('code' in error) ||
@@ -526,7 +540,11 @@ export class CalibrationHost {
       this.service.finishMarkerDisplay(request, accepted);
     }
   }
-  async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  async handle(
+    req: IncomingMessage,
+    res: ServerResponse,
+    assertAssistedWrite?: () => void,
+  ): Promise<boolean> {
     if (
       req.method === 'GET' &&
       new URL(req.url ?? '/', 'http://localhost').pathname ===
@@ -568,7 +586,7 @@ export class CalibrationHost {
       publish();
       return true;
     }
-    if (await this.control(req, res)) return true;
+    if (await this.control(req, res, assertAssistedWrite)) return true;
     const path = new URL(req.url ?? '/', 'http://localhost').pathname;
     if (!path.startsWith(`${this.basePath}/`)) return false;
     const send = (status: number, value: unknown) => {
@@ -743,7 +761,7 @@ export class CalibrationHost {
         const layout = setup.layout;
         if (!layout || !setup.phoneConnected)
           throw new RobotArmError('INVALID_MAPPING', 'Connect Phone', 409);
-        const result = await recognizeScreenMarkers(
+        const result = await captureScreenMarkers(
           () => this.options.camera.rawFrame(),
           layout,
         );
@@ -810,9 +828,7 @@ export class CalibrationHost {
         // camera simply stops applying the perspective to that screen. Drop the
         // page mapping first: a busy calibration must fail before anything is
         // released.
-        this.editable();
-        await this.service.clearMapping();
-        await this.options.camera.clearCorrection();
+        await this.clearAppliedCorrection();
         send(200, await this.configuration());
       } else send(404, { error: '404 Not Found' });
     } catch (error) {

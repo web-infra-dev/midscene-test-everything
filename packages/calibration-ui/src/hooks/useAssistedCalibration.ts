@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { createStore, useStore } from 'zustand';
 import { t } from '../i18n';
 import type {
@@ -18,20 +18,22 @@ export function useAssistedCalibration(
   installation: string | undefined,
   active: boolean,
 ) {
-  const [store] = useState(() =>
-    createStore<{
-      session: AssistedCalibrationState | null;
-      setup: AssistedCalibrationSetup;
-      phone: CalibrationPhoneStatus;
-      busy: boolean;
-      error?: string;
-      connectionError?: string;
-    }>(() => ({
-      session: null,
-      setup: { prepared: false, phoneConnected: false },
-      phone: { state: 'waiting', links: [] },
-      busy: false,
-    })),
+  const store = useMemo(
+    () =>
+      createStore<{
+        session: AssistedCalibrationState | null;
+        setup: AssistedCalibrationSetup;
+        phone: CalibrationPhoneStatus;
+        busy: boolean;
+        error?: string;
+        connectionError?: string;
+      }>(() => ({
+        session: null,
+        setup: { prepared: false, phoneConnected: false },
+        phone: { state: 'waiting', links: [] },
+        busy: false,
+      })),
+    [api, installation, active],
   );
   const { session, setup, phone, busy, error, connectionError } =
     useStore(store);
@@ -70,27 +72,30 @@ export function useAssistedCalibration(
       generation.current++;
       unsubscribe();
     };
-  }, [api, installation, active]);
-  const run = useCallback(async <T>(work: () => Promise<T>) => {
-    if (working.current)
-      throw new Error(t('A calibration command is already running.'));
-    working.current = true;
-    setBusy(true);
-    setError(undefined);
-    const current = generation.current;
-    try {
-      return await work();
-    } catch (e) {
-      if (generation.current === current)
-        setError(e instanceof Error ? e.message : String(e));
-      throw e;
-    } finally {
-      if (generation.current === current) {
-        working.current = false;
-        setBusy(false);
+  }, [store, api, active]);
+  const run = useCallback(
+    async <T>(work: () => Promise<T>) => {
+      if (working.current)
+        throw new Error(t('A calibration command is already running.'));
+      working.current = true;
+      setBusy(true);
+      setError(undefined);
+      const current = generation.current;
+      try {
+        return await work();
+      } catch (e) {
+        if (generation.current === current)
+          setError(e instanceof Error ? e.message : String(e));
+        throw e;
+      } finally {
+        if (generation.current === current) {
+          working.current = false;
+          setBusy(false);
+        }
       }
-    }
-  }, []);
+    },
+    [store],
+  );
   const prepare = (input: AssistedCalibrationInput) =>
     run(() => api.prepareAssistedCalibration(input));
   const map = (output?: AssistedMappingInput) =>

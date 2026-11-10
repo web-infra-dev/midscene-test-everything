@@ -75,3 +75,21 @@ it('clears a recovered polling error without hiding a failed task operation', as
   expect(useTasks.getState().pollError).toBeUndefined();
   expect(useTasks.getState().error).toBe('Physical stop was not confirmed');
 });
+
+it('a task created by the old robot session cannot repopulate the new workspace', async () => {
+  let finish!: (res: Response) => void;
+  rstest.stubGlobal(
+    'fetch',
+    () =>
+      new Promise<Response>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const { useTasks } = await import('../src/ui/tasks');
+  const adding = useTasks.getState().add('camera');
+  useTasks.getState().reset();
+  finish(json({ id: 'old', cameraId: 'camera', name: 'Old' }));
+  await adding;
+  expect(useTasks.getState().tasks).toEqual([]);
+  expect(useTasks.getState().pending).toBe(false);
+});

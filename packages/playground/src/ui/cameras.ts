@@ -2,12 +2,16 @@ import type { PerspectiveTarget } from '@midscene/arm-kit-shared/camera/vision-t
 import type { CameraCorrection } from '@midscene/arm-kit-shared/contracts';
 import { create } from 'zustand';
 
-export interface CameraEntry {
+export interface CameraScreen {
   id: string;
   name: string;
   hasCorrection?: boolean;
   correction?: CameraCorrection;
   perspectiveTarget?: PerspectiveTarget;
+}
+export interface CameraEntry extends CameraScreen {
+  previewScreenId?: string;
+  screens?: CameraScreen[];
   error?: string;
   stream?: {
     state: string;
@@ -36,6 +40,7 @@ type CameraStatus = 'idle' | 'loading' | 'ready' | 'unavailable' | 'error';
 let listRevision = 0;
 export const useCameras = create<{
   cameras: CameraEntry[];
+  deviceSession?: string | null;
   selectedId: string | null;
   status: CameraStatus;
   select: (id: string) => void;
@@ -44,12 +49,6 @@ export const useCameras = create<{
   start: (id: string) => Promise<void>;
   stop: (id: string) => Promise<void>;
   refresh: (discover?: boolean) => Promise<void>;
-  markCorrection: (
-    id: string,
-    target: PerspectiveTarget,
-    correction: CameraCorrection,
-  ) => void;
-  markCorrectionCleared: (id: string) => void;
 }>((set, get) => ({
   cameras: [],
   selectedId: (() => {
@@ -92,34 +91,6 @@ export const useCameras = create<{
       // Selection still works when browser storage is unavailable.
     }
   },
-  markCorrection: (id, target, correction) => {
-    set((state) => ({
-      cameras: state.cameras.map((camera) =>
-        camera.id === id
-          ? {
-              ...camera,
-              hasCorrection: true,
-              correction,
-              perspectiveTarget: target,
-            }
-          : camera,
-      ),
-    }));
-  },
-  markCorrectionCleared: (id) => {
-    set((state) => ({
-      cameras: state.cameras.map((camera) =>
-        camera.id === id
-          ? {
-              ...camera,
-              hasCorrection: false,
-              correction: undefined,
-              perspectiveTarget: undefined,
-            }
-          : camera,
-      ),
-    }));
-  },
   refresh: async (discover = true) => {
     const revision = ++listRevision;
     set({ status: 'loading' });
@@ -160,6 +131,12 @@ export const useCameras = create<{
       const cameras = data.cameras as CameraEntry[];
       set({
         cameras,
+        deviceSession:
+          'deviceSession' in data &&
+          (typeof data.deviceSession === 'string' ||
+            data.deviceSession === null)
+            ? data.deviceSession
+            : undefined,
         error:
           'error' in data && typeof data.error === 'string'
             ? data.error

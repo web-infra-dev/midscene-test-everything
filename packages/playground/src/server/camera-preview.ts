@@ -21,14 +21,6 @@ const CORRECTED_PREVIEW_MAX_PIXELS = 450_000;
 const CORRECTED_PREVIEW_INTERVAL_MS = 0;
 
 /**
- * One live preview per camera. A browser that is refreshed or switched between
- * raw/corrected leaves the previous multipart response open unless it is
- * explicitly destroyed; accumulating those responses exhausts the browser's
- * per-host connection pool and stalls the next page load.
- */
-const standalonePreviews = new Map<string, Set<ServerResponse>>();
-
-/**
  * One MJPEG response over one live stream. Frames are dropped, never queued, so
  * a slow perspective transform cannot build latency or outlive its viewer.
  */
@@ -145,13 +137,6 @@ export async function streamStandalonePreview(
     owner,
     view === 'corrected' ? screenId : undefined,
   );
-  const previous = standalonePreviews.get(id);
-  const active = previous ?? new Set<ServerResponse>();
-  active.add(res);
-  standalonePreviews.set(id, active);
-  // Acquire first, then retire older viewers: the camera keeps its new owner
-  // and the old multipart sockets are freed instead of lingering.
-  for (const old of previous ?? []) if (old !== res) old.destroy();
   try {
     if (res.destroyed) return;
     const closed = closedResponse(res);
@@ -174,9 +159,6 @@ export async function streamStandalonePreview(
     }
     await closed;
   } finally {
-    active.delete(res);
-    if (!active.size && standalonePreviews.get(id) === active)
-      standalonePreviews.delete(id);
     await cameras.release(id, owner);
   }
 }
@@ -188,11 +170,13 @@ export async function saveStandaloneCorrection(
   correction: CameraCorrection,
   target?: PerspectiveTarget,
   screenId?: string,
+  checkCapture?: () => void,
 ) {
   const owner = randomUUID();
   const camera = await cameras.acquire(id, owner, screenId);
   try {
     await camera.checkCorrection(correction);
+    checkCapture?.();
     if (target) await camera.setPerspective(correction, target);
     else await camera.setCorrection(correction);
   } finally {

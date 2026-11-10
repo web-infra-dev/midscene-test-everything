@@ -341,6 +341,27 @@ it('rejects applying captured results after either phone changed layout', async 
   expect(f.adapter.movements).toHaveLength(0);
 });
 
+it('rechecks both phones after asynchronous frame validation and before committing the first screen', async () => {
+  const f = await fixture();
+  const first = await f.connect();
+  const second = await f.connect();
+  await f.render();
+  const command = { cameraId: 'cam', id: f.session.id, token: f.session.token };
+  await f.service.markerAction({ ...command, action: 'detect' });
+  const camera = f.devices.entries.get(first.targetId)!.camera;
+  const validate = camera.checkCorrection.bind(camera);
+  camera.checkCorrection = async (...args) => {
+    second.targetHost.service.disconnectPhone();
+    return validate(...args);
+  };
+  await expect(
+    f.service.markerAction({ ...command, action: 'apply' }),
+  ).rejects.toMatchObject({ code: 'PAGE_CHANGED' });
+  expect(camera.getCorrection()).toBeUndefined();
+  expect(
+    f.devices.entries.get(second.targetId)?.camera.getCorrection(),
+  ).toBeUndefined();
+});
 it('adopts an existing single-screen phone once and does not recreate a released association', async () => {
   const f = await fixture();
   const pageId = f.host.service.openPhonePage();
@@ -429,16 +450,19 @@ it('keeps commands gated while a real Controller queue is occupied, then grants 
     await ready;
     const status = (await f.devices.startCalibration('cam')) as {
       phase: string;
+      attemptId: string;
     };
     expect(status.phase).toBe('queued');
-    expect(() => f.devices.assertCalibrationRunning('cam')).toThrow(
-      'Controller queue',
-    );
+    expect(() =>
+      f.devices.assertCalibrationRunning('cam', status.attemptId),
+    ).toThrow('Controller queue');
     expect(f.adapter.movements).toHaveLength(0);
     release();
     await owner;
     await f.devices.entries.get('cam')!.calibration!.ready;
-    expect(() => f.devices.assertCalibrationRunning('cam')).not.toThrow();
+    expect(() =>
+      f.devices.assertCalibrationRunning('cam', status.attemptId),
+    ).not.toThrow();
     await f.devices.cancelCalibration('cam');
     expect(f.devices.status('cam').phase).toBe('cancelled');
     expect(f.adapter.movements).toHaveLength(0);
@@ -446,6 +470,34 @@ it('keeps commands gated while a real Controller queue is occupied, then grants 
     release();
     await owner;
   }
+});
+it('cancels a queued sibling without stopping the selected screen and rejects stale lease commands', async () => {
+  const f = await fixture();
+  const right = f.session!.targets.find((target) => target.id !== 'cam')!.id;
+  await f.devices.startCalibration('cam');
+  const first = f.devices.entries.get('cam')!.calibration!;
+  await first.ready;
+  await f.devices.startCalibration(right);
+  const sibling = f.devices.entries.get(right)!.calibration!;
+  expect(sibling.phase).toBe('queued');
+  await f.devices.cancelCalibration(right, sibling.attemptId);
+  expect(first.phase).toBe('running');
+  expect(sibling.phase).toBe('cancelled');
+  await f.devices.cancelCalibration('cam', first.attemptId);
+  await f.devices.startCalibration(right);
+  const retry = f.devices.entries.get(right)!.calibration!;
+  await retry.ready;
+  await f.devices.cancelCalibration(right, sibling.attemptId);
+  expect(() =>
+    f.devices.assertCalibrationRunning(right, first.attemptId),
+  ).toThrow('attempt changed');
+  expect(() =>
+    f.devices.assertCalibrationRunning(right, sibling.attemptId),
+  ).toThrow('attempt changed');
+  expect(() =>
+    f.devices.assertCalibrationRunning(right, retry.attemptId),
+  ).not.toThrow();
+  expect(f.adapter.movements).toHaveLength(0);
 });
 it('reports a missing phone network instead of generating a controller-cable or loopback QR code', async () => {
   const f = await fixture();
@@ -527,7 +579,7 @@ it('keeps the screen label and the device label on the same name', async () => {
     f.devices.screens().find((screen) => screen.id === targetId)!.name,
   ).toBe('Left phone');
 });
-it('returns every paired page to its home view when the service starts', async () => {
+it('keeps paired pages at home on restart until their own calibration screen opens', async () => {
   const f = await fixture({ screens: false });
   const info = (await f.service.pageAction({
     action: 'list',
@@ -553,6 +605,16 @@ it('returns every paired page to its home view when the service starts', async (
   const device = listed.devices.find((item) => item.id === page.saved.id)!;
   expect(device.mode).toBe('waiting');
   expect(device.screenId).toBe(page.saved.targetId);
+  const restored = (await restarted.phoneHost(token))!;
+  const other = await f.devices.addScreen('cam', 'Other');
+  await restarted.resumeBoundPage(await f.devices.ensureHost(other.id));
+  expect(restored.mode).toBe('waiting');
+  const host = await f.devices.ensureHost(device.screenId!);
+  await restarted.resumeBoundPage(host);
+  expect(restored.mode).toBe('mapping');
+  expect(restored.host).toBe(host);
+  expect(host.service.status()).toBeNull();
+  expect(f.adapter.movements).toHaveLength(0);
 });
 it('forgets an offline page and keeps the screen it served', async () => {
   const f = await fixture();

@@ -8,8 +8,15 @@ export function DeviceCalibration({
   id,
   cameraId = id,
   onClose,
+  onScreenChange,
   initialStep,
-}: { id: string; cameraId?: string; onClose(): void; initialStep?: 0 | 1 }) {
+}: {
+  id: string;
+  cameraId?: string;
+  onClose(screenId?: string): void;
+  onScreenChange(id: string): void;
+  initialStep?: 0 | 1;
+}) {
   const language = usePreferences((state) => state.language);
   useEffect(
     () => useCalibrationLanguage.getState().setLanguage(language),
@@ -20,6 +27,7 @@ export function DeviceCalibration({
       id={id}
       cameraId={cameraId}
       onClose={onClose}
+      onScreenChange={onScreenChange}
       initialStep={initialStep}
     />
   );

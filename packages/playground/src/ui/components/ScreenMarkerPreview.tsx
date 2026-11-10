@@ -14,8 +14,10 @@ import { ScanLine } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { cameraPreviewUrl } from '../camera-preview';
 import { useLanguage } from '../i18n';
+import { LiveCameraImage } from './LiveCameraImage';
 
 export interface CameraMarkerDetection {
+  evidence: { token: string; pageKey: string };
   correction: CameraCorrection;
   jpeg: string;
   markerIds: number[];
@@ -50,12 +52,14 @@ export function ScreenMarkerPreview({
   name,
   onDetected,
   openRequest = 0,
+  disabled = false,
   onOpenChange,
 }: {
   id: string;
   name: string;
   onDetected(result: CameraMarkerDetection): void;
   openRequest?: number;
+  disabled?: boolean;
   onOpenChange?(open: boolean): void;
 }) {
   const [open, setOpen] = useState(false);
@@ -73,7 +77,11 @@ export function ScreenMarkerPreview({
     useLanguage() === 'zh' ? '识别屏幕标记' : 'Detect screen markers';
   return (
     <>
-      <Button icon={<ScanLine size={16} />} onClick={() => changeOpen(true)}>
+      <Button
+        disabled={disabled}
+        icon={<ScanLine size={16} />}
+        onClick={() => changeOpen(true)}
+      >
         {title}
       </Button>
       {open && (
@@ -158,31 +166,18 @@ function MarkerDialog({
     setError(undefined);
     if (!pageKey || !session) return;
     const abort = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
-    // As in robot-vision, retry only failed marker batches. Each attempt gets fresh frames.
-    async function capture(batch: number) {
-      try {
-        const next = await request<CameraMarkerDetection>(
-          `${endpoint}?token=${session!.token}&pageKey=${encodeURIComponent(pageKey!)}`,
-          { method: 'POST', signal: abort.signal },
-        );
+    void request<CameraMarkerDetection>(
+      `${endpoint}?token=${session.token}&pageKey=${encodeURIComponent(pageKey)}`,
+      { method: 'POST', signal: abort.signal },
+    )
+      .then((next) => {
         if (!abort.signal.aborted) finish.current(next);
-      } catch (e) {
-        if (abort.signal.aborted) return;
-        const code = (e as { code?: string }).code;
-        if (
-          batch < 3 &&
-          (code === 'NO_SCREEN_DETECTED' || code === 'CALIBRATION_MISMATCH')
-        )
-          timer = setTimeout(() => void capture(batch + 1), 300);
-        else setError(e instanceof Error ? e.message : String(e));
-      }
-    }
-    void capture(1);
-    return () => {
-      clearTimeout(timer);
-      abort.abort();
-    };
+      })
+      .catch((error) => {
+        if (!abort.signal.aborted)
+          setError(error instanceof Error ? error.message : String(error));
+      });
+    return () => abort.abort();
   }, [session, pageKey, retry]);
   const url = chosen ?? session?.links[0]?.url;
   return (
@@ -190,7 +185,7 @@ function MarkerDialog({
       {connectionError && (
         <Alert showIcon type="error" message={connectionError} />
       )}
-      <img
+      <LiveCameraImage
         src={cameraPreviewUrl(id)}
         alt={name}
         style={{

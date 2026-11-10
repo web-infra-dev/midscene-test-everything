@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import {
   ArmController,
   CameraSessionManager,
+  RobotArmError,
   listCameras,
 } from '@midscene/arm-kit';
 import type { RobotArmAdapter } from '@midscene/arm-kit';
@@ -34,6 +35,10 @@ import { CodeSetup } from './code-setup.js';
 import { PlaygroundDevices } from './devices.js';
 import { MarkerPreview } from './marker-preview.js';
 import { PhonePairings } from './phone-pairings.js';
+import {
+  PreviewPerspectives,
+  phoneFingerprint,
+} from './preview-perspectives.js';
 import { screenConnectPage } from './screen-connect-page.js';
 import type {
   PlaygroundSession,
@@ -125,8 +130,6 @@ export async function startPlaygroundHost({
   developmentOrigins = [],
 }: HostOptions) {
   const markerPreviews = new Map<string, MarkerPreview>();
-  /** Camera-only workspace leases, keyed by lease token -> camera id. */
-  const cameraLeases = new Map<string, string>();
   const wifiInterfaces = await discoverWifiInterfaces();
   const phoneLinks = (token: string) =>
     phoneAddresses({ wifiInterfaces, controllerHost: host }).map(
@@ -136,6 +139,8 @@ export async function startPlaygroundHost({
       }),
     );
   const cameraManager = new CameraSessionManager();
+  const pendingPerspectives = new PreviewPerspectives(cameraManager);
+  const previewScreens = new Map<string, string>();
   let adapterName: string | undefined;
   let devices: PlaygroundDevices | undefined;
   let tasks: PlaygroundTasks | undefined;
@@ -221,7 +226,16 @@ export async function startPlaygroundHost({
         });
         tasks = new PlaygroundTasks(devices);
         armControls = new PlaygroundArmControls(arm, tasks);
-        await devices.startAll();
+        await devices.startAll(listCameras, [
+          ...cameraManager.activeCameraIds(),
+          ...[...markerPreviews.values()]
+            .filter((p) => p.activePairing)
+            .map((p) => p.cameraId),
+        ]);
+        for (const id of new Set(
+          [...devices.entries.values()].map((entry) => entry.cameraId),
+        ))
+          await restoreMarkerPerspective(devices, id);
       } catch (error) {
         if (arm) await disconnectArm();
         else await candidate.close();
@@ -234,7 +248,30 @@ export async function startPlaygroundHost({
       connecting = false;
     }
   }
+  async function restoreMarkerPerspective(
+    registry: PlaygroundDevices,
+    cameraId: string,
+  ) {
+    const pending = await pendingPerspectives.get(cameraId);
+    if (!pending) return;
+    const screen = registry.markerCalibration.previewTarget(
+      cameraId,
+      pending.phones,
+    );
+    const entry = screen && registry.entries.get(screen);
+    if (!entry || devices !== registry) return;
+    const geometry = await cameraManager.persistedPerspective(
+      cameraId,
+      pending.scope,
+    );
+    if (!geometry?.target) return;
+    await entry.camera.setPerspective(geometry.correction, geometry.target);
+    previewScreens.set(cameraId, screen);
+    await pendingPerspectives.clear(cameraId, pending);
+  }
   async function disconnectArm() {
+    for (const preview of markerPreviews.values()) preview.cancelHandoff();
+    previewScreens.clear();
     const activeTasks = tasks;
     const activeDevices = devices;
     const controller = arm;
@@ -418,7 +455,9 @@ export async function startPlaygroundHost({
       if (url.pathname === '/api/arm/recover' && req.method === 'POST') {
         if (!armControls || connecting)
           return send(409, { error: 'Connect the arm first' });
-        if ((await readBody(req)).confirmed !== true)
+        const recovery = await readBody(req);
+        if (recovery.session !== undefined) setup.assertSession(recovery);
+        if (recovery.confirmed !== true)
           return send(400, { error: 'Confirm recovery first' });
         await armControls.recover();
         return send(200, await connectionStatus());
@@ -475,10 +514,15 @@ export async function startPlaygroundHost({
           return send(409, {
             error: 'Wait for the current robot control to finish',
           });
-        await setup.mutate({ session: setup.session }, async () => {
-          await disconnectArm();
-          setup.phase = 'unconfigured';
-        });
+        const input = await readBody(req);
+        await setup.mutate(
+          { session: input.session ?? setup.session },
+          async () => {
+            await disconnectArm();
+            setup.session = randomUUID();
+            setup.phase = 'unconfigured';
+          },
+        );
         return send(200, await connectionStatus());
       }
       if (
@@ -635,13 +679,18 @@ export async function startPlaygroundHost({
           return send(405, { error: 'Method not allowed' });
         const input = await readBody(req, 16384);
         const batch = devices.batch;
-        if (input.action === 'read') return send(200, batch.read());
+        const current = batch.read();
+        const otherCamera = current && current.cameraId !== input.cameraId;
+        if (input.action === 'read')
+          return send(200, otherCamera ? null : current);
         if (input.action === 'plan')
           return send(200, await batch.plan(input.cameraId));
         if (input.action === 'screens')
           return send(200, await batch.screens(input.cameraId));
         if (input.action === 'start')
           return send(200, await batch.start(input));
+        if (otherCamera && input.action !== 'delete-calibration')
+          return send(409, { error: 'Batch belongs to a different camera' });
         if (input.action === 'clear') {
           await batch.clear();
           return send(200, {});
@@ -652,19 +701,6 @@ export async function startPlaygroundHost({
               input.calibrationProfileId,
             );
           });
-          return send(200, {});
-        }
-        if (input.action === 'prepare-mapping') {
-          const row = batch
-            .read()
-            ?.items.find(
-              (row) => row.screenProfileId === input.binding?.screenProfileId,
-            );
-          if (!row)
-            return send(409, { error: 'Select the batch screen first.' });
-          await (await devices.ensureHost(row.deviceId)).alignForBatch(
-            AbortSignal.timeout(90000),
-          );
           return send(200, {});
         }
         return send(
@@ -700,46 +736,94 @@ export async function startPlaygroundHost({
         const id = decodeURIComponent(calibrationRoute[1]);
         const action = calibrationRoute[2];
         if (action === 'open' && req.method === 'POST') {
-          await devices.ensureHost(id);
+          const registry = devices;
+          const host = await registry.ensureHost(id);
+          const preview = [...markerPreviews.values()].find(
+            (p) => p.cameraId === host.cameraId,
+          );
+          const pairing = preview?.activePairing;
+          if (preview?.lastPairing && !preview.lastPairing.handoffToken) {
+            const { newToken, savedToken } = preview.lastPairing;
+            const target = registry.markerCalibration.previewTarget(
+              host.cameraId,
+              [newToken, ...(savedToken ? [savedToken] : [])].map(
+                phoneFingerprint,
+              ),
+            );
+            if (!target && id === host.cameraId)
+              return send(200, { phase: 'prepared', pairingConflict: true });
+            if (target === id) {
+              if (!pairing)
+                return send(200, {
+                  phase: 'prepared',
+                  awaitingPreview:
+                    Date.now() - preview.lastViewed < 5 * 60_000 &&
+                    host.service.phoneStatus().state !== 'connected',
+                });
+              const token = await registry.markerCalibration.adoptPreview(
+                host.cameraId,
+                id,
+                pairing,
+              );
+              if (
+                token &&
+                devices === registry &&
+                preview.activePairing === pairing
+              )
+                pairing.handoffToken = token;
+            }
+          }
+          await registry.markerCalibration.resumeBoundPage(host);
           return send(200, { phase: 'prepared' });
         }
         if (action === 'cancel' && req.method === 'POST') {
-          await devices.cancelCalibration(id);
+          const { attemptId } = await readBody(req);
+          if (typeof attemptId !== 'string' || !attemptId)
+            return send(400, { error: 'Calibration attempt ID is required' });
+          await devices.cancelCalibration(id, attemptId);
           return send(200, devices.status(id));
         }
         if (req.method === 'POST') devices.assertBatchIdle();
         if (action === 'start' && req.method === 'POST') {
-          const status = await devices.startCalibration(id);
-          // A camera-only page can join the calibrated Device without a second scan.
-          const preview = [...markerPreviews.values()].find(
-            (p) => p.cameraId === id,
-          );
-          if (preview) {
-            const session = devices.entries.get(id)?.calibration;
-            await session?.ready;
-            if (
-              session?.phase === 'running' &&
-              session.host?.service.phoneStatus().state === 'waiting'
-            )
-              preview.handoffToken = session.token;
-          }
-          return send(200, status);
+          return send(200, await devices.startCalibration(id));
         }
         if (action === 'status' && req.method === 'GET')
           return send(200, devices.status(id));
         const session = devices.entries.get(id)?.calibration;
-        if (req.method === 'POST' && action?.startsWith('assisted-calibration'))
-          devices.assertCalibrationRunning(id);
         const host =
           action === 'camera/validity' && req.method === 'GET'
-            ? await devices.ensureHost(id)
+            ? await devices.ensureHost(id, true)
             : (devices.entries.get(id)?.host ?? session?.host);
         if (!host)
           return send(409, {
             error: 'Calibration is not ready',
             phase: session?.phase,
           });
-        if (await host.handle(req, res)) return;
+        const registry = devices;
+        if (
+          await host.handle(req, res, () => {
+            if (registry !== devices || registry.entries.get(id)?.host !== host)
+              throw new RobotArmError(
+                'STALE_CONTEXT',
+                'Device connection changed',
+                409,
+              );
+            registry.assertBatchIdle();
+            if (
+              ![
+                'assisted-calibration/setup',
+                'assisted-calibration/setup/mapping',
+              ].includes(action ?? '')
+            ) {
+              const attemptId = req.headers['x-calibration-attempt'];
+              registry.assertCalibrationRunning(
+                id,
+                typeof attemptId === 'string' ? attemptId : '',
+              );
+            }
+          })
+        )
+          return;
       }
       if (url.pathname === '/api/cameras/markers') {
         const id = url.searchParams.get('id');
@@ -757,7 +841,7 @@ export async function startPlaygroundHost({
               error: 'Only camera-level markers are supported',
             });
           if (
-            !(await listCameras({ includeBuiltIn: !devices })).some(
+            !(await listCameras({ includeBuiltIn: true })).some(
               (camera) => camera.id === id,
             )
           )
@@ -818,38 +902,74 @@ export async function startPlaygroundHost({
       if (url.pathname === '/api/cameras' && req.method === 'GET') {
         const cameras = await listCameras({
           refresh: url.searchParams.get('refresh') === 'true',
-          includeBuiltIn: !devices,
+          includeBuiltIn: true,
         });
+        const registry = devices;
+        const deviceSession = registry ? setup.session : null;
+        const screens = registry?.screens();
         const entries = await Promise.all(
           cameras.map(async (camera) => {
-            const entry = devices?.entries.get(camera.id);
+            const entry = registry?.entries.get(camera.id);
             // Camera-only mode has no Device, so read the same persisted
             // correction the Device will restore once the arm is connected.
             const stored = entry
               ? undefined
-              : await cameraManager.persistedPerspective(camera.id);
+              : await cameraManager.persistedPerspective(
+                  camera.id,
+                  (await pendingPerspectives.get(camera.id))?.scope,
+                );
             const correction =
               entry?.camera.getCorrection() ?? stored?.correction;
             return {
               ...camera,
+              previewScreenId: registry
+                ? previewScreens.get(camera.id)
+                : undefined,
+              screens: screens?.filter((s) => s.cameraId === camera.id),
               hasCorrection: Boolean(correction),
               correction,
               perspectiveTarget: entry
                 ? entry.camera.getPerspectiveTarget()
                 : stored?.target,
-              error: devices?.cameraErrors.get(camera.id),
+              error: registry?.cameraErrors.get(camera.id),
               stream: entry?.camera.stream.getInfo(),
             };
           }),
         );
         return send(200, {
-          error: devices?.discoveryError,
+          error: registry?.discoveryError,
           cameras: entries,
+          deviceSession,
         });
+      }
+      // A tab keeps the source warm across raw/corrected image swaps. Tying the
+      // owner to the response also releases it on navigation or a crashed tab.
+      if (url.pathname === '/api/cameras/lease' && req.method === 'GET') {
+        const id = url.searchParams.get('id');
+        if (!id) return send(400, { error: 'Camera id is required' });
+        if (devices)
+          return send(409, { error: 'The connected arm owns the camera' });
+        if (req.headers['sec-fetch-site'] === 'cross-site')
+          return send(403, { error: 'Open camera previews in Playground' });
+        const owner = randomUUID();
+        await cameraManager.acquire(id, owner);
+        try {
+          if (!res.destroyed) {
+            res.writeHead(200, {
+              'Content-Type': 'application/octet-stream',
+              'Cache-Control': 'no-store',
+            });
+            res.flushHeaders();
+            await new Promise<void>((done) => res.once('close', done));
+          }
+        } finally {
+          await cameraManager.release(id, owner);
+        }
+        return;
       }
       if (url.pathname === '/api/cameras/start' && req.method === 'POST') {
         const input = await readBody(req);
-        const cameras = await listCameras();
+        const cameras = await listCameras({ includeBuiltIn: true });
         const camera = cameras.find((entry) => entry.id === input.id);
         if (!camera) return send(404, { error: 'Camera not found' });
         const activeDevices = devices;
@@ -865,73 +985,131 @@ export async function startPlaygroundHost({
             )
             .map((screen) => activeDevices.open(screen.id, true)),
         );
+        if (await pendingPerspectives.get(camera.id))
+          await setup.mutate({ session: setup.session }, () =>
+            restoreMarkerPerspective(activeDevices, camera.id),
+          );
         return send(200, { stream: session.stream.getInfo() });
-      }
-      if (url.pathname === '/api/cameras/lease') {
-        if (req.method === 'POST') {
-          if (devices)
-            return send(409, {
-              error: 'The connected arm owns the camera lease',
-            });
-          const input = await readBody(req);
-          if (typeof input.id !== 'string')
-            return send(400, { error: 'Camera id is required' });
-          const lease = randomUUID();
-          await cameraManager.acquire(input.id, `lease:${lease}`);
-          cameraLeases.set(lease, input.id);
-          return send(200, { lease });
-        }
-        if (req.method === 'DELETE') {
-          const lease = url.searchParams.get('lease');
-          const id = lease ? cameraLeases.get(lease) : undefined;
-          if (lease && id) {
-            cameraLeases.delete(lease);
-            await cameraManager.release(id, `lease:${lease}`);
-          }
-          return send(200, { ok: true });
-        }
-        return send(405, { error: 'Method not allowed' });
       }
       if (
         url.pathname === '/api/cameras/correction' &&
         req.method === 'DELETE'
       ) {
-        if (devices)
-          return send(409, {
-            error: 'Clear the correction through the connected device',
-          });
         const id = url.searchParams.get('id');
         if (!id) return send(400, { error: 'Camera id is required' });
+        if (devices || url.searchParams.has('session')) {
+          setup.assertSession({
+            session: url.searchParams.get('session') ?? '',
+          });
+          const screen = url.searchParams.get('screen') ?? id;
+          if (!devices || devices.entries.get(screen)?.cameraId !== id)
+            return send(409, {
+              error: 'The selected screen is no longer running',
+            });
+          const registry = devices;
+          await setup.mutate(
+            { session: url.searchParams.get('session')! },
+            async () => {
+              await setup.stationary();
+              registry.assertBatchIdle();
+              await (
+                await registry.ensureHost(screen, true)
+              ).clearAppliedCorrection();
+            },
+          );
+          return send(200, { ok: true });
+        }
         if (url.searchParams.has('screen') || url.searchParams.has('all'))
           return send(400, {
             error: 'Only camera-level correction is supported',
           });
-        for (const [token, preview] of markerPreviews) {
-          if (preview.cameraId !== id) continue;
-          preview.close();
-          markerPreviews.delete(token);
-        }
-        await clearStandaloneCorrection(cameraManager, id);
+        await setup.mutate({ session: setup.session }, async () => {
+          for (const [token, preview] of markerPreviews) {
+            if (preview.cameraId !== id) continue;
+            preview.close();
+            markerPreviews.delete(token);
+          }
+          const pending = await pendingPerspectives.get(id);
+          if (pending) await pendingPerspectives.clear(id, pending);
+          else await clearStandaloneCorrection(cameraManager, id);
+        });
         return send(200, { ok: true });
       }
       if (url.pathname === '/api/cameras/correction' && req.method === 'POST') {
-        if (devices)
-          return send(409, {
-            error: 'Save the correction through the connected device',
-          });
         const input = await readBody(req, 65536);
         if (typeof input.id !== 'string' || !input.correction)
           return send(400, { error: 'Camera id and correction are required' });
+        if (devices || input.session !== undefined) {
+          setup.assertSession(input);
+          if (input.evidence !== undefined)
+            return send(409, {
+              error: 'Reopen the marker capture for the connected screen.',
+            });
+          const screen = input.screen ?? input.id;
+          if (!devices || devices.entries.get(screen)?.cameraId !== input.id)
+            return send(409, {
+              error: 'The selected screen is no longer running',
+            });
+          const registry = devices;
+          const mappingError = await setup.mutate(input, async () => {
+            await setup.stationary();
+            registry.assertBatchIdle();
+            const host = await registry.ensureHost(screen, true);
+            return host.applyMarkerCorrection(
+              input.correction,
+              false,
+              input.perspectiveTarget,
+            );
+          });
+          return send(200, { ok: true, mappingError });
+        }
         if (input.screen !== undefined)
           return send(400, {
             error: 'Only camera-level correction is supported',
           });
-        await saveStandaloneCorrection(
-          cameraManager,
-          input.id,
-          input.correction,
-          input.perspectiveTarget,
-        );
+        const evidence = input.evidence;
+        const check = () => {
+          if (evidence === undefined) return;
+          const preview = markerPreviews.get(evidence?.token);
+          if (!preview || preview.cameraId !== input.id)
+            throw Object.assign(
+              new Error(
+                'The marker capture belongs to another camera or has expired.',
+              ),
+              { status: 409 },
+            );
+          preview.assertCaptured(evidence.pageKey);
+        };
+        await setup.mutate({ session: setup.session }, async () => {
+          check();
+          const pairing = markerPreviews.get(evidence?.token)?.activePairing;
+          const phones = pairing
+            ? [
+                pairing.newToken,
+                ...(pairing.savedToken ? [pairing.savedToken] : []),
+              ].map(phoneFingerprint)
+            : (await pendingPerspectives.get(input.id))?.phones;
+          if (phones) {
+            if (!input.perspectiveTarget)
+              throw Object.assign(
+                new Error('A marker perspective requires an output size.'),
+                { status: 400 },
+              );
+            await pendingPerspectives.save(
+              input.id,
+              input.correction,
+              input.perspectiveTarget,
+              phones,
+              check,
+            );
+          } else
+            await saveStandaloneCorrection(
+              cameraManager,
+              input.id,
+              input.correction,
+              input.perspectiveTarget,
+            );
+        });
         return send(200, { ok: true });
       }
       if (url.pathname === '/api/cameras/stop' && req.method === 'POST') {
@@ -953,7 +1131,15 @@ export async function startPlaygroundHost({
             });
           if (req.headers['sec-fetch-site'] === 'cross-site')
             return send(403, { error: 'Open camera previews in Playground' });
-          await streamStandalonePreview(res, cameraManager, id, view);
+          await streamStandalonePreview(
+            res,
+            cameraManager,
+            id,
+            view,
+            view === 'corrected'
+              ? (await pendingPerspectives.get(id))?.scope
+              : undefined,
+          );
           return;
         }
         const entry = devices?.entries.get(id);
@@ -962,15 +1148,29 @@ export async function startPlaygroundHost({
         return;
       }
       if (url.pathname === '/api/cameras/frame' && req.method === 'GET') {
-        const stream = devices?.entries.get(url.searchParams.get('id') ?? '')
-          ?.camera.stream;
-        if (!stream) return send(404, { error: 'Camera is not running' });
-        const frame = await stream.getFrame();
+        const id = url.searchParams.get('id');
+        if (!id) return send(400, { error: 'Camera id is required' });
+        let jpeg: Buffer;
+        if (devices) {
+          const entry = devices.entries.get(id);
+          if (!entry) return send(404, { error: 'Camera is not running' });
+          jpeg = await entry.camera.rawFrame();
+        } else {
+          if (req.headers['sec-fetch-site'] === 'cross-site')
+            return send(403, { error: 'Open camera previews in Playground' });
+          const owner = randomUUID();
+          const camera = await cameraManager.acquire(id, owner);
+          try {
+            jpeg = await camera.rawFrame();
+          } finally {
+            await cameraManager.release(id, owner);
+          }
+        }
         res.writeHead(200, {
           'Content-Type': 'image/jpeg',
           'Cache-Control': 'no-store',
         });
-        return res.end(frame.jpeg);
+        return res.end(jpeg);
       }
       if (req.method === 'GET' && !url.pathname.startsWith('/api/')) {
         const root = resolve(webRoot);
@@ -1066,7 +1266,6 @@ export async function startPlaygroundHost({
         await disconnectArm();
         for (const preview of markerPreviews.values()) preview.close();
         markerPreviews.clear();
-        cameraLeases.clear();
         await cameraManager.close();
         await drained;
       })();

@@ -13,18 +13,19 @@ export async function checkDeviceCalibration(
   );
   const data = await response.json();
   if (!response.ok) {
-    if (
-      [
-        'CALIBRATION_REQUIRED',
-        'MAPPING_REQUIRED',
-        'EXECUTION_CONTEXT_CHANGED',
-        'VISION_BINDING_CHANGED',
-      ].includes(data.code)
-    )
-      return 'required';
+    if (requiresCalibration(data.code)) return 'required';
     throw new Error(data.error || 'Unable to check device calibration');
   }
   if (!data.calibration || !data.screen)
     throw new Error('Invalid device configuration');
   return 'ready';
+}
+
+export function requiresCalibration(code: string) {
+  return [
+    'CALIBRATION_REQUIRED',
+    'MAPPING_REQUIRED',
+    'EXECUTION_CONTEXT_CHANGED',
+    'VISION_BINDING_CHANGED',
+  ].includes(code);
 }

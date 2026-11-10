@@ -29,6 +29,7 @@ import { recognizeScreenMarkers } from '@midscene/arm-kit/internal/camera/calibr
 import { MarkerCalibrationDetector } from '@midscene/arm-kit/internal/camera/screen-marker-detector';
 import { controllerRuntime } from '@midscene/arm-kit/internal/controller-runtime';
 import type { PlaygroundDevices } from './devices.js';
+import { phoneFingerprint } from './preview-perspectives.js';
 
 type SavedPage = {
   id: string;
@@ -239,6 +240,7 @@ class ScreenPage {
         JSON.stringify({
           pageId,
           pageKey: this.saved.pageKey,
+          label: this.label(),
           markers: phoneMarkerElements(codes),
         }),
       );
@@ -319,6 +321,92 @@ export class ScreenCalibration {
       await this.page(page);
       entry.host.phoneSocket.renew();
     }
+  }
+  /** A returning phone keeps its exact screen. A new phone can only take an unclaimed default. */
+  previewTarget(cameraId: string, phones: string[]) {
+    const profiles = this.store.list();
+    const pages = profiles.screenPages ?? [];
+    const known = pages.find((p) => phones.includes(phoneFingerprint(p.token)));
+    if (known?.cameraId && known.cameraId !== cameraId) return undefined;
+    const savedScreen =
+      known &&
+      profiles.screenTargets?.find(
+        (s) => !s.archived && s.pageKey === known.pageKey,
+      );
+    if (savedScreen && known?.targetId && savedScreen.id !== known.targetId)
+      return undefined;
+    const id = known?.targetId ?? savedScreen?.id ?? cameraId;
+    if (!known && this.store.deviceBinding(id)) return undefined;
+    const target = this.devices
+      .screens()
+      .find((s) => s.id === id && s.cameraId === cameraId);
+    const key = profiles.screenTargets?.find((s) => s.id === id)?.pageKey;
+    const owner = pages.find(
+      (p) => p.targetId === id || (key && p.pageKey === key),
+    );
+    return target &&
+      (!owner || owner === known) &&
+      (!key || key === known?.pageKey)
+      ? id
+      : undefined;
+  }
+  /** Opening a saved screen reconnects its own phone after a service restart. */
+  resumeBoundPage(host: CalibrationHost) {
+    return this.serialize(async () => {
+      const profiles = this.store.list();
+      const target = profiles.screenTargets?.find(
+        (t) =>
+          !t.archived && t.id === host.deviceId && t.cameraId === host.cameraId,
+      );
+      if (!target?.pageKey) return;
+      const saved = profiles.screenPages?.find(
+        (p) =>
+          p.targetId === target.id &&
+          p.cameraId === target.cameraId &&
+          p.pageKey === target.pageKey,
+      );
+      if (!saved) return;
+      const page = await this.page(saved);
+      if (page.host || page.mode !== 'waiting' || host.service.status()) return;
+      host.service.resumePhonePage();
+      page.assign(host, 'mapping');
+    });
+  }
+  adoptPreview(
+    cameraId: string,
+    screenId: string,
+    identity: { savedToken?: string; newToken: string },
+  ) {
+    return this.serialize(async () => {
+      await this.adoptExistingPages();
+      const tokens = [
+        identity.newToken,
+        ...(identity.savedToken ? [identity.savedToken] : []),
+      ];
+      if (
+        this.previewTarget(cameraId, tokens.map(phoneFingerprint)) !== screenId
+      )
+        return undefined;
+      const target = this.screen(screenId);
+      const known = this.store
+        .list()
+        .screenPages?.find((p) => tokens.includes(p.token));
+      const record = {
+        id: known?.id ?? randomUUID(),
+        pageKey: known?.pageKey ?? randomUUID(),
+        token: known?.token ?? identity.newToken,
+        name: known?.name ?? target.name,
+        cameraId,
+        targetId: target.id,
+      };
+      const host = await this.devices.ensureHost(target.id);
+      this.assertPageIdle(known ? await this.page(known) : undefined, host);
+      await this.persistPage(record);
+      const page = await this.page(record);
+      Object.assign(page.saved, record);
+      await this.connectPage(page);
+      return record.token;
+    });
   }
   private pairing(cameraId: string) {
     if (!this.devices.screens().some((screen) => screen.cameraId === cameraId))
@@ -534,7 +622,7 @@ export class ScreenCalibration {
       return;
     page.assign(host, 'mapping');
   }
-  private assertPageIdle(page: ScreenPage, host = page.host) {
+  private assertPageIdle(page?: ScreenPage, host = page?.host) {
     const stage = host?.service.status()?.stage;
     if (
       stage &&
@@ -648,16 +736,7 @@ export class ScreenCalibration {
       await this.store.saveScreenTarget(target);
     const saved = this.store.list().screenTargets?.find((t) => t.id === id)!;
     if (saved.markerSlot === undefined) {
-      const used = new Set(
-        this.store
-          .list()
-          .screenTargets?.filter(
-            (t) => !t.archived && t.cameraId === target.cameraId,
-          )
-          .flatMap((t) => (t.markerSlot === undefined ? [] : [t.markerSlot])),
-      );
-      let slot = 0;
-      while (used.has(slot)) slot++;
+      const slot = this.devices.markerSlot(id);
       if (slot >= MAX_MARKER_CALIBRATION_TARGETS)
         throw new RobotArmError(
           'INVALID_ARGUMENT',
@@ -679,13 +758,7 @@ export class ScreenCalibration {
           pageKey: saved.pageKey,
         });
       }
-      /*
-       * A service start returns every paired page to its home view. The screen
-       * binding and the token survive, but the page does not stay on markers or
-       * page mapping from the previous run: the operator re-connects it (full
-       * screen first) and the camera mapping runs again from the top.
-       */
-      page.assign(undefined, 'waiting');
+      // Pages start at home. Opening their saved screen restores the mapping role.
     }
     return page;
   }
@@ -733,7 +806,11 @@ export class ScreenCalibration {
   private snapshot(session: MarkerSession): MarkerCalibrationCreateResult {
     for (const target of session.targets) {
       const page = [...this.pages.values()].find(
-        (p) => p.saved.targetId === target.id && p.mode === 'markers',
+        (p) =>
+          p.saved.targetId === target.id &&
+          p.mode === 'markers' &&
+          this.displays.get(p.targetDisplayId ?? '')?.visionSessionId ===
+            session.id,
       );
       const info = page?.summary();
       if (!['detecting', 'succeeded', 'failed'].includes(target.state))
@@ -1193,12 +1270,11 @@ export class ScreenCalibration {
             409,
           );
       }
-    for (const target of targets) {
-      const host = await this.devices.ensureHost(target.id);
-      const before = session.observations.get(target.id);
-      const current = host.service.markerObservation(
-        session.requests.get(target.id)!,
-      );
+    const assertObservation = (id: string) => {
+      const before = session.observations.get(id);
+      const current = this.devices.entries
+        .get(id)
+        ?.host?.service.markerObservation(session.requests.get(id)!);
       if (
         !before ||
         !current ||
@@ -1210,7 +1286,8 @@ export class ScreenCalibration {
           'The screen page changed before applying. Detect again.',
           409,
         );
-    }
+    };
+    for (const target of targets) assertObservation(target.id);
     const root = await (
       await this.devices.ensureHost(session.cameraId)
     ).configuration();
@@ -1237,9 +1314,10 @@ export class ScreenCalibration {
         );
       }
     }
+    for (const target of targets) assertObservation(target.id);
     for (const target of targets) {
       const host = await this.devices.ensureHost(target.id);
-      if (target.id !== session.cameraId || !host.service.setup().prepared) {
+      if (!host.service.setup().prepared) {
         if (root.measuredSetup)
           await host.configure({
             tool: root.measuredSetup.tool,
@@ -1253,6 +1331,7 @@ export class ScreenCalibration {
           width: target.result!.screenWidthPx,
           height: target.result!.screenHeightPx,
         },
+        () => assertObservation(target.id),
       );
       session.applied.set(target.id, mappingError);
       host.service.finishMarkerDisplay(session.requests.get(target.id)!, true);
@@ -1279,16 +1358,17 @@ export class ScreenCalibration {
     keepBinding?: boolean;
     targets?: { id: string; token: string }[];
   }) {
-    if (input.action === 'list') {
-      await this.adoptExistingPages();
-      for (const saved of this.store.list().screenPages ?? [])
-        await this.page(saved);
-      return {
-        ...this.publicInfo(),
-        devices: [...this.pages.values()].map((p) => p.summary()),
-        pairing: input.cameraId ? this.pairing(input.cameraId) : undefined,
-      };
-    }
+    if (input.action === 'list')
+      return this.serialize(async () => {
+        await this.adoptExistingPages();
+        for (const saved of this.store.list().screenPages ?? [])
+          await this.page(saved);
+        return {
+          ...this.publicInfo(),
+          devices: [...this.pages.values()].map((p) => p.summary()),
+          pairing: input.cameraId ? this.pairing(input.cameraId) : undefined,
+        };
+      });
     if (input.action === 'displays') return [...this.displays.values()];
     return this.serialize(() => this.updatePage(input));
   }
@@ -1531,6 +1611,12 @@ export class ScreenCalibration {
     )
       return;
     const target = this.screen(display.visionTargetId);
+    if (page.saved.targetId && page.saved.targetId !== target.id)
+      throw new RobotArmError(
+        'PAGE_ALREADY_BOUND',
+        'This page belongs to another screen. Release it before pairing it here.',
+        409,
+      );
     const pageKey = this.store
       .list()
       .screenTargets?.find((screen) => screen.id === target.id)?.pageKey;
@@ -1696,7 +1782,7 @@ export class ScreenCalibration {
         ? session.targets.filter((t) => t.id === display.visionTargetId)
         : session.targets.filter((t) => ticket!.targetIds.includes(t.id));
       let target = allowed.find((t) => t.id === saved!.targetId);
-      if (!target)
+      if (!target && !saved.targetId)
         target = allowed.find(
           (t) =>
             !this.store

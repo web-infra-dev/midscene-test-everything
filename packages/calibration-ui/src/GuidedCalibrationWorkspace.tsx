@@ -19,7 +19,7 @@ import {
   Select,
   Space,
   Spin,
-  Steps,
+  Tabs,
   Typography,
 } from 'antd';
 import {
@@ -52,6 +52,8 @@ import { ExplorationProgress } from './components/robot-arm/ExplorationProgress'
 import { InstallationTeaching } from './components/robot-arm/InstallationTeaching';
 import { PhoneConnectDialog } from './components/robot-arm/PhoneConnectDialog';
 import { ScreenOutlines } from './components/robot-arm/ScreenOutlines';
+import { SetupIllustration } from './components/robot-arm/SetupIllustration';
+import { TeachingDiagram } from './components/robot-arm/TeachingDiagram';
 import { WebCalibrationWorkspace } from './components/robot-arm/WebCalibrationWorkspace';
 import { useAssistedCalibration } from './hooks/useAssistedCalibration';
 import { useCameraPhoneReadiness } from './hooks/useCameraPhoneReadiness';
@@ -64,6 +66,7 @@ import {
   markerRequest,
 } from './marker-client';
 import { TeachingClient } from './teaching-client';
+import { isRequiredPhonePage } from './utils/phone-readiness';
 import './styles.less';
 import './standalone/page.less';
 import './migrated-calibration.less';
@@ -78,13 +81,26 @@ interface BoundScreen {
   correction?: CameraCorrection;
 }
 
+interface SingleStatus {
+  phase: string;
+  attemptId?: string;
+  error?: string;
+}
+
 /** The original camera → teaching → calibration flow inside the host's wizard. */
 export function GuidedCalibrationWorkspace({
   id,
   cameraId,
   onClose,
+  onScreenChange,
   initialStep = 0,
-}: { id: string; cameraId: string; onClose(): void; initialStep?: 0 | 1 }) {
+}: {
+  id: string;
+  cameraId: string;
+  onClose(screenId?: string): void;
+  onScreenChange?(id: string): void;
+  initialStep?: 0 | 1;
+}) {
   return (
     <ConfigProvider theme={armUiTheme}>
       <App className="guided-calibration-root">
@@ -93,6 +109,7 @@ export function GuidedCalibrationWorkspace({
             id={id}
             cameraId={cameraId}
             onClose={onClose}
+            onScreenChange={onScreenChange}
             initialStep={initialStep}
           />
         </CalibrationLanguageProvider>
@@ -104,19 +121,30 @@ function GuidedContent({
   id,
   cameraId,
   onClose,
+  onScreenChange,
   initialStep,
-}: { id: string; cameraId: string; onClose(): void; initialStep: 0 | 1 }) {
+}: {
+  id: string;
+  cameraId: string;
+  onClose(screenId?: string): void;
+  onScreenChange?(id: string): void;
+  initialStep: 0 | 1;
+}) {
   useLanguage();
   const { message } = App.useApp();
   const [selectedId, setSelectedId] = useState(id);
   const [step, setStep] = useState<number>(initialStep);
   const initialStepPending = useRef(true);
-  const [config, setConfig] = useState<Configuration>();
+  const [loadedConfig, setConfig] = useState<Configuration>();
+  const config =
+    loadedConfig?.deviceId === selectedId ? loadedConfig : undefined;
   const [screens, setScreens] = useState<BoundScreen[]>([]);
   const [states, setStates] = useState<WorkstationScreenState[]>([]);
   const [error, setError] = useState<string>();
   const [loadError, setLoadError] = useState<string>();
   const [closing, setClosing] = useState(false);
+  const [illustrationContainer, setIllustrationContainer] =
+    useState<HTMLDivElement | null>(null);
   const [footer, setFooter] = useState<HTMLDivElement | null>(null);
   const [phonesOpen, setPhonesOpen] = useState(false);
   const [markerOpen, setMarkerOpen] = useState(initialStep === 1);
@@ -125,9 +153,9 @@ function GuidedContent({
   const [retryId, setRetryId] = useState<string>();
   const [markerSession, setMarkerSession] =
     useState<MarkerCalibrationCreateResult>();
-  /** The session credential, kept outside state so detection can apply. */
-  const markerToken = useRef<string>();
-  const [review, setReview] = useState<MarkerCalibrationDetectionResponse>();
+  const [review, setReview] = useState<
+    MarkerCalibrationDetectionResponse & { token: string }
+  >();
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewing, setReviewing] = useState<{
     target: MarkerCalibrationTarget;
@@ -135,10 +163,22 @@ function GuidedContent({
   }>();
   const [applying, setApplying] = useState(false);
   const [batch, setBatch] = useState<CalibrationBatchState | null>();
-  const [batchActive, setBatchActive] = useState(false);
-  const [singleActive, setSingleActive] = useState(false);
-  const [singleQueued, setSingleQueued] = useState(false);
-  const singlePending = useRef(false);
+  const batchActive = Boolean(
+    batch && ['running', 'waiting', 'stopping'].includes(batch.status),
+  );
+  const [single, setSingle] = useState<SingleStatus & { screenId: string }>();
+  const lease = single?.screenId === selectedId ? single : undefined;
+  const singleActive =
+    lease?.phase === 'running' || lease?.phase === 'completed';
+  const singleQueued =
+    lease?.phase === 'starting' ||
+    lease?.phase === 'queued' ||
+    lease?.phase === 'cancelling';
+  const singleBusy = singleQueued || lease?.phase === 'running';
+  const [checkedScreen, setCheckedScreen] = useState<string>();
+  const autoOpened = useRef<string>();
+  const startingSingle = useRef<Promise<SingleStatus>>();
+  const cancellingSingle = useRef(false);
   const batchPanel = useRef<CalibrationBatchPanelHandle>(null);
   const batchClient = useMemo(() => new BatchClient(cameraId), [cameraId]);
   const markerClient = useMemo(
@@ -148,10 +188,16 @@ function GuidedContent({
   const pageClient = useMemo(() => new ScreenCalibClient(cameraId), [cameraId]);
   const base = `/api/devices/${encodeURIComponent(selectedId)}/calibration`;
   const client = useMemo(
-    () => createCalibrationClient({ baseUrl: base }),
-    [base],
+    () =>
+      createCalibrationClient({ baseUrl: base, attemptId: lease?.attemptId }),
+    [base, lease?.attemptId],
   );
-  const controller = useAssistedCalibration(client, selectedId, !batchActive);
+  const controller = useAssistedCalibration(
+    client,
+    JSON.stringify([selectedId, lease?.attemptId]),
+    // The events endpoint exists only after /open has prepared this screen.
+    !batchActive && config?.deviceId === selectedId,
+  );
   const teaching = useMemo(
     () =>
       config?.input
@@ -185,7 +231,7 @@ function GuidedContent({
     [
       cameraId,
       config?.camera.name,
-      savedScreens.map((s) => `${s.id}:${s.name}`).join('|'),
+      savedScreens.map((s) => `${s.id}:${s.name}:${s.pageKey}`).join('|'),
     ],
   );
   const phoneReadiness = useCameraPhoneReadiness({
@@ -199,31 +245,45 @@ function GuidedContent({
       s.cameraId === cameraId &&
       (s.hasCorrection || s.markerSlot !== undefined),
   );
-  /*
-   * The page reports its viewport only in fullscreen, so the camera mapping —
-   * and the marker pass it depends on — waits for the operator to open the
-   * page full screen. The selected screen's own page decides, with the first
-   * page of the camera as the fallback for a page that is only page-key bound.
-   */
-  const cameraPages = (phoneReadiness.connection?.devices ?? []).filter(
-    (device) => device.visible && device.cameraId === cameraId,
+  const selected = screens.find((s) => s.id === selectedId);
+  const phonePage = phoneReadiness.connection?.devices.find(
+    (page) =>
+      selected &&
+      page.visible &&
+      page.mode !== 'waiting' &&
+      isRequiredPhonePage(page, cameraId, [selected]),
   );
-  const phonePage =
-    cameraPages.find((device) => device.screenId === selectedId) ??
-    cameraPages[0];
+  const phoneConnected = Boolean(phonePage);
   const phoneFullscreen = Boolean(phonePage?.fullscreen);
-  const savedIds = knownScreens
-    .map((s) => `${s.id}:${s.name}:${s.pageKey}`)
-    .join('|');
-  const existing = useMemo(
-    () =>
-      knownScreens.map((s) => ({ id: s.id, name: s.name, pageKey: s.pageKey })),
-    [savedIds],
-  );
+  const existing = selected
+    ? [{ id: selected.id, name: selected.name, pageKey: selected.pageKey }]
+    : undefined;
+  const selectScreen = useCallback((next: string) => {
+    setCheckedScreen(undefined);
+    autoOpened.current = undefined;
+    setSelectedId(next);
+    setSingle(undefined);
+    setReview(undefined);
+    setReviewOpen(false);
+    setReviewing(undefined);
+    setRetryId(undefined);
+    setMarkerSession(undefined);
+    setMarkerOpen(false);
+    setPerspectiveEditor(false);
+    setApplying(false);
+    setError(undefined);
+  }, []);
+  const refreshSequence = useRef(0);
   const currentBase = useRef(base);
   currentBase.current = base;
   const refresh = useCallback(
     async (signal = AbortSignal.timeout(15000)) => {
+      if (currentBase.current !== base || signal.aborted) return;
+      const sequence = ++refreshSequence.current;
+      const stale = () =>
+        signal.aborted ||
+        currentBase.current !== base ||
+        sequence !== refreshSequence.current;
       const [next, listed] = await Promise.all([
         markerRequest<Configuration>(
           `${base}/configuration`,
@@ -236,7 +296,7 @@ function GuidedContent({
           signal,
         ),
       ]);
-      if (signal.aborted || currentBase.current !== base) return;
+      if (stale()) return;
       setConfig(next);
       setScreens(listed.screens);
       /*
@@ -251,15 +311,16 @@ function GuidedContent({
         ? undefined
         : (selectable.find((screen) => screen.id === cameraId) ??
           selectable[0]);
-      if (fallback) setSelectedId(fallback.id);
+      if (fallback) selectScreen(fallback.id);
       else if (initialStepPending.current) {
         initialStepPending.current = false;
-        if (!next.input) {
+        if (!next.input && initialStep !== 1) {
           setStep(0);
           setMarkerOpen(false);
         } else if (
           initialStep === 1 ||
           !next.correction ||
+          next.mappingReady === false ||
           next.perspectiveValidity?.state === 'invalid'
         ) {
           setStep(1);
@@ -269,27 +330,35 @@ function GuidedContent({
       }
       const [running, status] = await Promise.allSettled([
         batchClient.calibrationBatch(signal),
-        markerRequest<{ phase: string; error?: string }>(
-          `${base}/status`,
-          undefined,
-          signal,
-        ),
+        markerRequest<SingleStatus>(`${base}/status`, undefined, signal),
       ]);
-      if (signal.aborted || currentBase.current !== base) return;
+      if (stale()) return;
       if (running.status === 'fulfilled') setBatch(running.value);
       const singleStatus =
         status.status === 'fulfilled' ? status.value : undefined;
-      if (
-        singlePending.current &&
-        singleStatus &&
-        singleStatus.phase !== 'queued'
-      ) {
-        singlePending.current = false;
-        setSingleQueued(false);
-        if (['running', 'completed'].includes(singleStatus.phase))
-          setSingleActive(true);
-        else setError(singleStatus.error ?? t('Calibration cancelled'));
-      }
+      if (!singleStatus || startingSingle.current || cancellingSingle.current)
+        return;
+      setCheckedScreen(running.status === 'fulfilled' ? selectedId : undefined);
+      const inBatch =
+        running.status === 'fulfilled' &&
+        running.value &&
+        ['running', 'waiting', 'stopping'].includes(running.value.status);
+      const busy =
+        !inBatch &&
+        ['queued', 'running', 'cancelling'].includes(singleStatus.phase);
+      setSingle((previous) =>
+        busy ||
+        (!inBatch &&
+          singleStatus.phase === 'completed' &&
+          previous?.screenId === selectedId &&
+          previous.attemptId === singleStatus.attemptId)
+          ? { ...singleStatus, screenId: selectedId }
+          : undefined,
+      );
+      if (busy || inBatch) setStep(3);
+      else if (next.mappingReady === false)
+        setStep((current) => (current === 3 ? 1 : current));
+      if (singleStatus.phase === 'error') setError(singleStatus.error);
     },
     [base, batchClient, cameraId, initialStep, selectedId],
   );
@@ -320,19 +389,24 @@ function GuidedContent({
    */
   const applyCorrection = useCallback(
     async (correction: CameraCorrection) => {
-      await markerRequest(`${base}/camera/correction`, correction);
+      const saved = await markerRequest<Configuration>(
+        `${base}/camera/correction`,
+        correction,
+      );
       // Page mapping needs the saved tool setup; a bench that has not saved it
       // yet keeps the perspective and maps during the tool step.
-      if (config?.input) {
+      if (currentBase.current !== base) return;
+      if (saved.output) {
         try {
-          await client.mapAssistedCalibration();
+          await client.mapAssistedCalibration(saved.output);
         } catch (cause) {
-          setError(cause instanceof Error ? cause.message : String(cause));
+          if (currentBase.current === base)
+            setError(cause instanceof Error ? cause.message : String(cause));
         }
       }
       await refresh();
     },
-    [base, client, config?.input, refresh],
+    [base, client, refresh],
   );
   /**
    * Clearing keeps the screen, its page link and its marker slot; only the
@@ -376,12 +450,21 @@ function GuidedContent({
               selectable.find((screen) => screen.id === cameraId) ??
               selectable[0];
             if (fallback) {
-              setSelectedId(fallback.id);
+              selectScreen(fallback.id);
               return;
             }
           }
-          await markerRequest(`${base}/open`, {}, signal);
-          opened = true;
+          const openedScreen = await markerRequest<{
+            pairingConflict?: boolean;
+            awaitingPreview?: boolean;
+          }>(`${base}/open`, {}, signal);
+          if (openedScreen.pairingConflict && !signal.aborted)
+            setError(
+              t(
+                'The preview phone does not match this screen’s saved binding. Use the bound phone or release the binding first.',
+              ),
+            );
+          opened = !openedScreen.awaitingPreview;
         }
         await refresh(signal);
         if (!abort.signal.aborted) setLoadError(undefined);
@@ -394,9 +477,11 @@ function GuidedContent({
       }
     };
     setConfig(undefined);
+
     setLoadError(undefined);
     void poll();
     return () => {
+      refreshSequence.current++;
       abort.abort();
       clearTimeout(timer);
     };
@@ -432,13 +517,17 @@ function GuidedContent({
   );
   const current = batch?.items[batch.currentIndex];
   const activeId = batchActive && current ? current.deviceId : selectedId;
+  useEffect(() => onScreenChange?.(activeId), [activeId, onScreenChange]);
+  const activeScreen = screens.find((screen) => screen.id === activeId);
+  const activeConfig = config?.deviceId === activeId ? config : undefined;
   const perspective = usePerspectiveValidity(
     `/api/devices/${encodeURIComponent(activeId)}/calibration`,
-    Boolean(config?.correction),
-    config?.correctionKey,
+    Boolean(activeConfig?.correction ?? activeScreen?.correction),
+    activeConfig?.correctionKey ?? JSON.stringify(activeScreen?.correction),
   );
   const outlineBlocked =
-    (perspective.summary ?? config?.perspectiveValidity)?.state === 'invalid';
+    (perspective.summary ?? activeConfig?.perspectiveValidity)?.state ===
+    'invalid';
   /*
    * Every screen with a saved perspective is drawn on the live preview at
    * once; the selected one carries the freshest correction and the verdict.
@@ -459,7 +548,7 @@ function GuidedContent({
       },
     ];
   });
-  const single = useMemo(
+  const progressClient = useMemo(
     () =>
       createCalibrationClient({
         baseUrl: `/api/devices/${encodeURIComponent(activeId)}/calibration`,
@@ -467,14 +556,34 @@ function GuidedContent({
     [activeId],
   );
   const progress = useAssistedCalibration(
-    single,
+    progressClient,
     activeId,
     step === 3 && batchActive,
   );
-  const beforeLeave = useRef<(() => Promise<void>) | null>(null);
-  const registerLeave = useCallback((handler: (() => Promise<void>) | null) => {
-    beforeLeave.current = handler;
-  }, []);
+  const cancelSingle = async () => {
+    autoOpened.current = selectedId;
+    const opening = startingSingle.current;
+    const status = opening ? await opening : lease;
+    if (
+      !status?.attemptId ||
+      !['running', 'queued', 'cancelling'].includes(status.phase)
+    )
+      return;
+    cancellingSingle.current = true;
+    ++refreshSequence.current;
+    setSingle({ ...status, screenId: selectedId, phase: 'cancelling' });
+    try {
+      await markerRequest(
+        `${base}/cancel`,
+        { attemptId: status.attemptId },
+        AbortSignal.timeout(15000),
+      );
+      if (currentBase.current === base) setSingle(undefined);
+    } finally {
+      cancellingSingle.current = false;
+      await refresh();
+    }
+  };
   const close = async () => {
     setClosing(true);
     try {
@@ -483,18 +592,27 @@ function GuidedContent({
           revision: batch.revision,
           action: 'stop',
         });
-      await beforeLeave.current?.();
+      await cancelSingle();
       if (config?.armState?.state.dragMode && teaching)
         await teaching.exitDrag();
-      await markerRequest(`${base}/cancel`, {}, AbortSignal.timeout(15000));
-      onClose();
+      onClose(selectedId);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
       setClosing(false);
     }
   };
   const detected = useCallback(
-    async (_session: unknown, result: MarkerCalibrationDetectionResponse) => {
+    async (
+      _session: unknown,
+      result: MarkerCalibrationDetectionResponse,
+      _targets: string[],
+      token: string,
+    ) => {
+      if (
+        currentBase.current !== base ||
+        !result.session.targets.every((target) => target.id === selectedId)
+      )
+        return;
       setRetryId(undefined);
       const { session } = result;
       /*
@@ -516,13 +634,7 @@ function GuidedContent({
             target.result.reprojectionRmsePx <= 4,
         );
       if (!confident) {
-        setReview(result);
-        setReviewOpen(true);
-        return;
-      }
-      const token = markerToken.current;
-      if (!token) {
-        setReview(result);
+        setReview({ ...result, token });
         setReviewOpen(true);
         return;
       }
@@ -532,24 +644,29 @@ function GuidedContent({
           session.id,
           token,
         );
+        if (currentBase.current !== base) return;
         const failures = Object.values(result.mappingErrors);
         if (failures.length) setError(failures.join('\n'));
         else void message.success(t('Camera mapping applied automatically'));
         await refresh();
+        if (currentBase.current !== base) return;
         setReview(undefined);
         setReviewOpen(false);
         setMarkerOpen(false);
       } catch (cause) {
-        setReview(result);
+        if (currentBase.current !== base) return;
+        setReview({ ...result, token });
         setReviewOpen(true);
         setError(cause instanceof Error ? cause.message : String(cause));
       } finally {
-        setApplying(false);
+        if (currentBase.current === base) setApplying(false);
       }
     },
-    [markerClient, message, refresh],
+    [base, selectedId, markerClient, message, refresh],
   );
-  const markerClosed = useCallback(() => setMarkerOpen(false), []);
+  const markerClosed = useCallback(() => {
+    if (currentBase.current === base) setMarkerOpen(false);
+  }, [base]);
   /**
    * A screen that is connected and bound has its markers on the page already,
    * so the camera step starts the perspective pass by itself: the dialog
@@ -557,7 +674,6 @@ function GuidedContent({
    * Closing the dialog keeps it closed for that screen.
    */
   const autoDetectStarted = useRef<string>();
-  const phoneConnected = cameraPages.some((page) => page.mode !== 'waiting');
   useEffect(() => {
     if (step !== 1 || markerOpen || !config || config.correction) return;
     // Markers are only reported from a fullscreen page; opening the dialog
@@ -574,18 +690,70 @@ function GuidedContent({
     phoneFullscreen,
     selectedId,
   ]);
-  const startSingle = async () => {
-    setSingleQueued(true);
+  const startSingle = useCallback(async () => {
+    if (startingSingle.current) return;
+    const opening = markerRequest<SingleStatus>(`${base}/start`, {});
+    startingSingle.current = opening;
+    ++refreshSequence.current;
+    setSingle({ screenId: selectedId, phase: 'starting' });
     try {
-      await markerRequest(`${base}/start`, {});
-      singlePending.current = true;
+      const status = await opening;
+      if (currentBase.current === base)
+        setSingle({ ...status, screenId: selectedId });
     } catch (error) {
-      singlePending.current = false;
-      setSingleQueued(false);
+      if (currentBase.current === base) setSingle(undefined);
       throw error;
+    } finally {
+      startingSingle.current = undefined;
     }
     await refresh();
-  };
+  }, [base, refresh, selectedId]);
+  const soleScreen =
+    savedScreens.length === 1 && savedScreens[0].id === selectedId;
+  useEffect(() => {
+    if (step !== 3) {
+      autoOpened.current = undefined;
+      return;
+    }
+    if (
+      !soleScreen ||
+      !controller.setup.mapping ||
+      checkedScreen !== selectedId ||
+      batchActive ||
+      closing ||
+      !config?.ready ||
+      outlineBlocked
+    )
+      return;
+    if (lease || autoOpened.current === selectedId) return;
+    autoOpened.current = selectedId;
+    void startSingle().catch((cause) => {
+      if (currentBase.current === base) setError(String(cause));
+    });
+  }, [
+    step,
+    soleScreen,
+    controller.setup.mapping,
+    checkedScreen,
+    selectedId,
+    batchActive,
+    closing,
+    config?.ready,
+    outlineBlocked,
+    lease,
+    startSingle,
+    base,
+  ]);
+  const powerControl = config && !config.ready && (
+    <CalibrationPowerButton
+      key={base}
+      config={config}
+      apply={async (action) => {
+        await markerRequest(`${base}/${action}`, { confirmed: true });
+        await refresh();
+      }}
+    />
+  );
   const titles = [
     'Touch Tool',
     'Camera Mapping',
@@ -594,26 +762,40 @@ function GuidedContent({
   ];
   const canVisit = (next: number) =>
     !batchActive &&
-    !singleActive &&
-    !singleQueued &&
+    !singleBusy &&
     !config?.armState?.state.moving &&
     !config?.armState?.state.dragMode &&
     (next === 0 || Boolean(config?.input)) &&
-    (next < 2 || Boolean(config?.correction)) &&
+    (next < 2 || Boolean(config?.correction && controller.setup.mapping)) &&
     (next < 2 || !outlineBlocked) &&
     (next < 3 || Boolean(controller.setup.teaching));
-  const selected = screens.find((s) => s.id === selectedId);
+
   return (
     <main className="calibration-page is-embedded guided-calibration">
       <header className="calibration-shell-header">
-        <div className="calibration-shell-heading">
-          <div>
-            <Typography.Text type="secondary">
-              {t('Calibration')}
-            </Typography.Text>
-            <Typography.Title level={2}>{t(titles[step])}</Typography.Title>
-          </div>
-          <Space>
+        <div className="guided-toolbar">
+          <h2>{t('Calibration')}</h2>
+          <nav aria-label={t('Calibration')}>
+            <ol className="guided-steps">
+              {titles.map((title, index) => (
+                <li key={title}>
+                  <button
+                    type="button"
+                    aria-current={index === step ? 'step' : undefined}
+                    disabled={!canVisit(index)}
+                    onClick={() => {
+                      setStep(index);
+                      if (index === 1) setMarkerOpen(false);
+                    }}
+                  >
+                    <span aria-hidden="true">{index + 1}</span>
+                    {t(title)}
+                  </button>
+                </li>
+              ))}
+            </ol>
+          </nav>
+          <Space className="guided-toolbar-actions">
             {step > 0 && (
               <Button onClick={() => setPhonesOpen(true)}>
                 {t('View Phone Page')}
@@ -624,29 +806,13 @@ function GuidedContent({
             </Button>
           </Space>
         </div>
-        <Steps
-          size="small"
-          current={step}
-          items={titles.map((title, index) => ({
-            title: t(title),
-            disabled: !canVisit(index),
-          }))}
-          onChange={(next) => {
-            if (canVisit(next)) {
-              setStep(next);
-              // The camera step opens on its checklist; marker detection is an
-              // explicit action from the perspective row.
-              if (next === 1) setMarkerOpen(false);
-            }
-          }}
-        />
       </header>
       <div className="calibration-shell-body">
         <div className="guided-calibration-layout">
           <div className="guided-calibration-flow">
             <PerspectiveObservationCard
               observation={perspective}
-              screenName={screens.find((s) => s.id === activeId)?.name}
+              screenName={activeScreen?.name}
               onRecalibrate={
                 batchActive || singleActive || singleQueued
                   ? undefined
@@ -672,6 +838,7 @@ function GuidedContent({
               <>
                 {step === 0 && (
                   <CalibrationSetup
+                    showIllustration={false}
                     key={`${config.deviceId}:${config.input?.toolProfileId ?? ''}`}
                     capabilities={config.capabilities}
                     initial={config.measuredSetup}
@@ -695,9 +862,9 @@ function GuidedContent({
                       displayName={config.camera.name}
                       autoCreateScreen
                       autoAddTarget={false}
-                      firstScreenCalibration={!savedScreens.length}
+                      key={selectedId}
                       existingScreens={retryId ? undefined : existing}
-                      focusTargetId={retryId}
+                      focusTargetId={retryId ?? selectedId}
                       resumeSession={retryId ? markerSession : undefined}
                       includeSucceededTargets={Boolean(retryId)}
                       keepSessionOnClose
@@ -709,10 +876,7 @@ function GuidedContent({
                       }}
                       onClose={markerClosed}
                       onDetected={detected}
-                      onSessionCreated={(created) => {
-                        markerToken.current = created.token;
-                        setMarkerSession(created);
-                      }}
+                      onSessionCreated={setMarkerSession}
                       existingScreenNames={screens
                         .filter((s) => s.cameraId === cameraId)
                         .map((s) => s.name)}
@@ -821,18 +985,23 @@ function GuidedContent({
                           )}
                         </Space>
                       }
-                      onSelectScreen={setSelectedId}
+                      key={selectedId}
+                      onSelectScreen={selectScreen}
                       onAddScreen={async () => {
                         try {
-                          const created =
-                            await markerClient.createMarkerCalibration(
-                              cameraId,
-                              [
-                                `Screen ${screens.filter((s) => s.cameraId === cameraId).length + 1}`,
-                              ],
-                            );
-                          setMarkerSession(created);
-                          setRetryId(created.targets[0].id);
+                          const names = new Set(
+                            screens
+                              .filter((s) => s.cameraId === cameraId)
+                              .map((s) => s.name.toLowerCase()),
+                          );
+                          let number = names.size + 1;
+                          while (names.has(`screen ${number}`)) number++;
+                          const created = await markerRequest<{ id: string }>(
+                            '/api/screens',
+                            { cameraId, name: `Screen ${number}` },
+                          );
+                          if (currentBase.current !== base) return;
+                          selectScreen(created.id);
                           setMarkerOpen(true);
                         } catch (cause) {
                           setError(
@@ -849,11 +1018,15 @@ function GuidedContent({
                       }}
                       onApply={applyCorrection}
                       onConfirm={async () => {
-                        await client.mapAssistedCalibration();
+                        await controller.map(config.output);
                         await refresh();
                       }}
                       onClear={config.correction ? clearCorrection : undefined}
-                      onContinue={() => setStep(2)}
+                      onContinue={() =>
+                        setStep(
+                          !config.input ? 0 : config.installationTaught ? 3 : 2,
+                        )
+                      }
                       refresh={refresh}
                     />
                   ))}
@@ -865,17 +1038,7 @@ function GuidedContent({
                           {t('Next Step')}
                         </Button>
                       )}
-                      {!config.ready && (
-                        <CalibrationPowerButton
-                          config={config}
-                          apply={async (action) => {
-                            await markerRequest(`${base}/${action}`, {
-                              confirmed: true,
-                            });
-                            await refresh();
-                          }}
-                        />
-                      )}
+                      {powerControl}
                       <Select
                         aria-label={t('Calibration Screen')}
                         value={selectedId}
@@ -888,10 +1051,11 @@ function GuidedContent({
                           config.armState?.state.dragMode ||
                             config.armState?.state.moving,
                         )}
-                        onChange={setSelectedId}
+                        onChange={selectScreen}
                       />
                     </Space>
                     <InstallationTeaching
+                      illustrationContainer={illustrationContainer}
                       api={teaching}
                       binding={teaching.binding}
                       screenName={selected?.name}
@@ -909,42 +1073,99 @@ function GuidedContent({
                 )}
                 {step === 3 && (
                   <>
-                    {singleQueued && (
+                    {!batchActive && !config.ready && (
+                      <Alert
+                        type="warning"
+                        showIcon
+                        message={t(
+                          config.armState?.softwarePaused ||
+                            config.armState?.state.paused
+                            ? 'Resume the robot to continue calibration.'
+                            : config.armState?.recoveryRequired
+                              ? 'Check controller recovery before collecting points.'
+                              : 'Prepare the robot and tool payload before collecting points.',
+                        )}
+                        action={
+                          !(
+                            config.armState?.softwarePaused ||
+                            config.armState?.state.paused
+                          ) && powerControl
+                        }
+                      />
+                    )}
+                    {!batchActive && !soleScreen && (
+                      <Select
+                        aria-label={t('Calibration Screen')}
+                        value={selectedId}
+                        options={savedScreens.map((screen) => ({
+                          value: screen.id,
+                          label: screen.name,
+                        }))}
+                        disabled={
+                          singleBusy ||
+                          closing ||
+                          config.armState?.state.dragMode ||
+                          config.armState?.state.moving
+                        }
+                        style={{ minWidth: 180 }}
+                        onChange={selectScreen}
+                      />
+                    )}
+                    {lease?.phase === 'queued' && (
                       <Alert
                         type="info"
                         showIcon
                         message={t('Waiting for the Controller queue')}
                       />
                     )}
-                    <CalibrationBatchPanel
-                      ref={batchPanel}
-                      api={batchClient}
-                      cameraId={cameraId}
-                      screens={states}
-                      disabled={
-                        !config.ready ||
-                        outlineBlocked ||
-                        controller.busy ||
-                        singleActive ||
-                        singleQueued
-                      }
-                      onActiveChange={setBatchActive}
-                      onChanged={refresh}
-                    />
+                    {(!soleScreen || batchActive) && (
+                      <CalibrationBatchPanel
+                        ref={batchPanel}
+                        api={batchClient}
+                        cameraId={cameraId}
+                        screens={states}
+                        disabled={
+                          !config.ready ||
+                          outlineBlocked ||
+                          controller.busy ||
+                          singleActive ||
+                          singleQueued
+                        }
+                        onChanged={refresh}
+                      />
+                    )}
                     {batchActive && current && (
                       <ActiveBatchScreen controller={progress} />
                     )}
                     {!batchActive && singleActive && (
                       <WebCalibrationWorkspace
+                        key={JSON.stringify([selectedId, lease?.attemptId])}
                         controller={controller}
                         footer={footer}
-                        result={config.result}
+                        result={controller.session?.result}
+                        onConnectPhone={() => setPhonesOpen(true)}
+                        onCheckCamera={() => {
+                          void cancelSingle()
+                            .then(() => {
+                              if (currentBase.current === base) {
+                                setMarkerOpen(false);
+                                setStep(1);
+                              }
+                            })
+                            .catch((cause) => setError(String(cause)));
+                        }}
+                        prepareFromTeaching={lease?.phase === 'running'}
                         readyToCapture={config.ready && !outlineBlocked}
                         readyToStart={config.ready && !outlineBlocked}
                         onActivated={refresh}
                         externalPreview
-                        onBeforeLeaveChange={registerLeave}
-                        onReturn={onClose}
+                        showSessionCancel={false}
+                        onRestart={() =>
+                          void startSingle().catch((cause) =>
+                            setError(String(cause)),
+                          )
+                        }
+                        onReturn={() => onClose(selectedId)}
                       />
                     )}
                     {!batchActive && !singleActive && footer && (
@@ -955,32 +1176,28 @@ function GuidedContent({
                         >
                           {t('Previous Step')}
                         </Button>
-                        {savedScreens.length > 1 ? (
+                        <Button
+                          type="primary"
+                          loading={singleQueued}
+                          disabled={
+                            !config.ready || outlineBlocked || singleQueued
+                          }
+                          onClick={() =>
+                            void startSingle().catch((cause) =>
+                              setError(String(cause)),
+                            )
+                          }
+                        >
+                          {t('Calibrate {0}', [selected?.name ?? selectedId])}
+                        </Button>
+                        {savedScreens.length > 1 && (
                           <Button
-                            type="primary"
-                            disabled={!config.ready || outlineBlocked}
-                            onClick={() => batchPanel.current?.open()}
-                          >
-                            {t('Start automatic calibration')}
-                          </Button>
-                        ) : (
-                          <Button
-                            type="primary"
-                            loading={singleQueued}
                             disabled={
                               !config.ready || outlineBlocked || singleQueued
                             }
-                            onClick={() =>
-                              void startSingle().catch((cause) =>
-                                setError(
-                                  cause instanceof Error
-                                    ? cause.message
-                                    : String(cause),
-                                ),
-                              )
-                            }
+                            onClick={() => batchPanel.current?.open()}
                           >
-                            {t('Start automatic calibration')}
+                            {t('Calibrate multiple screens')}
                           </Button>
                         )}
                       </WizardFooter>
@@ -991,35 +1208,89 @@ function GuidedContent({
             )}
           </div>
           {config && (
-            <aside className="guided-camera" aria-label={t('Live Preview')}>
-              <Typography.Text strong>
-                {t('Live Preview')} · {config.camera.name}
-              </Typography.Text>
-              <div className="guided-preview-frame">
-                <img
-                  className="calibration-preview"
-                  src={`/api/devices/${encodeURIComponent(activeId)}/calibration/camera/preview`}
-                  data-testid="calibration-live-camera"
-                  alt={config.camera.name}
-                />
-                <ScreenOutlines outlines={asideOutlines} />
-              </div>
-              {step === 1 && (
-                <Typography.Text type="secondary">
-                  {t('Keep the entire phone visible in the camera preview.')}
-                </Typography.Text>
-              )}
-              {step === 2 && (
-                <Typography.Text type="secondary">
-                  {t('Check the whole arm directly before recording.')}
-                </Typography.Text>
-              )}
+            <aside className="guided-camera" aria-label={config.camera.name}>
+              <Tabs
+                size="small"
+                defaultActiveKey="camera"
+                tabBarExtraContent={
+                  <Typography.Text
+                    type="secondary"
+                    className="guided-camera-name"
+                    title={config.camera.name}
+                  >
+                    {config.camera.name}
+                  </Typography.Text>
+                }
+                items={[
+                  {
+                    key: 'camera',
+                    label: t('Live Preview'),
+                    forceRender: true,
+                    children: (
+                      <div className="guided-preview-content">
+                        <div className="guided-preview-frame">
+                          <img
+                            className="calibration-preview"
+                            src={`/api/devices/${encodeURIComponent(activeId)}/calibration/camera/preview`}
+                            data-testid="calibration-live-camera"
+                            alt={config.camera.name}
+                          />
+                          <ScreenOutlines outlines={asideOutlines} />
+                        </div>
+                        {step === 1 && (
+                          <Typography.Text type="secondary">
+                            {t(
+                              'Keep the entire phone visible in the camera preview.',
+                            )}
+                          </Typography.Text>
+                        )}
+                        {step === 2 && (
+                          <Typography.Text type="secondary">
+                            {t(
+                              'Check the whole arm directly before recording.',
+                            )}
+                          </Typography.Text>
+                        )}
+                      </div>
+                    ),
+                  },
+                  {
+                    key: 'illustration',
+                    label: t('Setup illustration'),
+                    forceRender: true,
+                    children:
+                      step === 2 && teaching ? (
+                        <div ref={setIllustrationContainer} />
+                      ) : step >= 2 ? (
+                        <TeachingDiagram stage="reference" />
+                      ) : (
+                        <SetupIllustration
+                          step={step === 0 ? 'tool' : 'camera'}
+                        />
+                      ),
+                  },
+                ]}
+              />
             </aside>
           )}
         </div>
       </div>
       <footer className="calibration-shell-footer">
-        <div className="arm-calibration-footer" ref={setFooter} />
+        <div className="arm-calibration-footer" ref={setFooter}>
+          {step === 3 && !batchActive && singleBusy && (
+            <Button
+              type="primary"
+              danger
+              className="robot-cancel-calibration"
+              loading={lease?.phase === 'cancelling'}
+              onClick={() =>
+                void cancelSingle().catch((cause) => setError(String(cause)))
+              }
+            >
+              {t('Cancel Calibration')}
+            </Button>
+          )}
+        </div>
       </footer>
       <PhoneConnectDialog
         open={phonesOpen}
@@ -1063,13 +1334,18 @@ function GuidedContent({
           setMarkerOpen(true);
         }}
         onApply={() => {
-          if (!review || !markerSession) return;
+          if (
+            !review ||
+            !review.session.targets.every((target) => target.id === selectedId)
+          )
+            return;
           setError(undefined);
           setApplying(true);
           void markerClient
-            .applyMarkerCalibration(review.session.id, markerSession.token)
+            .applyMarkerCalibration(review.session.id, review.token)
             .catch((cause) => {
               if (
+                currentBase.current === base &&
                 cause instanceof RobotVisionApiError &&
                 cause.code === 'CALIBRATION_MISMATCH' &&
                 window.confirm(
@@ -1080,23 +1356,29 @@ function GuidedContent({
               )
                 return markerClient.applyMarkerCalibration(
                   review.session.id,
-                  markerSession.token,
+                  review.token,
                   true,
                 );
               throw cause;
             })
             .then(async (result) => {
               await refresh();
+              if (currentBase.current !== base) return;
               const failures = Object.values(result.mappingErrors);
               if (failures.length) setError(failures.join('\n'));
               setReview(undefined);
               setReviewOpen(false);
               setMarkerOpen(false);
             })
-            .catch((cause) =>
-              setError(cause instanceof Error ? cause.message : String(cause)),
-            )
-            .finally(() => setApplying(false));
+            .catch((cause) => {
+              if (currentBase.current === base)
+                setError(
+                  cause instanceof Error ? cause.message : String(cause),
+                );
+            })
+            .finally(() => {
+              if (currentBase.current === base) setApplying(false);
+            });
         }}
       />
       <Modal

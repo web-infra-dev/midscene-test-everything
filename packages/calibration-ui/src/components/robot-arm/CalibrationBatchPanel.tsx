@@ -443,25 +443,6 @@ export const CalibrationBatchPanel = forwardRef<
                   </Button>
                 </>
               )}
-            {['waiting', 'stopped'].includes(batch.status) &&
-              row?.status === 'awaiting-mapping' && (
-                <Button
-                  disabled={working}
-                  onClick={() =>
-                    void perform(async () => {
-                      if (!row.screenProfileId)
-                        throw new Error(t('Select the batch screen first.'));
-                      await api.preparePageMapping({
-                        robotProfileId: batch.robotProfileId!,
-                        toolProfileId: batch.toolProfileId!,
-                        screenProfileId: row.screenProfileId,
-                      });
-                    })
-                  }
-                >
-                  {t('Prepare selected screen mapping')}
-                </Button>
-              )}
             {batch.status === 'waiting' &&
               row?.status === 'awaiting-acceptance' && (
                 <>

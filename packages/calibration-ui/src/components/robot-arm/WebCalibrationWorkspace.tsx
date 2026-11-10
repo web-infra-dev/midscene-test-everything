@@ -1,10 +1,9 @@
 import { Button, Checkbox, Radio, Typography } from 'antd';
-import { type ReactNode, useEffect, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { AssistedCalibrationController } from '../../hooks/useAssistedCalibration';
 import { calibrationErrorText, t, useCalibrationLanguage } from '../../i18n';
 import {
-  type AutomaticExplorationMode,
   type CalibrationProfile,
   calibrationAccepted,
 } from '../../robot-arm-api';
@@ -16,6 +15,7 @@ export function WebCalibrationWorkspace({
   result,
   readyToCapture = true,
   readyToStart = true,
+  prepareFromTeaching = false,
   showSessionCancel = true,
   footer,
   preview,
@@ -24,6 +24,7 @@ export function WebCalibrationWorkspace({
   onActivated,
   onBeforeLeaveChange,
   onReturn,
+  onRestart,
   completionLabel = 'Back to Overview',
   onCheckCamera,
   onConnectPhone,
@@ -33,26 +34,31 @@ export function WebCalibrationWorkspace({
   readyToCapture?: boolean;
   readyToVerify?: boolean;
   readyToStart?: boolean;
+  prepareFromTeaching?: boolean;
   showSessionCancel?: boolean;
   footer: HTMLElement | null;
   preview?: ReactNode;
   externalPreview?: boolean;
   controls?: ReactNode;
   onActivated(): Promise<void>;
-  onBeforeLeaveChange(handler: (() => Promise<void>) | null): void;
+  onBeforeLeaveChange?(handler: (() => Promise<void>) | null): void;
   onReturn?(): void;
+  onRestart?(): void;
   completionLabel?: string;
   onCheckCamera?(): void;
   onConnectPhone?(): void;
 }) {
   useCalibrationLanguage((state) => state.language);
   const { session: s, setup, busy, error } = controller;
-  const [mode, setMode] = useState<AutomaticExplorationMode>('standard');
+  const [mode, setMode] = useState<'slide' | 'standard'>('slide');
   const [confirmed, setConfirmed] = useState(false);
-  const [horizontal, setHorizontal] = useState(false);
   const [saveConfirmed, setSaveConfirmed] = useState(false);
   const [reviewStep, setReviewStep] = useState<number>();
   const stage = s?.stage;
+  const offerStandardRetry =
+    stage === 'interrupted' &&
+    s?.collectionFailed &&
+    s.explorationMode === 'slide';
   const completed =
     stage === 'completed' || (!s && calibrationAccepted(result));
   const activeMotion =
@@ -68,14 +74,44 @@ export function WebCalibrationWorkspace({
     setConfirmed(false);
     setSaveConfirmed(false);
     setReviewStep(undefined);
-  }, [stage, s?.id]);
+  }, [stage, s?.id, s?.teachingId]);
   useEffect(() => {
-    onBeforeLeaveChange(async () => {
+    onBeforeLeaveChange?.(async () => {
       if (s && !completed && !['cancelled', 'interrupted'].includes(s.stage))
         await controller.command('cancel');
     });
-    return () => onBeforeLeaveChange(null);
+    return () => onBeforeLeaveChange?.(null);
   }, [s?.id, stage, completed, controller.command, onBeforeLeaveChange]);
+  // The guided workspace is keyed by screen and attempt. Preparing a session
+  // resolves the screen-specific reference without starting any robot motion.
+  const prepared = useRef(false);
+  useEffect(() => {
+    if (
+      !prepareFromTeaching ||
+      prepared.current ||
+      s ||
+      completed ||
+      busy ||
+      !readyToStart ||
+      !setup.teaching ||
+      !setup.mapping ||
+      !setup.phoneConnected
+    )
+      return;
+    prepared.current = true;
+    void controller.create().catch(() => undefined);
+  }, [
+    prepareFromTeaching,
+    s,
+    completed,
+    busy,
+    readyToStart,
+    setup.teaching,
+    setup.mapping,
+    setup.phoneConnected,
+    controller.create,
+  ]);
+  const firstStep = s?.teachingId && s.referencePosition ? 1 : 0;
   const quality = s?.explorationQuality;
   const steps = [
     'Set a calibration reference position',
@@ -103,10 +139,12 @@ export function WebCalibrationWorkspace({
                   s?.referencePosition &&
                   (s.teachingId || !s.cameraBoundaryPosition))
               ? 1
-              : 0;
+              : firstStep;
   const canReview = !busy && !activeMotion && stage !== 'positioning-safe';
   const viewed =
-    canReview && reviewStep !== undefined ? Math.min(reviewStep, index) : index;
+    canReview && reviewStep !== undefined
+      ? Math.max(firstStep, Math.min(reviewStep, index))
+      : index;
   const reviewing = viewed < index;
   const saved = !s || completed ? result : undefined;
   const pose =
@@ -141,7 +179,9 @@ export function WebCalibrationWorkspace({
     <>
       <Button
         disabled={busy || !readyToStart}
-        onClick={() => void controller.create().catch(() => undefined)}
+        onClick={
+          onRestart ?? (() => void controller.create().catch(() => undefined))
+        }
       >
         {t('Restart Calibration')}
       </Button>
@@ -193,21 +233,9 @@ export function WebCalibrationWorkspace({
     <Button
       type="primary"
       loading={busy}
-      disabled={
-        !confirmed ||
-        (mode !== 'standard' && !horizontal) ||
-        !s.phoneConnected ||
-        !readyToCapture
-      }
+      disabled={!confirmed || !s.phoneConnected || !readyToCapture}
       onClick={() =>
-        command(
-          mode === 'slide'
-            ? 'start-slide'
-            : mode === 'fast'
-              ? 'start-fast'
-              : 'start-automatic',
-          true,
-        )
+        command(mode === 'slide' ? 'start-slide' : 'start-automatic', true)
       }
     >
       {t('Start automatic calibration')}
@@ -242,6 +270,17 @@ export function WebCalibrationWorkspace({
     >
       {t('Save and Use')}
     </Button>
+  ) : offerStandardRetry ? (
+    <Button
+      type="primary"
+      disabled={busy || !readyToStart || !readyToCapture || !s.phoneConnected}
+      onClick={() => {
+        setMode('standard');
+        command('retry-standard', true);
+      }}
+    >
+      {t('Confirm retry')}
+    </Button>
   ) : ['cancelled', 'interrupted', 'capture-failed'].includes(stage ?? '') ? (
     <Button
       type="primary"
@@ -253,7 +292,22 @@ export function WebCalibrationWorkspace({
   ) : null;
   const actions = (
     <>
-      {viewed > 0 && (
+      {showSessionCancel &&
+        s &&
+        !completed &&
+        !['cancelled', 'interrupted'].includes(stage ?? '') && (
+          <Button
+            type="primary"
+            className="robot-cancel-calibration"
+            danger
+            disabled={busy}
+            onClick={() => command('cancel')}
+          >
+            {t('Cancel Calibration')}
+          </Button>
+        )}
+
+      {viewed > firstStep && (
         <Button
           className="robot-previous-step"
           disabled={!canReview}
@@ -278,9 +332,12 @@ export function WebCalibrationWorkspace({
   return (
     <div className="robot-web-calibration">
       <nav className="robot-web-phases" aria-label={t('Calibration progress')}>
-        {steps.map((label, i) => (
-          <span key={label} className={i === viewed ? 'current' : ''}>
-            {i < index ? '✓' : i + 1} {t(label)}
+        {steps.slice(firstStep).map((label, i) => (
+          <span
+            key={label}
+            className={i + firstStep === viewed ? 'current' : ''}
+          >
+            {i + firstStep < index ? '✓' : i + 1} {t(label)}
           </span>
         ))}
       </nav>
@@ -298,43 +355,51 @@ export function WebCalibrationWorkspace({
                 : undefined
             }
           />
-          {stage === 'ready' && s?.referencePosition && !reviewing && (
-            <div>
-              <Typography.Paragraph>
-                {t(
-                  s.teachingId
-                    ? 'Saved installation teaching is shared by screens on this camera.'
-                    : 'Record the camera-side boundary once to enable automatic camera avoidance.',
-                )}
-              </Typography.Paragraph>
-              {!s.teachingId && !s.cameraBoundaryPosition && (
-                <Button
-                  disabled={busy || !readyToCapture}
-                  onClick={() => command('position-boundary', true)}
-                >
-                  {t('Teach Camera Boundary')}
-                </Button>
-              )}
-              {s.teachingId && (
-                <Button
-                  disabled={busy || !readyToCapture}
-                  onClick={() => command('position-reference', true)}
-                >
-                  {t('Reteach Installation')}
-                </Button>
-              )}
-              {s.cameraBoundaryPosition && !s.teachingId && (
-                <Checkbox
-                  checked={confirmed}
-                  onChange={(e) => setConfirmed(e.target.checked)}
-                >
-                  {t(
-                    'The phone is horizontal, the stylus is vertical, and the full arm has camera clearance on the reference side of the boundary. There are no other obstacles.',
-                  )}
-                </Checkbox>
-              )}
-            </div>
+          {offerStandardRetry && (
+            <Typography.Paragraph>
+              {t('Retry in regular mode?')}
+            </Typography.Paragraph>
           )}
+          {stage === 'ready' &&
+            s?.referencePosition &&
+            !reviewing &&
+            !(prepareFromTeaching && s.teachingId) && (
+              <div>
+                <Typography.Paragraph>
+                  {t(
+                    s.teachingId
+                      ? 'Saved installation teaching is shared by screens on this camera.'
+                      : 'Record the camera-side boundary once to enable automatic camera avoidance.',
+                  )}
+                </Typography.Paragraph>
+                {!s.teachingId && !s.cameraBoundaryPosition && (
+                  <Button
+                    disabled={busy || !readyToCapture}
+                    onClick={() => command('position-boundary', true)}
+                  >
+                    {t('Teach Camera Boundary')}
+                  </Button>
+                )}
+                {s.teachingId && (
+                  <Button
+                    disabled={busy || !readyToCapture}
+                    onClick={() => command('position-reference', true)}
+                  >
+                    {t('Reteach Installation')}
+                  </Button>
+                )}
+                {s.cameraBoundaryPosition && !s.teachingId && (
+                  <Checkbox
+                    checked={confirmed}
+                    onChange={(e) => setConfirmed(e.target.checked)}
+                  >
+                    {t(
+                      'The phone is horizontal, the stylus is vertical, and the full arm has camera clearance on the reference side of the boundary. There are no other obstacles.',
+                    )}
+                  </Checkbox>
+                )}
+              </div>
+            )}
           {stage === 'positioning-boundary' && (
             <Typography.Paragraph>
               {t(
@@ -357,7 +422,7 @@ export function WebCalibrationWorkspace({
           ) : (
             <>
               {!s && controls}
-              {s && !s.phoneConnected && !completed && (
+              {!(s?.phoneConnected ?? setup.phoneConnected) && !completed && (
                 <Typography.Paragraph>
                   {t('Phone disconnected')}
                   {onConnectPhone && (
@@ -380,49 +445,39 @@ export function WebCalibrationWorkspace({
                   )}
                 </Typography.Paragraph>
               )}
-              {stage === 'ready' && s?.referencePosition && (
-                <>
-                  <Radio.Group
-                    value={mode}
-                    onChange={(e) => {
-                      setMode(e.target.value);
-                      setConfirmed(false);
-                      setHorizontal(false);
-                    }}
-                  >
-                    <Radio.Button value="standard">
-                      {t('Standard probing')}
-                    </Radio.Button>
-                    <Radio.Button value="fast">
-                      {t('Fast probing')}
-                    </Radio.Button>
-                    <Radio.Button value="slide">
-                      {t('Sliding collection')}
-                    </Radio.Button>
-                  </Radio.Group>
-                  <Typography.Paragraph>
-                    {t(
-                      'Sampling and fitting are followed by automatic hover and contact boundary verification. Record the Safe Position afterwards, then review and save.',
-                    )}
-                  </Typography.Paragraph>
-                  {mode !== 'standard' && (
-                    <Checkbox
-                      checked={horizontal}
-                      onChange={(e) => setHorizontal(e.target.checked)}
+              {stage === 'ready' &&
+                s?.referencePosition &&
+                (s.teachingId || !s.cameraBoundaryPosition) && (
+                  <>
+                    <Radio.Group
+                      value={mode}
+                      onChange={(e) => {
+                        setMode(e.target.value);
+                        setConfirmed(false);
+                      }}
                     >
-                      {t('The screen is horizontal and securely fixed.')}
+                      <Radio.Button value="slide">{t('Fast')}</Radio.Button>
+                      <Radio.Button value="standard">
+                        {t('Regular')}
+                      </Radio.Button>
+                    </Radio.Group>
+                    <Typography.Paragraph>
+                      {t(
+                        'Sampling and fitting are followed by automatic hover and contact boundary verification. Record the Safe Position afterwards, then review and save.',
+                      )}
+                    </Typography.Paragraph>
+                    <Checkbox
+                      checked={confirmed}
+                      onChange={(e) => setConfirmed(e.target.checked)}
+                    >
+                      {t(
+                        mode === 'standard'
+                          ? 'I confirm the setup and clear workspace for sampling and automatic boundary verification.'
+                          : 'I confirm the screen is horizontal and secured, the setup is ready, and the workspace is clear for sampling and automatic boundary verification.',
+                      )}
                     </Checkbox>
-                  )}
-                  <Checkbox
-                    checked={confirmed}
-                    onChange={(e) => setConfirmed(e.target.checked)}
-                  >
-                    {t(
-                      'I confirm the setup and clear workspace for sampling and automatic boundary verification.',
-                    )}
-                  </Checkbox>
-                </>
-              )}
+                  </>
+                )}
               {s?.capture && <ExplorationProgress session={s} />}
               {activeMotion && (
                 <Typography.Paragraph>
@@ -469,21 +524,7 @@ export function WebCalibrationWorkspace({
               )}
             </>
           )}
-          <div className="robot-web-actions">
-            {!footer && actions}
-            {showSessionCancel &&
-              s &&
-              !completed &&
-              !['cancelled', 'interrupted'].includes(stage ?? '') && (
-                <Button
-                  danger
-                  disabled={busy}
-                  onClick={() => command('cancel')}
-                >
-                  {t('Cancel Calibration')}
-                </Button>
-              )}
-          </div>
+          <div className="robot-web-actions">{!footer && actions}</div>
         </section>
         {!externalPreview && (
           <section className="robot-setup-guide-card">

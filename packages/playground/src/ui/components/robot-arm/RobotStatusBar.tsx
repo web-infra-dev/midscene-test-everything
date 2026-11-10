@@ -36,6 +36,7 @@ type Action =
   | 'enable'
   | 'disable'
   | 'clearFaults'
+  | 'recover'
   | 'resume'
   | 'emergencyStop'
   | 'payload';
@@ -59,6 +60,7 @@ const labels: Record<Action, string> = {
   disable: 'Disable',
   clearFaults: 'Clear Faults',
   resume: 'Resume',
+  recover: 'Check Recovery',
   emergencyStop: 'Emergency Stop',
   payload: 'Apply Payload',
 };
@@ -111,7 +113,7 @@ export function RobotStatusBar({
         confirmation.current?.state.state.enabled !==
           data?.state.state.enabled),
   );
-  const { controlPending } = useConnection();
+  const { controlPending, controlError, recover } = useConnection();
   useEffect(() => {
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
@@ -178,6 +180,19 @@ export function RobotStatusBar({
     setBusy(true);
     setCommandError(undefined);
     try {
+      if (action === 'recover') {
+        if (useConnection.getState().setupSession !== expected.session)
+          throw new Error(
+            t(
+              'Robot state changed. Close this dialog and confirm the current operation again.',
+            ),
+          );
+        await recover();
+        const error = useConnection.getState().controlError;
+        if (error) throw new Error(error);
+        setConfirm(undefined);
+        return;
+      }
       if (action === 'enable') robotVoice.notify('enabling', 1);
       if (action === 'payload') robotVoice.notify('payload', 1);
       const response = await fetch('/api/arm/control', {
@@ -223,6 +238,8 @@ export function RobotStatusBar({
   const confirms: Partial<Record<Action, string>> = {
     enable: 'Enable this arm? Keep people clear of its workspace.',
     clearFaults: 'Clear faults without enabling or moving?',
+    recover:
+      'Check recovery while the robot is stationary and fault-free. This does not enable or move the robot.',
     resume: 'Continue the controller? Interrupted tasks will not be replayed.',
     disable: 'Disable the stationary robot?',
     payload: 'Apply the saved tool payload?',
@@ -429,6 +446,14 @@ export function RobotStatusBar({
               onClick={() => choose('resume')}
             >
               {zh ? '继续' : 'Resume'}
+            </Button>
+          )}
+          {(data?.state.recoveryRequired || controlError) && !paused && (
+            <Button
+              disabled={locked || Boolean(faults.length)}
+              onClick={() => choose('recover')}
+            >
+              {t('Check Recovery')}
             </Button>
           )}
           {settings}

@@ -11,6 +11,8 @@ import type {
 export interface CalibrationClientOptions {
   baseUrl: string;
   timeoutMs?: number;
+  /** Present for an embedded Device queue lease. */
+  attemptId?: string;
   fetch?: typeof globalThis.fetch;
 }
 export class CalibrationClient {
@@ -26,7 +28,12 @@ export class CalibrationClient {
         headers:
           body === undefined
             ? undefined
-            : { 'Content-Type': 'application/json' },
+            : {
+                'Content-Type': 'application/json',
+                ...(this.options.attemptId
+                  ? { 'X-Calibration-Attempt': this.options.attemptId }
+                  : {}),
+              },
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: AbortSignal.timeout(this.options.timeoutMs ?? 180000),
       },

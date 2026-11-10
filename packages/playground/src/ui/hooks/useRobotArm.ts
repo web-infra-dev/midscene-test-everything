@@ -78,8 +78,11 @@ async function run<T>(fn: () => Promise<T>): Promise<T | undefined> {
     useSetupStore.setState({ error: String(error) });
     return undefined;
   } finally {
-    useSetupStore.setState({ busy: false });
-    await useSetupStore.getState().refresh();
+    try {
+      await useSetupStore.getState().refresh();
+    } finally {
+      useSetupStore.setState({ busy: false });
+    }
   }
 }
 export function useRobotArm() {
@@ -87,6 +90,11 @@ export function useRobotArm() {
   const connection = useConnection();
   return {
     ...state,
+    setup:
+      connection.setupSession &&
+      state.setup?.session !== connection.setupSession
+        ? undefined
+        : state.setup,
     state: connection.runtime,
     capabilities: connection.capabilities,
     adapter: connection.adapter,

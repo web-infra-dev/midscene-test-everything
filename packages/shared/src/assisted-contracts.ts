@@ -3,6 +3,7 @@ import type {
   CalibrationSession,
   CartesianPose,
   MotionAcceleration,
+  MotionOptions,
   MotionSpeed,
   ProfileBinding,
   ScreenMotionSettings,
@@ -384,6 +385,8 @@ export interface AssistedCalibrationState {
   /** Operator-authorized collection, safe return and verification sequence. */
   automaticWorkflow?: boolean;
   explorationMode?: AutomaticExplorationMode;
+  /** Collection failed before boundary verification. */
+  collectionFailed?: boolean;
   anchors: WebPoint[];
   points: CapturedCalibrationPoint[];
   /** Diagnostic 3D residuals, never a substitute for click verification. */
@@ -419,7 +422,10 @@ export interface AssistedCalibrationState {
   result?: CalibrationProfile;
 }
 export interface AutomaticCaptureHost {
-  preflight?(poses: CartesianPose[]): Promise<void>;
+  preflight?(
+    poses: CartesianPose[],
+    motion?: Pick<MotionOptions, 'speed' | 'acceleration'>,
+  ): Promise<void>;
   signal: AbortSignal;
   check(): void;
   read(): Promise<CartesianPose>;
@@ -485,6 +491,7 @@ export type AssistedCalibrationAction =
   | 'start-automatic'
   | 'start-fast'
   | 'start-slide'
+  | 'retry-standard'
   | 'stop-capture'
   | 'cancel'
   | 'verify'
@@ -493,6 +500,8 @@ export type AssistedCalibrationAction =
 
 /** Portable collected-point checkpoint; restoring it never moves the robot. */
 export interface AssistedCalibrationRecording {
+  /** The screen Device that collected these points, when running per Device. */
+  deviceId?: string;
   /** Persisted geometry to preserve the exact plane and compensation on resume. */
   calibrationProfileId?: string;
   points: CapturedCalibrationPoint[];

@@ -40,6 +40,7 @@ interface TaskEntry extends TaskSummary {
   closed?: boolean;
   cleanupError?: Error;
   closing?: Promise<boolean>;
+  physicalCameraId: string;
   signature?: string;
   modelConfig?: AgentOpt['modelConfig'];
   server?: MountedServer;
@@ -114,6 +115,7 @@ export class PlaygroundTasks {
     const source = await this.devices.open(cameraId);
     const entry: TaskEntry = {
       id: randomUUID(),
+      physicalCameraId: source.cameraId,
       cameraId,
       name: name?.trim() || 'Task',
       modelConfig: undefined,
@@ -265,7 +267,7 @@ export class PlaygroundTasks {
     await Promise.allSettled(this.creating);
     await Promise.all(
       [...this.entries.values()]
-        .filter((entry) => entry.cameraId === id)
+        .filter((entry) => entry.physicalCameraId === id)
         .map((entry) => this.remove(entry.id)),
     );
   }

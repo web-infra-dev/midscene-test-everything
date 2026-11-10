@@ -30,6 +30,7 @@ export function calibrationPhonePage(
   markerCodes?: readonly number[],
   /** Short identity printed on the page so the operator can match it to the host. */
   label?: string,
+  cameraPreview = false,
 ): string {
   const grid = calibrationCaptureTargets({ width: 100, height: 100 })
     .map(
@@ -53,7 +54,7 @@ ${touchStyles}
 body[data-verification=true] #instructions,body[data-stage=collect] #target,body[data-stage=collect] #instructions{display:none}
 #fullscreen-controls{position:fixed;z-index:5;top:39%;left:50%;transform:translate(-50%,-50%);width:min(80vw,340px);text-align:center}#fullscreen-controls button{padding:8px 16px}#fullscreen-help:not([hidden]){display:block;background:white}#wake-gesture{display:none}body[data-wake-blocked=true] #wake-gesture{display:inline-block}body[data-display-ready=false] .mapping-marker,body[data-display-ready=false] #target{visibility:hidden}body:is([data-stage=collect],[data-stage=safety],[data-stage=verify],[data-stage=returning],[data-stage=completed]) #wake-gesture{display:none}#fullscreen-controls{pointer-events:none}#fullscreen-controls button{pointer-events:auto}
 body[data-stage=waiting] #page-label{font-size:clamp(28px,9vmin,54px);font-weight:700;color:#1f2329;letter-spacing:.08em}body[data-stage=waiting] #fullscreen-controls{top:auto;bottom:max(20px,env(safe-area-inset-bottom));transform:translateX(-50%)}body[data-stage=waiting] :is(#mapping-trail,#mapping-hit,#touch-status,#target,#capture-grid){display:none!important}
-</style></head><body data-display-ready="false" data-wake-video="${awakeVideo}" data-stage="markers"${markerCodes ? ' data-preview data-connection-error="true"' : ''}><main id="surface"><div id="instructions"><header id="page-title">Midscene · Calibration</header><div id="page-label">${label ? label.replace(/[<&>"]/g, '') : ''}</div><div id="message"></div><div id="connection"></div><div id="touch-status" role="status"></div></div>${markers}<div id="approach-guides" aria-hidden="true">
+</style></head><body${cameraPreview ? ' data-camera-preview="true"' : ''} data-display-ready="false" data-wake-video="${awakeVideo}" data-stage="markers"${markerCodes ? ' data-preview data-connection-error="true"' : ''}><main id="surface"><div id="instructions"><header id="page-title">Midscene · Calibration</header><div id="page-label">${label ? label.replace(/[<&>"]/g, '') : ''}</div><div id="message"></div><div id="connection"></div><div id="touch-status" role="status"></div></div>${markers}<div id="approach-guides" aria-hidden="true">
           <span class="approach-reference" data-corner="1">1</span>
           <span class="approach-reference" data-corner="2">2</span>
           <span class="approach-reference" data-corner="3">3</span>

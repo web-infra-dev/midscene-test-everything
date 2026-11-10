@@ -57,3 +57,9 @@ it('restores identities by saved page key without accepting another camera or ov
     readiness([left, { ...restored, screenId: 'another-target' }]).ready,
   ).toBe(false);
 });
+
+it('two phones claiming the left screen cannot make the missing right screen ready', () => {
+  expect(readiness([page('one', 'left'), page('two', 'left')]).ready).toBe(
+    false,
+  );
+});

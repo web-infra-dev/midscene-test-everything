@@ -41,6 +41,9 @@ function fixture(pairings, screenTargets = []) {
     close: async () => {},
     service: {
       status: () => state,
+      resetAttempt: () => {
+        state = undefined;
+      },
       stop: async () => {
         state = { stage: 'cancelled' };
       },
@@ -134,6 +137,32 @@ test('embedded calibration is owned by Device; phone token expires after complet
   assert.equal(f.registry.status('a').phase, 'completed');
   assert.equal(f.registry.phoneHost(session.token), undefined);
   await f.registry.close();
+});
+
+test('cancelled and completed leases start fresh; old cancel requests cannot end the retry', async () => {
+  const f = fixture();
+  try {
+    const opening = f.registry.startCalibration('a');
+    await f.registry.cancelCalibration('a');
+    await assert.rejects(opening);
+    assert.equal(f.registry.status('a').phase, 'idle');
+    const first = await f.registry.startCalibration('a');
+    await f.registry.cancelCalibration('a', first.attemptId);
+    const second = await f.registry.startCalibration('a');
+    assert.notEqual(second.attemptId, first.attemptId);
+    await f.registry.cancelCalibration('a', first.attemptId);
+    await delay(220);
+    assert.equal(f.registry.status('a').phase, 'running');
+    assert.equal(f.host.service.status(), undefined);
+    f.complete();
+    await f.registry.entries.get('a').calibration.pending;
+    const third = await f.registry.startCalibration('a');
+    await delay(220);
+    assert.equal(f.registry.status('a').phase, 'running');
+    assert.notEqual(third.attemptId, second.attemptId);
+  } finally {
+    await f.registry.close();
+  }
 });
 
 test('stopping a camera cancels calibration before releasing both camera leases', async () => {
@@ -289,5 +318,17 @@ test('a persisted default screen retains the original camera correction scope ac
   const second = await f.registry.open('second');
   assert.equal(second.device.options.screenId, 'second');
   assert.deepEqual(f.acquisitions[2], { id: 'a', screenId: 'second' });
+  await f.registry.close();
+});
+
+test('reading readiness after stop does not reacquire a stopped camera', async () => {
+  const f = fixture();
+  await f.registry.open('a');
+  await f.registry.stop('a');
+  await assert.rejects(f.registry.configuration('a'), {
+    code: 'VISION_UNAVAILABLE',
+  });
+  assert.equal(f.owners.size, 0);
+  assert.equal(f.counts().opens, 1);
   await f.registry.close();
 });

@@ -8,6 +8,7 @@ import type {
   AssistedCalibrationSetup,
   AssistedCalibrationState,
   AssistedMappingInput,
+  AutomaticExplorationMode,
   CalibrationPageReply,
   CalibrationPageUpdate,
   CalibrationPhoneStatus,
@@ -37,6 +38,7 @@ import { invertMapping, pointDistance, project } from './phone/geometry.js';
 import { CalibrationPhoneSession, sameLayout } from './phone/session.js';
 import { knownScreenTravelHeight } from './screen-position.js';
 import { CalibrationSetup, calibrationGeometryKey } from './setup.js';
+import { moveToTaughtPosition } from './taught-position.js';
 import { assertSafeObservation } from './verification/safe-position.js';
 
 const log = getDebug('robot-arm:web-calibration', { console: true });
@@ -126,10 +128,46 @@ export class CalibrationWorkflow {
   private fittedGeometry?: Fit;
   private persistedCalibrationId?: string;
   private deviceRevision = 0;
+  private attemptRevision = 0;
+  private assertAttempt(revision: number) {
+    if (this.attemptRevision !== revision)
+      throw new RobotArmError(
+        'ACTION_STOPPED',
+        'Calibration attempt was cancelled',
+        409,
+      );
+  }
+  /** A new Device lease keeps the phone and optical setup, but owns fresh samples. */
+  resetAttempt() {
+    if (
+      this.activeAction ||
+      this.capture ||
+      this.verification ||
+      this.ownsOperation()
+    )
+      throw new RobotArmError(
+        'BUSY',
+        'Previous calibration is still stopping',
+        409,
+      );
+    this.attemptRevision++;
+    this.state = undefined;
+    this.measurements = undefined;
+    this.fittedGeometry = undefined;
+    this.automaticEvidence = undefined;
+    this.persistedCalibrationId = undefined;
+    this.captureOperationId = undefined;
+    this.receipt = undefined;
+    this.receivingTarget = undefined;
+    this.batchTravelTipZMm = undefined;
+    this.phoneHome = false;
+    this.changed();
+  }
   recording() {
     if (!this.measurements)
       throw new RobotArmError('INVALID_STAGE', 'No points have been collected');
     return {
+      deviceId: this.options.deviceId,
       calibrationProfileId: this.persistedCalibrationId,
       points: this.measurements.snapshot().points,
       input: structuredClone(this.input!),
@@ -155,7 +193,7 @@ export class CalibrationWorkflow {
         409,
       );
     if (
-      this.actionBusy ||
+      this.activeAction ||
       this.capture ||
       this.verification ||
       this.runtime.current()?.status === 'running'
@@ -163,6 +201,12 @@ export class CalibrationWorkflow {
       throw new RobotArmError(
         'BUSY',
         'Finish the current operation before restoring points',
+        409,
+      );
+    if (recording?.deviceId !== this.options.deviceId)
+      throw new RobotArmError(
+        'PROFILE_MISMATCH',
+        'Collected points belong to a different screen',
         409,
       );
     if (
@@ -195,9 +239,11 @@ export class CalibrationWorkflow {
         409,
       );
     assertPose(recording.referencePosition);
-    this.actionBusy = true;
+    const revision = this.attemptRevision;
+    this.beginAction();
     try {
       await this.configuration.restore(recording.input, recording.mapping);
+      this.assertAttempt(revision);
       this.beginTask(recording.mapping, recording.referencePosition);
       const tool = this.runtime.profileStore.getTool(
         recording.input.toolProfileId,
@@ -313,7 +359,7 @@ export class CalibrationWorkflow {
       if (this.state) this.interrupt(errorText(error));
       throw error;
     } finally {
-      this.actionBusy = false;
+      this.endAction();
       this.changed();
     }
   }
@@ -321,7 +367,18 @@ export class CalibrationWorkflow {
   private retryVerification = false;
   private receipt?: WebVerificationResult;
   private receivingTarget?: string;
-  private actionBusy = false;
+  private activeAction?: Promise<void>;
+  private resolveAction?: () => void;
+  private beginAction() {
+    this.activeAction = new Promise<void>((resolve) => {
+      this.resolveAction = resolve;
+    });
+  }
+  private endAction() {
+    this.resolveAction?.();
+    this.resolveAction = undefined;
+    this.activeAction = undefined;
+  }
   private geometryKey?: string;
   constructor(
     private readonly runtime: RobotArmRuntime,
@@ -333,6 +390,7 @@ export class CalibrationWorkflow {
       runtime,
       this.phone,
       options.vision,
+      options.deviceId,
     );
   }
   status(): AssistedCalibrationState | null {
@@ -586,6 +644,7 @@ export class CalibrationWorkflow {
       error: message,
       errorDetails: s.errorDetails,
       detail: structuredClone({
+        deviceId: this.options.deviceId,
         stage: s.stage,
         explorationMode: s.explorationMode,
         phoneConnected: this.phone.connected(),
@@ -606,6 +665,7 @@ export class CalibrationWorkflow {
     const s = this.state!;
     const owned = this.ownsOperation();
     if (s.autoRepair) s.autoRepair.active = false;
+    s.collectionFailed = s.stage === 'collecting';
     s.stage = 'interrupted';
     this.changed();
     s.error = message;
@@ -640,7 +700,7 @@ export class CalibrationWorkflow {
     work: () => AssistedCalibrationSetup | Promise<AssistedCalibrationSetup>,
   ) {
     if (
-      this.actionBusy ||
+      this.activeAction ||
       this.capture ||
       this.verification ||
       this.ownsOperation()
@@ -658,7 +718,7 @@ export class CalibrationWorkflow {
         this.configuration.status().mapping,
       ]);
     const previous = configurationKey();
-    this.actionBusy = true;
+    this.beginAction();
     try {
       const result = await work();
       // UI entry can check the same setup more than once. Preserve measured
@@ -681,13 +741,13 @@ export class CalibrationWorkflow {
       this.measurements = undefined;
       throw error;
     } finally {
-      this.actionBusy = false;
+      this.endAction();
       this.changed();
     }
   }
   async create(): Promise<AssistedCalibrationState> {
     if (
-      this.actionBusy ||
+      this.activeAction ||
       this.capture ||
       this.verification ||
       this.ownsOperation()
@@ -697,9 +757,11 @@ export class CalibrationWorkflow {
         'Finish the current calibration operation first',
         409,
       );
-    this.actionBusy = true;
+    const revision = this.attemptRevision;
+    this.beginAction();
     try {
       const mapping = await this.configuration.assertCurrent();
+      this.assertAttempt(revision);
       this.beginTask(mapping);
       const teaching = this.runtime.profileStore.installationTeaching(
         this.input!,
@@ -717,7 +779,7 @@ export class CalibrationWorkflow {
       }
       return this.status()!;
     } finally {
-      this.actionBusy = false;
+      this.endAction();
       this.changed();
     }
   }
@@ -728,6 +790,8 @@ export class CalibrationWorkflow {
   ) {
     this.phoneHome = false;
     this.retryVerification = false;
+    this.receipt = undefined;
+    this.receivingTarget = undefined;
     this.deviceRevision = this.options.deviceId
       ? (this.runtime.profileStore.deviceBinding(this.options.deviceId)
           ?.revision ?? 0)
@@ -792,17 +856,19 @@ export class CalibrationWorkflow {
         : this.require(id);
     // Cancellation must preempt a pending read/verification instead of waiting
     // behind the normal command gate and allowing that command to start motion.
+    const revision = this.attemptRevision;
     if (action === 'cancel') {
-      await this.cancel();
+      this.attemptRevision++;
+      if (s.stage !== 'completed') await this.cancel();
       return this.status()!;
     }
-    if (this.actionBusy)
+    if (this.activeAction)
       throw new RobotArmError(
         'BUSY',
         'Another calibration command is running',
         409,
       );
-    this.actionBusy = true;
+    this.beginAction();
     try {
       if (
         ['auto-repair', 'reprobe', 'apply-reprobe', 'verify'].includes(action)
@@ -822,9 +888,24 @@ export class CalibrationWorkflow {
           'Enter the required phone display mode first',
           409,
         );
-      if (action === 'restart') {
+      if (action === 'restart' || action === 'retry-standard') {
         if (
-          !['interrupted', 'cancelled', 'ready'].includes(s.stage) ||
+          action === 'retry-standard' &&
+          !(
+            s.stage === 'interrupted' &&
+            s.collectionFailed &&
+            s.explorationMode === 'slide'
+          )
+        )
+          throw new RobotArmError(
+            'INVALID_STAGE',
+            'No failed sliding collection to retry',
+            409,
+          );
+        if (
+          !['interrupted', 'cancelled', 'capture-failed', 'ready'].includes(
+            s.stage,
+          ) ||
           !confirmed
         )
           throw new RobotArmError(
@@ -833,12 +914,14 @@ export class CalibrationWorkflow {
             409,
           );
         const mapping = await this.configuration.assertCurrent();
+        this.assertAttempt(revision);
         const sameGeometry = this.geometryKey === this.currentGeometryKey();
         const referencePosition = sameGeometry
           ? s.referencePosition
           : undefined;
         const safePosition = sameGeometry ? s.safePosition : undefined;
         await this.cancel();
+        this.assertAttempt(revision);
         const teachingId = sameGeometry ? s.teachingId : undefined;
         const cameraBoundaryPosition = sameGeometry
           ? s.cameraBoundaryPosition
@@ -846,6 +929,8 @@ export class CalibrationWorkflow {
         this.beginTask(mapping, referencePosition, safePosition);
         this.state!.teachingId = teachingId;
         this.state!.cameraBoundaryPosition = cameraBoundaryPosition;
+        if (action === 'retry-standard')
+          await this.startCollection(this.state!, 'standard', true, confirmed);
       } else if (action === 'position-boundary') {
         if (
           !confirmed ||
@@ -1110,48 +1195,13 @@ export class CalibrationWorkflow {
           action,
         )
       ) {
-        if (this.capture || s.stage !== 'ready')
-          throw new RobotArmError(
-            'INVALID_STAGE',
-            'Record the starting position before automatic collection',
-            409,
-          );
-        if (!confirmed)
-          throw new RobotArmError(
-            'CONFIRMATION_REQUIRED',
-            'Confirm the contact and motion settings before collecting points',
-            409,
-          );
-        if (!s.referencePosition)
-          throw new RobotArmError(
-            'REFERENCE_POSITION_REQUIRED',
-            'Record a calibration reference position before collecting points',
-            409,
-          );
-        await this.assertMechanicalFrame(true);
-        s.automaticWorkflow = action !== 'start';
         const mode =
           action === 'start-slide'
             ? 'slide'
             : action === 'start-fast'
               ? 'fast'
               : 'standard';
-        s.explorationMode = mode;
-        s.stage = 'collecting';
-        s.error = undefined;
-        this.measurements = undefined;
-        s.requiredReferenceZ = undefined;
-        this.capture = this.capturePoints()
-          .catch((e) => {
-            if (['collecting', 'returning', 'safety'].includes(s.stage)) {
-              this.interrupt(errorText(e), e);
-              log('Automatic point collection failed:', e);
-            }
-          })
-          .finally(() => {
-            this.changed();
-            this.capture = undefined;
-          });
+        await this.startCollection(s, mode, action !== 'start', confirmed);
       } else if (
         action === 'stop-capture' &&
         s.calibration?.auto &&
@@ -1214,20 +1264,21 @@ export class CalibrationWorkflow {
                 results: s.verification,
                 attempts: s.verificationAttempts!,
               },
+          this.options.deviceId
+            ? {
+                ...s.binding!,
+                deviceId: this.options.deviceId,
+                revision: this.deviceRevision,
+                cameraId: this.input!.cameraId,
+                calibrationProfileId: s.calibration.candidate!.id,
+                vision: {
+                  ...s.mapping!.vision,
+                  confirmedAt: new Date().toISOString(),
+                },
+              }
+            : undefined,
+          () => this.assertAttempt(revision),
         );
-        if (this.options.deviceId) {
-          await this.runtime.profileStore.acceptDeviceBinding({
-            ...s.binding!,
-            deviceId: this.options.deviceId,
-            revision: this.deviceRevision,
-            cameraId: this.input!.cameraId,
-            calibrationProfileId: s.result.id,
-            vision: {
-              ...s.mapping!.vision,
-              confirmedAt: new Date().toISOString(),
-            },
-          });
-        }
         s.stage = 'completed';
       } else
         throw new RobotArmError(
@@ -1236,9 +1287,52 @@ export class CalibrationWorkflow {
         );
       return this.status()!;
     } finally {
-      this.actionBusy = false;
+      this.endAction();
       this.changed();
     }
+  }
+  private async startCollection(
+    s: SessionState,
+    mode: AutomaticExplorationMode,
+    automaticWorkflow: boolean,
+    confirmed: boolean,
+  ) {
+    if (this.capture || s.stage !== 'ready')
+      throw new RobotArmError(
+        'INVALID_STAGE',
+        'Record the starting position before automatic collection',
+        409,
+      );
+    if (!confirmed)
+      throw new RobotArmError(
+        'CONFIRMATION_REQUIRED',
+        'Confirm the contact and motion settings before collecting points',
+        409,
+      );
+    if (!s.referencePosition)
+      throw new RobotArmError(
+        'REFERENCE_POSITION_REQUIRED',
+        'Record a calibration reference position before collecting points',
+        409,
+      );
+    await this.assertMechanicalFrame(true);
+    s.automaticWorkflow = automaticWorkflow;
+    s.explorationMode = mode;
+    s.stage = 'collecting';
+    s.error = undefined;
+    this.measurements = undefined;
+    s.requiredReferenceZ = undefined;
+    this.capture = this.capturePoints()
+      .catch((e) => {
+        if (['collecting', 'returning', 'safety'].includes(s.stage)) {
+          this.interrupt(errorText(e), e);
+          log('Automatic point collection failed:', e);
+        }
+      })
+      .finally(() => {
+        this.changed();
+        this.capture = undefined;
+      });
   }
   private async recordPosition(
     recordTaskPosition = false,
@@ -1308,37 +1402,17 @@ export class CalibrationWorkflow {
           409,
         );
       if (teaching) {
-        const current = await host.read();
-        const floor = Math.max(
-          knownScreenTravelHeight(this.runtime.profileStore.list(), input),
-          this.batchTravelTipZMm ?? Number.NEGATIVE_INFINITY,
-          contactPoint(current, tool.offsetMm).z,
-          contactPoint(s.referencePosition!, tool.offsetMm).z,
+        await moveToTaughtPosition(
+          host,
+          teaching,
+          tool,
+          s.referencePosition!,
+          input.motion!,
+          Math.max(
+            knownScreenTravelHeight(this.runtime.profileStore.list(), input),
+            this.batchTravelTipZMm ?? Number.NEGATIVE_INFINITY,
+          ),
         );
-        const lift = {
-          ...current,
-          positionMm: {
-            ...current.positionMm,
-            z:
-              current.positionMm.z +
-              floor -
-              contactPoint(current, tool.offsetMm).z,
-          },
-        };
-        const above = {
-          ...s.referencePosition!,
-          positionMm: {
-            ...s.referencePosition!.positionMm,
-            z:
-              s.referencePosition!.positionMm.z +
-              floor -
-              contactPoint(s.referencePosition!, tool.offsetMm).z,
-          },
-        };
-        await host.preflight?.([lift, above, s.referencePosition!]);
-        await host.move(lift);
-        await host.move(above);
-        await host.move(s.referencePosition!);
       }
       await measurements.run(
         {
@@ -1737,7 +1811,7 @@ export class CalibrationWorkflow {
     if (active) await this.runtime.stop();
     await this.capture;
     await this.verification;
-    s.stage = 'cancelled';
+    if (!s.result) s.stage = 'cancelled';
   }
   setBatchReference(pose: CartesianPose) {
     const state = this.require();
@@ -1828,6 +1902,9 @@ export class CalibrationWorkflow {
     }
   }
   async stop() {
+    const pending = this.activeAction;
+    this.attemptRevision++;
     if (this.state && this.state.stage !== 'completed') await this.cancel();
+    await pending;
   }
 }

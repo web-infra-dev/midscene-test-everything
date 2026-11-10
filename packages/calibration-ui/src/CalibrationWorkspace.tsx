@@ -51,6 +51,7 @@ export interface Configuration {
   capabilities: EffectiveCapabilities;
   input?: AssistedCalibrationInput;
   installationTaught?: boolean;
+  mappingReady?: boolean;
   output?: AssistedMappingInput;
   camera: CameraProfile;
   correction?: CameraCorrection;

@@ -1,8 +1,16 @@
 export const assistedCalibrationZh: Record<string, string> = {
+  'Resume the robot to continue calibration.':
+    '请在顶部恢复机械臂运行，再继续标定。',
+  'Check controller recovery before collecting points.':
+    '采样前，请先检查并恢复控制器。',
+  'Prepare the robot and tool payload before collecting points.':
+    '采样前，请确认机械臂已使能并已应用工具负载。',
   'No measurement recorded for this step.': '本次标定未保存这一步的测量记录。',
   'Boundary verification': '边界验证',
   'Sampling and fitting are followed by automatic hover and contact boundary verification. Record the Safe Position afterwards, then review and save.':
     '采样拟合后自动执行悬停与接触边界验证，再记录安全位置、检查并保存。',
+  'I confirm the screen is horizontal and secured, the setup is ready, and the workspace is clear for sampling and automatic boundary verification.':
+    '我已确认屏幕水平固定、配置就绪、工作区净空，可以开始采样和自动边界验证。',
   'The screen is horizontal and securely fixed.': '屏幕已水平放置并固定。',
   'I confirm the setup and clear workspace for sampling and automatic boundary verification.':
     '我已确认配置及工作区净空，允许采样与自动边界验证。',

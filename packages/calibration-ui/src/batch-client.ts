@@ -5,7 +5,6 @@ import type {
   WorkstationScreenState,
 } from '@midscene/arm-kit-shared/assisted-contracts';
 import { markerRequest } from './marker-client';
-import type { TeachingBinding } from './teaching-client';
 export class BatchClient {
   constructor(readonly cameraId: string) {}
   private async request<T>(
@@ -43,20 +42,16 @@ export class BatchClient {
     return this.request<CalibrationBatchState>('start', input);
   }
   calibrationBatchCommand(id: string, command: CalibrationBatchCommand) {
-    return this.request<CalibrationBatchState>('command', { id, ...command });
+    return this.request<CalibrationBatchState>('command', {
+      id,
+      command: command.action,
+      revision: command.revision,
+    });
   }
   clearCalibrationBatches() {
     return this.request<void>('clear');
   }
   deleteCalibration(calibrationProfileId: string) {
     return this.request<void>('delete-calibration', { calibrationProfileId });
-  }
-  preparePageMapping(
-    binding: Pick<
-      TeachingBinding,
-      'robotProfileId' | 'toolProfileId' | 'screenProfileId'
-    >,
-  ) {
-    return this.request<void>('prepare-mapping', { binding });
   }
 }

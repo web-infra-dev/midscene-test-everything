@@ -23,8 +23,10 @@ export function CalibrationSetup({
   initial,
   onCancel,
   footer,
+  showIllustration = true,
 }: {
   footer?: HTMLElement | null;
+  showIllustration?: boolean;
   capabilities?: EffectiveCapabilities;
   initial?: MeasuredCalibrationSetup;
   onCancel?(): void;
@@ -115,19 +117,21 @@ export function CalibrationSetup({
         )}
         {footer ? createPortal(actions, footer) : actions}
       </div>
-      <aside className="robot-setup-guide-card">
-        <figure className="robot-setup-media-slot">
-          <SetupIllustration step="tool" />
-          <figcaption className="robot-setup-reference-toolbar">
-            {t('Setup illustration')}
-          </figcaption>
-        </figure>
-        <Typography.Paragraph>
-          {t(
-            'Measure from the flange origin to the contact tip, including the holder.',
-          )}
-        </Typography.Paragraph>
-      </aside>
+      {showIllustration && (
+        <aside className="robot-setup-guide-card">
+          <figure className="robot-setup-media-slot">
+            <SetupIllustration step="tool" />
+            <figcaption className="robot-setup-reference-toolbar">
+              {t('Setup illustration')}
+            </figcaption>
+          </figure>
+          <Typography.Paragraph>
+            {t(
+              'Measure from the flange origin to the contact tip, including the holder.',
+            )}
+          </Typography.Paragraph>
+        </aside>
+      )}
       <Modal
         open={advanced}
         title={t('Advanced Tool Settings')}

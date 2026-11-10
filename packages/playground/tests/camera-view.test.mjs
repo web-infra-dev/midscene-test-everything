@@ -238,7 +238,7 @@ test('camera-only corrected preview requires a saved target before streaming', a
   assert.equal(owners.size, 0);
 });
 
-test('a new camera preview retires the previous multipart response', async () => {
+test('two viewers can share a camera and closing one only releases its lease', async () => {
   const first = fixture();
   const second = fixture();
   let owners = 0;
@@ -255,7 +255,10 @@ test('a new camera preview retires the previous multipart response', async () =>
   await tick();
   const pendingSecond = streamStandalonePreview(second.res, cameras, 'camera');
   await tick();
-  assert.equal(first.res.destroyed, true);
+  assert.equal(first.res.destroyed, false);
+  first.res.destroy();
+  await pendingFirst;
+  assert.equal(owners, 1);
   assert.equal(second.res.destroyed, false);
   second.res.destroy();
   await Promise.all([pendingFirst, pendingSecond]);

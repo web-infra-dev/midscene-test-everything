@@ -13,6 +13,8 @@ import type { PhonePairings } from './phone-pairings.js';
 import { ScreenCalibration } from './screen-calibration.js';
 
 interface CalibrationSession {
+  attemptId: string;
+  cancelling?: Promise<void>;
   abort: AbortController;
   phase: string;
   token: string;
@@ -99,24 +101,54 @@ export class PlaygroundDevices {
       };
     });
   }
-  markerCodes(id: string) {
+  markerSlot(id: string) {
     const targets =
       controllerRuntime(this.arm).profileStore.list().screenTargets ?? [];
     const target = targets.find((t) => t.id === id);
-    const slot =
-      target?.markerSlot ??
-      (target && target.id !== target.cameraId
-        ? targets
-            .filter((t) => t.cameraId === target.cameraId)
-            .findIndex((t) => t.id === id) + 1
-        : 0);
+    if (target?.markerSlot !== undefined) return target.markerSlot;
+    const cameraId = target?.cameraId ?? id;
+    const screens = targets.filter(
+      (t) => t.cameraId === cameraId && !t.archived,
+    );
+    const used = new Set(
+      screens.flatMap((t) =>
+        t.markerSlot === undefined ? [] : [t.markerSlot],
+      ),
+    );
+    // Reserve an unsaved default too. An already-open host must keep its codes
+    // if a sibling enters calibration before it does.
+    for (const next of [
+      cameraId,
+      ...screens.filter((t) => t.id !== cameraId).map((t) => t.id),
+    ]) {
+      if (screens.find((t) => t.id === next)?.markerSlot !== undefined)
+        continue;
+      let slot = 0;
+      while (used.has(slot)) slot++;
+      if (next === id) return slot;
+      used.add(slot);
+    }
+    throw new RobotArmError('INVALID_ARGUMENT', 'Screen not found');
+  }
+  markerCodes(id: string) {
+    const slot = this.markerSlot(id);
     return [10, 11, 12, 13, 14, 15].map((code) => code + slot * 10);
   }
-  async ensureHost(id: string) {
-    const entry = await this.open(id);
+  async ensureHost(id: string, runningOnly = false) {
+    const entry = runningOnly ? this.entries.get(id) : await this.open(id);
+    if (!entry || this.closed || this.stopping.has(id))
+      throw new RobotArmError(
+        'VISION_UNAVAILABLE',
+        'Camera is not running',
+        409,
+      );
     if (entry.host) return entry.host;
     entry.hostOpening ??= (async () => {
       const token = (await this.pairings?.token(id)) ?? randomUUID();
+      const store = controllerRuntime(this.arm).profileStore;
+      const target = store.list().screenTargets?.find((t) => t.id === id);
+      if (target && target.markerSlot === undefined)
+        await store.updateScreenTarget(id, { markerSlot: this.markerSlot(id) });
       const host = new this.Host({
         arm: this.arm,
         camera: entry.camera,
@@ -132,11 +164,14 @@ export class PlaygroundDevices {
       } catch (error) {
         await host.close();
         throw error;
-      } finally {
-        entry.hostOpening = undefined;
       }
     })();
-    return entry.hostOpening;
+    const opening = entry.hostOpening;
+    try {
+      return await opening;
+    } finally {
+      if (entry.hostOpening === opening) entry.hostOpening = undefined;
+    }
   }
   pairingLinks(token: string) {
     return this.phoneLinks(token);
@@ -151,16 +186,20 @@ export class PlaygroundDevices {
     await this.open(id);
     return { id, cameraId, name };
   }
-  async startAll(discover = listCameras) {
+  async startAll(discover = listCameras, previewing: readonly string[] = []) {
     this.discoveryError = undefined;
     try {
       const cameras = await discover({ refresh: true });
-      await Promise.allSettled(cameras.map((camera) => this.open(camera.id)));
+      const cameraIds = new Set([
+        ...cameras.map((camera) => camera.id),
+        ...previewing,
+      ]);
+      await Promise.allSettled([...cameraIds].map((id) => this.open(id)));
       const targets =
         controllerRuntime(this.arm).profileStore.list().screenTargets ?? [];
       await Promise.allSettled(
         targets
-          .filter((t) => cameras.some((c) => c.id === t.cameraId))
+          .filter((t) => cameraIds.has(t.cameraId))
           .map((t) => this.open(t.id)),
       );
     } catch (error) {
@@ -230,6 +269,12 @@ export class PlaygroundDevices {
   }
   stop(id: string) {
     if (this.stopping.has(id)) return this.stopping.get(id);
+    const opening = this.calibrationOpening.get(id);
+    if (
+      opening &&
+      this.entries.get(id)?.calibration?.attemptId !== opening.attemptId
+    )
+      opening.abort.abort();
     const pending = (async () => {
       await this.opening.get(id)?.catch(() => undefined);
       const entry = this.entries.get(id);
@@ -241,7 +286,10 @@ export class PlaygroundDevices {
             .map(([key]) => this.stop(key)),
         );
       }
-      entry.calibration?.abort.abort();
+      if (entry.calibration)
+        await this.cancelCalibration(id, entry.calibration.attemptId);
+      // A host preparing concurrently still owns listeners and a phone socket.
+      await entry.hostOpening?.catch(() => undefined);
       await entry.host?.close();
       await entry.device.destroy();
       await this.cameras.release(entry.cameraId, entry.owner);
@@ -252,8 +300,14 @@ export class PlaygroundDevices {
     return pending;
   }
   async configuration(id: string) {
-    const { device } = await this.open(id);
-    return device.configuration();
+    const entry = this.entries.get(id);
+    if (!entry || this.stopping.has(id))
+      throw new RobotArmError(
+        'VISION_UNAVAILABLE',
+        'Start the camera before checking calibration',
+        409,
+      );
+    return entry.device.configuration();
   }
   async updateConfiguration(
     id: string,
@@ -320,26 +374,42 @@ export class PlaygroundDevices {
     });
     return this.transferConfiguration(fromId);
   }
-  private calibrationOpening = new Map<string, Promise<unknown>>();
+  private calibrationOpening = new Map<
+    string,
+    { attemptId: string; abort: AbortController; pending: Promise<unknown> }
+  >();
   startCalibration(id: string): Promise<unknown> {
     this.assertBatchIdle();
-    const current = this.calibrationOpening.get(id);
-    if (current) return current;
-    const pending = this.prepareCalibration(id);
-    this.calibrationOpening.set(id, pending);
+    const opening = this.calibrationOpening.get(id);
+    if (opening) return opening.pending;
+    const existing = this.entries.get(id)?.calibration;
+    if (existing?.cancelling)
+      throw new RobotArmError('BUSY', 'Wait for cancellation to finish', 409);
+    if (
+      existing?.phase === 'running' &&
+      existing.host?.service.status()?.stage === 'completed'
+    )
+      return existing.pending!.then(() => this.startCalibration(id));
+    if (existing && ['queued', 'running'].includes(existing.phase))
+      return Promise.resolve(this.status(id));
+    const attemptId = randomUUID();
+    const abort = new AbortController();
+    const pending = this.prepareCalibration(id, attemptId, abort);
+    this.calibrationOpening.set(id, { attemptId, abort, pending });
     void pending
       .finally(() => this.calibrationOpening.delete(id))
       .catch(() => undefined);
     return pending;
   }
-  private async prepareCalibration(id: string) {
+  private async prepareCalibration(
+    id: string,
+    attemptId: string,
+    abort: AbortController,
+  ) {
     const entry = await this.open(id);
+    abort.signal.throwIfAborted();
     const host = await this.ensureHost(id);
-    if (
-      entry.calibration &&
-      ['queued', 'running'].includes(entry.calibration.phase)
-    )
-      return this.status(id);
+    abort.signal.throwIfAborted();
     let ready!: () => void;
     let failed!: (error: unknown) => void;
     const prepared = new Promise<void>((resolve, reject) => {
@@ -348,7 +418,8 @@ export class PlaygroundDevices {
     });
     void prepared.catch(() => undefined);
     const session: CalibrationSession = {
-      abort: new AbortController(),
+      attemptId,
+      abort,
       phase: 'queued',
       ready: prepared,
       // Pairing belongs to this device, not to one calibration attempt.
@@ -357,6 +428,10 @@ export class PlaygroundDevices {
         (await this.pairings?.token(id)) ??
         randomUUID(),
     };
+    if (this.closed || this.stopping.has(id) || entry !== this.entries.get(id))
+      throw new Error('Camera is stopping');
+    abort.signal.throwIfAborted();
+    this.assertBatchIdle();
     entry.calibration = session;
     session.pending = entry.device
       .calibrate({
@@ -366,6 +441,10 @@ export class PlaygroundDevices {
         phoneLinks: () => this.phoneLinks(session.token),
         markerCodes: this.markerCodes(id),
         interaction: async (host, signal) => {
+          signal.throwIfAborted();
+          if (session.phase !== 'queued')
+            throw new Error('Calibration cancelled');
+          host.service.resetAttempt();
           session.host = host;
           session.phase = 'running';
           ready();
@@ -380,11 +459,14 @@ export class PlaygroundDevices {
               finish(signal.reason ?? new Error('Calibration cancelled'));
             const timer = setInterval(() => {
               try {
+                if (session.phase === 'cancelling') return;
                 const state = host.service.status();
                 if (state?.stage === 'completed' && state.result)
                   finish(undefined, state.result);
-                else if (state?.stage === 'cancelled')
+                else if (state?.stage === 'cancelled') {
+                  session.phase = 'cancelled';
                   finish(new Error('Calibration cancelled'));
+                }
               } catch (error) {
                 finish(error);
               }
@@ -399,7 +481,12 @@ export class PlaygroundDevices {
           session.phase = 'completed';
         },
         (error) => {
-          session.phase = session.abort.signal.aborted ? 'cancelled' : 'error';
+          session.phase =
+            session.abort.signal.aborted ||
+            session.phase === 'cancelled' ||
+            session.phase === 'cancelling'
+              ? 'cancelled'
+              : 'error';
           session.error = error.message;
           failed(error);
         },
@@ -409,18 +496,48 @@ export class PlaygroundDevices {
   status(id: string) {
     const session = this.entries.get(id)?.calibration;
     return session
-      ? { phase: session.phase, error: session.error }
+      ? {
+          phase: session.phase,
+          attemptId: session.attemptId,
+          error: session.error,
+        }
       : { phase: 'idle' };
   }
-  async cancelCalibration(id: string) {
-    const entry = this.entries.get(id);
-    const session = entry?.calibration;
-    if (!session) return;
-    this.assertBatchIdle();
-    if (session && ['queued', 'running'].includes(session.phase))
-      await entry?.host?.service.stop();
-    session?.abort.abort();
-    await session?.pending;
+  async cancelCalibration(id: string, attemptId?: string) {
+    const opening = this.calibrationOpening.get(id);
+    if (
+      opening &&
+      (!attemptId || attemptId === opening.attemptId) &&
+      this.entries.get(id)?.calibration?.attemptId !== opening.attemptId
+    ) {
+      opening.abort.abort();
+      await opening.pending.catch(() => undefined);
+      return;
+    }
+    const session = this.entries.get(id)?.calibration;
+    if (!session || (attemptId && session.attemptId !== attemptId)) return;
+    if (session.cancelling) return session.cancelling;
+    if (!['queued', 'running'].includes(session.phase)) return;
+    const host = session.host; // Only a running lease owns a workflow.
+    session.phase = 'cancelling';
+    session.cancelling = (async () => {
+      let committed = false;
+      try {
+        await host?.service.stop();
+        committed = host?.service.status()?.stage === 'completed';
+      } finally {
+        // Acceptance can win just before a cancel arrives. Let the Device
+        // validate that committed result instead of labelling it cancelled.
+        if (committed) session.phase = 'running';
+        else session.abort.abort();
+        await session.pending;
+      }
+    })();
+    try {
+      await session.cancelling;
+    } finally {
+      session.cancelling = undefined;
+    }
   }
   assertBatchIdle() {
     const batch = this.batch.read();
@@ -434,11 +551,18 @@ export class PlaygroundDevices {
         409,
       );
   }
-  assertCalibrationRunning(id: string) {
-    if (this.entries.get(id)?.calibration?.phase !== 'running')
+  assertCalibrationRunning(id: string, attemptId: string) {
+    const session = this.entries.get(id)?.calibration;
+    if (session?.phase !== 'running')
       throw new RobotArmError(
         'BUSY',
         'Wait for the Controller queue before starting calibration commands',
+        409,
+      );
+    if (attemptId !== session.attemptId)
+      throw new RobotArmError(
+        'STALE_CONTEXT',
+        'The screen calibration attempt changed',
         409,
       );
   }

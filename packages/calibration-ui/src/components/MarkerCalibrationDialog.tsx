@@ -163,6 +163,7 @@ export function MarkerCalibrationDialog({
     session: MarkerCalibrationSession,
     response: MarkerCalibrationDetectionResponse,
     detectedTargetIds: string[],
+    token: string,
   ) => void | Promise<void>;
   onSessionCreated?: (session: MarkerCalibrationCreateResult) => void;
   onSessionCancelled?: (sessionId: string) => void;
@@ -423,6 +424,7 @@ export function MarkerCalibrationDialog({
    * pages stay with the screen that owns them instead of being taken over.
    */
   const pageServesAnotherScreen = (device: ScreenDeviceSummary) => {
+    if (device.screenId && !ownTargetIds.has(device.screenId)) return true;
     const displayId = device.targetDisplayId;
     if (!displayId) return false;
     const display = targetDisplays.find((item) => item.id === displayId);
@@ -437,6 +439,7 @@ export function MarkerCalibrationDialog({
    * display cannot be identified is never taken over.
    */
   const pageCanBeClaimed = (device: ScreenDeviceSummary) => {
+    if (device.screenId && !ownTargetIds.has(device.screenId)) return false;
     if (device.cameraId && device.cameraId !== stream?.deviceId) return false;
     const displayId = device.targetDisplayId;
     if (!displayId) return true;
@@ -1016,8 +1019,10 @@ export function MarkerCalibrationDialog({
         );
         // Keep the calibration displays after success: the console hands each
         // assigned page over to page mapping without a second scan.
+        if (controller.signal.aborted || activeSessionId.current !== session.id)
+          return;
         handingOff.current = true;
-        await onDetected(response.session, response, detectionTargetIds);
+        await onDetected(response.session, response, detectionTargetIds, token);
         activeSessionId.current = undefined;
         activeToken.current = undefined;
         onClose();
@@ -1275,6 +1280,26 @@ export function MarkerCalibrationDialog({
         ? 1
         : 0;
 
+  const markerSteps = [
+    {
+      title: t('Pair Phone'),
+      description: t(
+        'Open the screen page on the phone and keep it visible in fullscreen.',
+      ),
+    },
+    {
+      title: t('Detect Markers'),
+      description: t(
+        'Detection starts automatically after the paired page is ready.',
+      ),
+    },
+    {
+      title: t('Review and Apply'),
+      description: t(
+        'Check the screen outline and corrected image before using the result.',
+      ),
+    },
+  ];
   return (
     <MarkerCalibrationPanel
       variant={variant}
@@ -1414,30 +1439,23 @@ export function MarkerCalibrationDialog({
           </Space.Compact>
         )}
         {!simplified && (
-          <Steps
-            size="small"
-            current={currentStep}
-            items={[
-              {
-                title: t('Pair Phone'),
-                description: t(
-                  'Open the screen page on the phone and keep it visible in fullscreen.',
-                ),
-              },
-              {
-                title: t('Detect Markers'),
-                description: t(
-                  'Detection starts automatically after the paired page is ready.',
-                ),
-              },
-              {
-                title: t('Review and Apply'),
-                description: t(
-                  'Check the screen outline and corrected image before using the result.',
-                ),
-              },
-            ]}
-          />
+          <div>
+            <Steps
+              size="small"
+              responsive={variant !== 'inline'}
+              current={currentStep}
+              items={
+                variant === 'inline'
+                  ? markerSteps.map(({ title }) => ({ title }))
+                  : markerSteps
+              }
+            />
+            {variant === 'inline' && (
+              <Typography.Text type="secondary">
+                {markerSteps[currentStep].description}
+              </Typography.Text>
+            )}
+          </div>
         )}
 
         {session && unassignedTargets.length > 0 && (

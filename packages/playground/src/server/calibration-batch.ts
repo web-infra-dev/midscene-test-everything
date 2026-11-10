@@ -445,7 +445,9 @@ export class CalibrationBatch {
         [...this.devices.entries.values()].some(
           (entry) =>
             entry.calibration &&
-            ['queued', 'running'].includes(entry.calibration.phase),
+            ['queued', 'running', 'cancelling'].includes(
+              entry.calibration.phase,
+            ),
         )
       )
         throw new RobotArmError(
@@ -571,6 +573,9 @@ export class CalibrationBatch {
             state.status = 'running';
             row.status = 'preparing';
             row.attempts++;
+            row.calibrationProfileId = undefined;
+            row.progress = undefined;
+            row.note = undefined;
             row.error = undefined;
           });
           const host = await this.devices.ensureHost(row.deviceId);
@@ -598,6 +603,17 @@ export class CalibrationBatch {
             if (!host.service.setup().mapping) await host.alignForBatch(signal);
             this.check(signal);
             let session = await host.service.create();
+            const attemptId = session.id;
+            const readAttempt = () => {
+              const status = host.service.status();
+              if (!status || status.id !== attemptId)
+                throw new RobotArmError(
+                  'STALE_CONTEXT',
+                  'The screen calibration attempt changed',
+                  409,
+                );
+              return status;
+            };
             host.service.setBatchTravelHeight(this.transfer?.travelTipZMm);
             const selection = this.selection(state.cameraId!);
             if (!session.referencePosition) {
@@ -625,7 +641,7 @@ export class CalibrationBatch {
                     tool.offsetMm,
                   ),
                 );
-                session = host.service.status()!;
+                session = readAttempt();
               }
             }
             while (!session.referencePosition) {
@@ -637,7 +653,7 @@ export class CalibrationBatch {
                 });
               await this.wait(signal);
               if (this.choice) break;
-              session = host.service.status()!;
+              session = readAttempt();
             }
             if (this.choice) throw new Error('Batch screen changed');
             this.check(signal);
@@ -657,7 +673,7 @@ export class CalibrationBatch {
             while (true) {
               this.check(signal);
               if (this.choice) break;
-              const current = host.service.status()!;
+              const current = readAttempt();
               if (current.stage === 'completed' && current.result) {
                 last = current.result;
                 await this.update(() => {

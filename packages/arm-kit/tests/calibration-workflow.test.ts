@@ -1,5 +1,8 @@
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, describe, expect, it, rstest } from '@rstest/core';
+import { createCalibrationClient } from '../../calibration-ui/src/client.js';
 import {
   calibrationCaptureTargets,
   calibrationPageMarkers,
@@ -9,9 +12,11 @@ import type {
   CalibrationPageUpdate,
   WebPoint,
 } from '../src/assisted-contracts.js';
+import { createCalibrationHandler } from '../src/calibration-server/handler.js';
 import { AutomaticCapture } from '../src/calibration/exploration/capture.js';
 import { explorationTargets } from '../src/calibration/exploration/targets.js';
 import { CalibrationWorkflow } from '../src/calibration/workflow.js';
+import { RobotVisionError } from '../src/camera/errors.js';
 import { RobotArmError } from '../src/contracts.js';
 import { contactPoint } from '../src/domain.js';
 import { fixture, pose } from './fixtures.js';
@@ -26,7 +31,7 @@ afterEach(() => {
   rstest.unstubAllGlobals();
   rstest.restoreAllMocks();
 });
-async function setup() {
+async function setup(deviceId = 'cam') {
   const f = await fixture();
   const originalBinding = f.store.list().workstation!;
   await f.store.acceptDeviceBinding({
@@ -60,20 +65,22 @@ async function setup() {
     height: options.height,
   });
   const assertPerspectiveCurrent = rstest.fn(async () => {});
-  const service = new CalibrationWorkflow(f.runtime, {
-    deviceId: 'cam',
-    vision: {
-      assertPerspectiveCurrent,
-      binding,
-      snapshot: async (options) => ({
-        base64: jpg.toString('base64'),
-        width: options.width,
-        height: options.height,
-        binding: await binding(options),
-      }),
-      detectMarkers: async () => detectMarkers().json(),
-    },
-  });
+  const forScreen = (owner: string) =>
+    new CalibrationWorkflow(f.runtime, {
+      deviceId: owner,
+      vision: {
+        assertPerspectiveCurrent,
+        binding,
+        snapshot: async (options) => ({
+          base64: jpg.toString('base64'),
+          width: options.width,
+          height: options.height,
+          binding: await binding(options),
+        }),
+        detectMarkers: async () => detectMarkers().json(),
+      },
+    });
+  const service = forScreen(deviceId);
   await service.prepare({
     robotProfileId: f.robot.id,
     toolProfileId: f.tool.id,
@@ -124,6 +131,7 @@ async function setup() {
   const state = await service.create();
   return {
     ...f,
+    forScreen,
     assertPerspectiveCurrent,
     service,
     state,
@@ -181,7 +189,9 @@ describe('phone-assisted calibration coordinator', () => {
   it.each(['start-automatic', 'start-fast', 'start-slide'] as const)(
     'runs upstream boundaries, records a Safe Position and accepts without click verification (%s)',
     async (action) => {
-      const f = await setup();
+      const screenId = action === 'start-fast' ? 'right' : 'cam';
+      const f = await setup(screenId);
+      const original = f.store.deviceBinding('cam');
       const timer = setInterval(() => void f.send(), 50);
       try {
         rstest
@@ -274,6 +284,34 @@ describe('phone-assisted calibration coordinator', () => {
         expect(saved.result?.verification?.web).toBeUndefined();
         expect(saved.result?.verification?.auto?.humanAccepted).toBe(true);
         expect(saved.result?.observationPose).toEqual(pose(150, -50, 100));
+        expect(f.store.deviceBinding(screenId)?.calibrationProfileId).toBe(
+          saved.result!.id,
+        );
+        if (screenId === 'right') {
+          expect(f.store.deviceBinding('cam')).toEqual(original);
+          const recording = f.service.recording();
+          const other = f.forScreen('cam');
+          expect(recording.deviceId).toBe(screenId);
+          await expect(
+            other.restoreRecording(recording, true),
+          ).rejects.toMatchObject({ code: 'PROFILE_MISMATCH' });
+          expect(other.status()).toBeNull();
+          const beforeRetry = f.adapter.movements.length;
+          f.service.resetAttempt();
+          const retry = await f.service.create();
+          expect(retry.id).not.toBe(saved.id);
+          expect(retry).toMatchObject({
+            points: [],
+            samples: 0,
+            stage: 'ready',
+            phoneConnected: true,
+          });
+          expect(retry.result).toBeUndefined();
+          expect(f.store.deviceBinding(screenId)?.calibrationProfileId).toBe(
+            saved.result!.id,
+          );
+          expect(f.adapter.movements).toHaveLength(beforeRetry);
+        }
       } finally {
         clearInterval(timer);
         await f.dispose();
@@ -289,6 +327,142 @@ describe('phone-assisted calibration coordinator', () => {
       expect(f.beforeTask.operation?.status).not.toBe('running');
       expect(f.service.status()?.stage).toBe('ready');
       expect(f.adapter.movements).toHaveLength(0);
+    } finally {
+      await f.dispose();
+    }
+  });
+  it('cannot install a draft after the operator cancels during a slow mapping check', async () => {
+    const f = await setup('right');
+    try {
+      const phone = f.service.phoneStatus().diagnostics?.pageId;
+      const mapping = f.service.setup().mapping;
+      await f.service.stop();
+      f.service.resetAttempt();
+      let release!: () => void;
+      f.assertPerspectiveCurrent.mockImplementationOnce(
+        () =>
+          new Promise<void>((r) => {
+            release = r;
+          }),
+      );
+      const pending = f.service.create();
+      const stopping = f.service.stop();
+      release();
+      await expect(pending).rejects.toMatchObject({ code: 'ACTION_STOPPED' });
+      await stopping;
+      expect(f.service.status()).toBeNull();
+      const retry = await f.service.create();
+      expect(retry.mapping).toEqual(mapping);
+      expect(retry.points).toEqual([]);
+      expect(f.service.phoneStatus().diagnostics?.pageId).toBe(phone);
+      expect(f.store.deviceBinding('right')).toBeUndefined();
+      expect(f.adapter.movements).toHaveLength(0);
+    } finally {
+      await f.dispose();
+    }
+  });
+  it('discards partial touches after cancel while keeping both the phone and the sibling’s accepted mapping', async () => {
+    const f = await setup('right');
+    const phone = f.service.phoneStatus().diagnostics?.pageId;
+    const original = f.store.deviceBinding('cam')!;
+    const screen = f.store.getScreen(original.screenProfileId);
+    try {
+      expect(screen.phoneMapping?.visionFingerprint).toBe(
+        original.vision.fingerprint,
+      );
+      const mapping = f.service.setup().mapping;
+      rstest
+        .spyOn(AutomaticCapture.prototype, 'run')
+        .mockImplementation(async function (this: AutomaticCapture, host) {
+          this.points.push({
+            point: { x: 75, y: 100 },
+            positionMm: { x: 25, y: 30, z: 30 },
+            purpose: 'fit',
+            readings: 1,
+            tipSpreadMm: 0,
+            touchSpreadPx: 0,
+          });
+          await new Promise<void>((resolve) =>
+            host.signal.addEventListener('abort', () => resolve(), {
+              once: true,
+            }),
+          );
+          host.check();
+        });
+      await f.recordReference();
+      await f.service.command(f.state.id, 'start-fast', true);
+      await rstest.waitFor(() => expect(f.service.status()?.samples).toBe(1));
+      await f.service.stop();
+      f.service.resetAttempt();
+      await f.send();
+      const retry = await f.service.create();
+      expect(retry.id).not.toBe(f.state.id);
+      expect(retry).toMatchObject({
+        stage: 'ready',
+        points: [],
+        samples: 0,
+        mapping,
+      });
+      expect(f.service.phoneStatus().diagnostics?.pageId).toBe(phone);
+      expect(f.store.getScreen(original.screenProfileId)).toEqual(screen);
+      expect(f.store.deviceBinding('cam')).toEqual(original);
+      expect(f.store.deviceBinding('right')).toBeUndefined();
+      await expect(
+        f.service.command(f.state.id, 'accept', true),
+      ).rejects.toMatchObject({ code: 'CALIBRATION_REQUIRED' });
+    } finally {
+      await f.dispose();
+    }
+  });
+  it('starts a fresh regular collection only on confirmation after a failed slide', async () => {
+    const f = await setup('right');
+    try {
+      const run = rstest
+        .spyOn(AutomaticCapture.prototype, 'run')
+        .mockImplementationOnce(async function (this: AutomaticCapture) {
+          this.points.push({
+            point: { x: 75, y: 100 },
+            positionMm: { x: 25, y: 30, z: 30 },
+            purpose: 'fit',
+            readings: 1,
+            tipSpreadMm: 0,
+            touchSpreadPx: 0,
+          });
+          throw new Error('Lost sliding contact');
+        })
+        .mockRejectedValue(new Error('Point probe failed'));
+      const reference = await f.recordReference();
+      await f.service.command(f.state.id, 'start-slide', true);
+      await rstest.waitFor(() =>
+        expect(f.service.status()).toMatchObject({
+          stage: 'interrupted',
+          explorationMode: 'slide',
+          collectionFailed: true,
+          samples: 1,
+        }),
+      );
+      await expect(
+        f.service.command(f.state.id, 'retry-standard'),
+      ).rejects.toMatchObject({ code: 'CONFIRMATION_REQUIRED' });
+      expect(run).toHaveBeenCalledTimes(1);
+      const retry = await f.service.command(f.state.id, 'retry-standard', true);
+      expect(retry.id).not.toBe(f.state.id);
+      expect(retry).toMatchObject({
+        explorationMode: 'standard',
+        samples: 0,
+        referencePosition: reference.referencePosition,
+        mapping: reference.mapping,
+      });
+      await rstest.waitFor(() =>
+        expect(f.service.status()?.stage).toBe('interrupted'),
+      );
+      await expect(
+        f.service.command(f.state.id, 'retry-standard', true),
+      ).rejects.toMatchObject({ code: 'CALIBRATION_REQUIRED' });
+      await expect(
+        f.service.command(retry.id, 'retry-standard', true),
+      ).rejects.toMatchObject({ code: 'INVALID_STAGE' });
+      expect(run).toHaveBeenCalledTimes(2);
     } finally {
       await f.dispose();
     }
@@ -365,6 +539,42 @@ describe('phone-assisted calibration coordinator', () => {
       await f.dispose();
     }
   });
+  it('confirms the selected screen mapping over HTTP with the prepared output or an explicit size', async () => {
+    const f = await setup('right-screen');
+    const basePath = '/api/devices/right-screen/calibration';
+    const handle = createCalibrationHandler({ service: f.service, basePath });
+    const server = createServer((req, res) => void handle(req, res));
+    try {
+      await new Promise<void>((resolve) =>
+        server.listen(0, '127.0.0.1', resolve),
+      );
+      const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}${basePath}`;
+      const client = createCalibrationClient({ baseUrl });
+      const confirmed = await client.mapAssistedCalibration();
+      expect(confirmed.mapping).toEqual(f.beforeTask.setup.mapping);
+      const output = { cameraId: 'cam', width: 600, height: 900 };
+      const resized = await client.mapAssistedCalibration(output);
+      expect(resized.mapping?.vision).toMatchObject(output);
+      expect((await client.mapAssistedCalibration()).mapping).toEqual(
+        resized.mapping,
+      );
+      await expect(
+        client.mapAssistedCalibration({ ...output, cameraId: 'other-camera' }),
+      ).rejects.toThrow('camera or output size changed');
+      const partial = await fetch(
+        `${baseUrl}/assisted-calibration/setup/mapping`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ cameraId: 'cam', width: 600 }),
+        },
+      );
+      expect(await partial.json()).toMatchObject({ code: 'INVALID_MAPPING' });
+      expect(f.adapter.movements).toHaveLength(0);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await f.dispose();
+    }
+  });
   it('reuses unchanged camera mapping and detects again when the vision fingerprint changes', async () => {
     const f = await setup();
     try {
@@ -375,10 +585,15 @@ describe('phone-assisted calibration coordinator', () => {
       expect(f.detectMarkers).toHaveBeenCalledTimes(1);
       expect(f.detectMarkers).toHaveBeenCalledTimes(before);
       f.changeCamera();
+      f.detectMarkers.mockImplementationOnce(() => {
+        throw new RobotVisionError(
+          'NO_SCREEN_DETECTED',
+          'temporary marker loss',
+        );
+      });
       const updated = await f.service.mapSetup();
       expect(updated.mapping?.vision.fingerprint).toBe('changed');
-      expect(f.detectMarkers).toHaveBeenCalledTimes(2);
-      expect(f.detectMarkers).toHaveBeenCalledTimes(before + 1);
+      expect(f.detectMarkers).toHaveBeenCalledTimes(before + 2);
     } finally {
       await f.dispose();
     }
@@ -815,6 +1030,8 @@ it('automatically parks after boundary verification with taught mounting and sti
     f.adapter.setPoseForTesting(pose(100, 50, 80));
     await f.service.command(f.state.id, 'record-boundary', true);
     await f.service.command(f.state.id, 'save-teaching', true);
+    f.adapter.setPoseForTesting(pose(100, 50.000008, 75));
+    const move = rstest.spyOn(f.adapter, 'moveLinear');
     await f.service.command(f.state.id, 'start-automatic', true);
     await rstest.waitFor(
       () => {
@@ -825,6 +1042,17 @@ it('automatically parks after boundary verification with taught mounting and sti
       { timeout: 30000 },
     );
     const state = f.service.status()!;
+    expect(move.mock.calls.slice(0, 3).map(([p]) => p)).toEqual([
+      pose(100, 50, 80),
+      pose(100, -50, 80),
+      pose(100, -50, 80),
+    ]);
+    for (const [, options] of move.mock.calls.slice(0, 3)) {
+      expect(options).toMatchObject({
+        speed: f.screen.actionSpeed,
+        acceleration: f.screen.actionAcceleration,
+      });
+    }
     expect(state.calibration?.auto?.observationRecorded).toBe(true);
     expect(state.safePosition!.positionMm.z).toBeGreaterThanOrEqual(80);
     expect(state.result).toBeUndefined();

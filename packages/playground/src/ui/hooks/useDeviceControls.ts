@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { requiresCalibration } from '../device-readiness';
 import type { CalibrationProfile, ScreenProfile } from '../robot-arm-api';
 import { useRobotArm } from './useRobotArm';
 
@@ -38,8 +39,8 @@ export function useDeviceControls(id: string) {
       const value = await response.json();
       if (
         route === 'configuration' &&
-        response.status === 409 &&
-        value.code === 'CALIBRATION_REQUIRED'
+        !response.ok &&
+        requiresCalibration(value.code)
       )
         return undefined;
       if (!response.ok)

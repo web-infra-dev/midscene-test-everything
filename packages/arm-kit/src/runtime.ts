@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import type { MotionTarget } from './application/context.js';
 import { assertCameraBoundary } from './application/teaching-constraints.js';
+import type { AutomaticCaptureHost } from './assisted-contracts.js';
 import { screenPoseMm } from './calibration/geometry.js';
 import { contactDepthMm, surfaceClearanceMm } from './calibration/surface.js';
+import { moveToTaughtPosition } from './calibration/taught-position.js';
 import { applyCalibrationCommand } from './calibration/verification/commands.js';
 import {
   calibrationSessionStatus,
@@ -21,7 +23,9 @@ import {
   type CartesianPose,
   type ContactMoveOptions,
   type CurrentOperation,
+  type DeviceBinding,
   type EnableRequest,
+  type MotionOptions,
   type MotionResult,
   type PayloadApplicationState,
   type ProfileBinding,
@@ -33,6 +37,7 @@ import {
   type RuntimeState,
   SCREEN_TILT_LIMIT_DEGREES,
   type SafePositionRequest,
+  type ScreenMotionSettings,
   type ScreenProfile,
   type ToolProfile,
   type VisionBinding,
@@ -123,6 +128,15 @@ const JOG_RELEASE_COOLDOWN_MS = 250;
 /** How often a failed jog release is retried before a real stop is issued. */
 const JOG_RETRY_MS = 400;
 const JOG_STOP_ATTEMPTS = 3;
+function captureMotion(
+  options?: Pick<MotionOptions, 'speed' | 'acceleration'>,
+): MotionOptions {
+  return {
+    speed: options?.speed ?? { kind: 'ratio', value: 0.01 },
+    acceleration: options?.acceleration ?? { kind: 'ratio', value: 0.01 },
+    arrivalSamples: 1,
+  };
+}
 export class RobotArmRuntime extends RobotKernel {
   private stopGeneration = 0;
   get stopRevision() {
@@ -142,7 +156,8 @@ export class RobotArmRuntime extends RobotKernel {
       cameraId?: string;
     },
     work: (
-      host: import('./assisted-contracts.js').AutomaticCaptureHost,
+      host: AutomaticCaptureHost &
+        Required<Pick<AutomaticCaptureHost, 'preflight'>>,
     ) => Promise<T>,
     calibrationSessionId?: string,
   ): Promise<T> {
@@ -236,7 +251,7 @@ export class RobotArmRuntime extends RobotKernel {
         signal,
         check,
         stop: () => this.adapter.stop(),
-        preflight: async (poses) => {
+        preflight: async (poses, motion) => {
           for (const pose of poses) {
             check();
             assertPose(pose);
@@ -246,10 +261,7 @@ export class RobotArmRuntime extends RobotKernel {
             await this.adapter.preflightCartesian(
               'linear',
               pose,
-              {
-                speed: { kind: 'ratio', value: 0.01 },
-                acceleration: { kind: 'ratio', value: 0.01 },
-              },
+              captureMotion(motion),
               robot.workspace,
             );
           }
@@ -280,17 +292,7 @@ export class RobotArmRuntime extends RobotKernel {
             });
           if (teaching) assertCameraBoundary(pose, teaching, { tool });
           assertOrientation(pose, this.capabilities);
-          const options = {
-            speed: probeOptions?.speed ?? {
-              kind: 'ratio' as const,
-              value: 0.01,
-            },
-            acceleration: probeOptions?.acceleration ?? {
-              kind: 'ratio' as const,
-              value: 0.01,
-            },
-            arrivalSamples: 1,
-          };
+          const options = captureMotion(probeOptions);
           await this.adapter.preflightCartesian(
             'linear',
             pose,
@@ -498,6 +500,8 @@ export class RobotArmRuntime extends RobotKernel {
     evidence:
       | import('./assisted-contracts.js').WebVerificationEvidence
       | { protocol: 'auto-boundary-v1'; automatic?: boolean },
+    binding?: DeviceBinding,
+    guard?: () => void,
   ): Promise<CalibrationProfile> {
     if (
       this.commandBusy ||
@@ -592,7 +596,14 @@ export class RobotArmRuntime extends RobotKernel {
       s.revision++;
       c.updatedAt = new Date().toISOString();
       c.revision++;
-      await this.profileStore.commitCalibration(s, () => this.check());
+      await this.profileStore.commitCalibration(
+        s,
+        () => {
+          this.check();
+          guard?.();
+        },
+        binding,
+      );
       this.session = s;
       this.release('completed');
       return structuredClone(c);
@@ -2819,7 +2830,12 @@ export class RobotArmRuntime extends RobotKernel {
     });
   }
   async positionInstallationPoint(
-    input: { robotProfileId: string; toolProfileId: string; cameraId: string },
+    input: {
+      robotProfileId: string;
+      toolProfileId: string;
+      cameraId: string;
+      motion?: Pick<ScreenMotionSettings, 'actionSpeed' | 'actionAcceleration'>;
+    },
     point: import('./contracts.js').InstallationTeachingPoint,
   ) {
     const teaching = this.profileStore.installationTeaching(input);
@@ -2832,31 +2848,24 @@ export class RobotArmRuntime extends RobotKernel {
     const target =
       point === 'reference'
         ? teaching.referencePose
-        : teaching.poses.cameraBoundary;
+        : point === 'cameraBoundary'
+          ? teaching.poses.cameraBoundary
+          : undefined;
     if (!target)
       throw new RobotArmError(
         'INVALID_ARGUMENT',
         'Unknown installation position',
       );
     const tool = this.profileStore.getTool(input.toolProfileId);
-    return this.collectAutomaticPoints(input, async (host) => {
-      const current = await host.read();
-      const from = contactPoint(current, tool.offsetMm);
-      const to = contactPoint(target, tool.offsetMm);
-      const z = Math.max(
-        from.z,
-        to.z,
-        contactPoint(teaching.referencePose, tool.offsetMm).z,
+    const motion = input.motion ?? this.describeCapabilities().setupDefaults;
+    if (!motion)
+      throw new RobotArmError(
+        'MOTION_SETTINGS_REQUIRED',
+        'This adapter needs explicit screen motion settings',
       );
-      const lift = flangePose(
-        { ...from, z },
-        current.orientation,
-        tool.offsetMm,
-      );
-      const above = flangePose({ ...to, z }, target.orientation, tool.offsetMm);
-      await host.preflight!([lift, above, target]);
-      for (const pose of [lift, above, target]) await host.move(pose);
-    });
+    return this.collectAutomaticPoints(input, (host) =>
+      moveToTaughtPosition(host, teaching, tool, target, motion),
+    );
   }
   async enterDragMode(
     selection?: Pick<ProfileBinding, 'robotProfileId' | 'toolProfileId'>,

@@ -4,6 +4,8 @@ import type {
   AssistedMappingInput,
   WebCalibrationMapping,
 } from '../assisted-contracts.js';
+import { MARKER_CAPTURE_ATTEMPTS } from '../camera/calibration-markers.js';
+import { RobotVisionError } from '../camera/errors.js';
 import {
   RobotArmError,
   sameVisionMapping,
@@ -43,6 +45,7 @@ export class CalibrationSetup {
     private readonly runtime: RobotArmRuntime,
     private readonly phone: CalibrationPhoneSession,
     private readonly vision: CalibrationVision,
+    private readonly deviceId?: string,
   ) {}
   status(): AssistedCalibrationSetup {
     return structuredClone({
@@ -261,17 +264,45 @@ export class CalibrationSetup {
       return this.status()!;
     }
     this.mapping = undefined;
-    const shot = await this.vision.snapshot(this.visionOptions());
-    const body = await this.vision.detectMarkers(
-      Buffer.from(shot.base64, 'base64'),
-      layout.markers,
-    );
-    if (!sameLayout(layout, this.phone!.assertAvailable().layout))
-      throw new RobotArmError(
-        'PAGE_CHANGED',
-        'The phone page changed during detection',
-        409,
-      );
+    const pageId = this.phone.assertAvailable().pageId;
+    let shot = await this.vision.snapshot(this.visionOptions());
+    const initialBinding = shot.binding!;
+    const checkPage = () => {
+      const page = this.phone.assertAvailable();
+      if (page.pageId !== pageId || !sameLayout(layout, page.layout))
+        throw new RobotArmError(
+          'PAGE_CHANGED',
+          'The phone page changed during detection',
+          409,
+        );
+    };
+    let body: Awaited<ReturnType<CalibrationVision['detectMarkers']>>;
+    for (let attempt = 1; ; attempt++) {
+      checkPage();
+      try {
+        body = await this.vision.detectMarkers(
+          Buffer.from(shot.base64, 'base64'),
+          layout.markers,
+        );
+        break;
+      } catch (error) {
+        if (
+          attempt >= MARKER_CAPTURE_ATTEMPTS ||
+          !(error instanceof RobotVisionError) ||
+          !['NO_SCREEN_DETECTED', 'CALIBRATION_MISMATCH'].includes(error.code)
+        )
+          throw error;
+        checkPage();
+        shot = await this.vision.snapshot(this.visionOptions());
+        if (!sameVisionMapping(initialBinding, shot.binding!))
+          throw new RobotArmError(
+            'VISION_BINDING_CHANGED',
+            'Camera correction changed during marker detection',
+            409,
+          );
+      }
+    }
+    checkPage();
     project(body.webToImage, { x: 0, y: 0 });
     if (!Number.isFinite(body.markerErrorPx))
       throw new RobotArmError(
@@ -332,6 +363,9 @@ export class CalibrationSetup {
     const mapping = this.mapping!;
     const input = this.input!;
     const store = this.runtime.profileStore;
+    // A Device mapping is a draft for its next calibration. Only acceptance
+    // publishes it. The standalone workstation flow can update its own preview.
+    if (this.deviceId !== undefined) return;
     const binding = store.list().workstation;
     if (
       !binding?.calibrationProfileId ||

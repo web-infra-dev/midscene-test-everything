@@ -138,7 +138,6 @@ const messages = {
   cameraView: ['画面类型', 'Camera view'],
   rawView: ['原始画面', 'Original'],
   correctedView: ['校正画面', 'Corrected'],
-  playground: ['机械臂 Playground', 'Arm Playground'],
   preview: ['交互预览 · 未接入真实设备', 'UI preview · No physical device'],
   disconnected: ['未连接', 'Disconnected'],
   checking: ['正在检查连接', 'Checking connection'],

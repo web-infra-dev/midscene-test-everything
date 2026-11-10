@@ -1,3 +1,4 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import aruco from 'js-aruco2';
 import sharp from 'sharp';
 import type { CalibrationPageLayout } from '../assisted-contracts.js';
@@ -149,6 +150,27 @@ function screenCorners(width: number, top: number, bottom: number) {
     { x: 0, y: bottom },
   ];
 }
+export const MARKER_CAPTURE_ATTEMPTS = 3;
+class UnstableMarkerCapture extends RobotVisionError {}
+
+export async function captureScreenMarkers(
+  rawFrame: () => Promise<Buffer>,
+  layout: CalibrationPageLayout,
+) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await recognizeScreenMarkers(rawFrame, layout);
+    } catch (error) {
+      if (
+        !(error instanceof UnstableMarkerCapture) ||
+        attempt >= MARKER_CAPTURE_ATTEMPTS
+      )
+        throw error;
+      await delay(300);
+    }
+  }
+}
+
 /** Optical preview uses the old workstation's four-visible-marker fit on eight fresh frames. */
 export async function recognizeScreenMarkers(
   rawFrame: () => Promise<Buffer>,
@@ -222,7 +244,7 @@ export async function recognizeScreenMarkers(
     }
   }
   if (!reference || !best || quads.length < 4)
-    throw new RobotVisionError(
+    throw new UnstableMarkerCapture(
       'NO_SCREEN_DETECTED',
       `Only ${quads.length} of 8 frames passed. ${lastFailure instanceof Error ? lastFailure.message : ''}`,
     );
@@ -240,7 +262,7 @@ export async function recognizeScreenMarkers(
         Math.hypot(reference.imageWidth, reference.imageHeight) * 0.002,
       )
   )
-    throw new RobotVisionError(
+    throw new UnstableMarkerCapture(
       'CALIBRATION_MISMATCH',
       'Screen moved between frames. Keep the phone and camera fixed.',
     );

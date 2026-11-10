@@ -1,6 +1,8 @@
 import { assistedCalibrationZh } from './assisted-calibration-zh';
 import { migratedZh } from './migrated-zh';
 const calibrationZh: Record<string, string> = {
+  'The preview phone does not match this screen’s saved binding. Use the bound phone or release the binding first.':
+    '预览手机与此屏幕保存的配对信息不一致。请使用已绑定的手机，或先解除原绑定。',
   'Open the page on the phone, then select the device below.':
     '在手机上打开页面，再在下方选择该设备。',
   'Delete Screen': '删除屏幕',
@@ -102,8 +104,8 @@ const calibrationZh: Record<string, string> = {
   'Stopped during: {0}': '停止时阶段：{0}',
   'Waiting for touch observation': '等待触摸反馈',
   'Touch lost: recovering this endpoint': '触摸丢失，正在当前点有限补探',
-  'Fast and sliding collection assume a horizontal screen and a compliant tip. Secure the phone on a rigid support; do not hold it by hand during motion.':
-    '快速和滑动采样采用水平屏幕假设，并要求笔尖具有弹性缓冲。请用稳固支撑固定手机，机械臂运动时不要用手扶持。',
+  'This mode assumes a horizontal screen and a compliant tip. Secure the phone on a rigid support; do not hold it by hand during motion.':
+    '此模式采用水平屏幕假设，并要求笔尖具有弹性缓冲。请用稳固支撑固定手机，机械臂运动时不要用手扶持。',
   'Recorded contacts and current target': '已记录触点与当前目标',
   'Numbered circles: planned points \u00b7 Green dots: measured contacts \u00b7 Ring: current target':
     '编号圆圈：计划采样点；绿点：实测触点；外圈：当前目标。',
@@ -150,6 +152,8 @@ const calibrationZh: Record<string, string> = {
   'Confirm Area and Continue': '确认范围并继续',
   'Confirm the screen area before continuing.':
     '请先确认屏幕范围，再继续标定。',
+  'Calibrate {0}': '标定 {0}',
+  'Calibrate multiple screens': '批量标定多个屏幕',
   'Cancel Calibration': '取消本次标定',
   'Cancel Positioning': '取消位置记录',
   'Press Depth': '按压深度',
@@ -2256,7 +2260,10 @@ export const zh: Record<string, string> = {
   'Verification settings': '后续验证参数',
   'Each endpoint needs a confirmed touch. Lost contact is recovered only within a bounded range. Keep the phone and camera fixed.':
     '每个终点都需要确认触摸；丢失接触时仅在限定范围内尝试恢复。请保持手机和相机固定。',
-  'Standard probing': '标准探测',
+  Fast: '快速',
+  Regular: '普通',
+  'Confirm retry': '确认重试',
+  'Retry in regular mode?': '切换到普通模式重新采样？',
   'Fast probing': '快速探测',
   'No touch was detected before the safety height {0} mm. Sampling stopped.':
     '下降至安全高度 {0} mm 时仍未检测到触摸，采样已停止。',
@@ -2290,7 +2297,7 @@ export const zh: Record<string, string> = {
     '先测 3 个方向点，再用 4 个分布点拟合、2 个独立点验证。请保持工作区清空。',
   '{0} / {1} points recorded': '已记录 {0} / {1} 个采样点',
   'Fast calibration exhausted its local height-search budget':
-    '快速探测已用完本轮高度补探次数。请检查触控笔和支撑状态，再尝试标准探测。',
+    '快速探测已用完本轮高度补探次数。请检查触控笔和支撑状态，再尝试普通模式。',
   'No touch within the fast local recovery range':
     '当前采样点在限定高度范围内未恢复触摸，采样已停止。',
   'Contact was not sustained at height {0} mm after retry. Check the stylus and phone stability before retrying.':

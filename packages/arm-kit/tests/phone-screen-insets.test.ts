@@ -42,6 +42,9 @@ function openPhone(
     constructor() {
       socket = this;
     }
+    close() {
+      this.readyState = 2;
+    }
     send(data: string) {
       updates.push(JSON.parse(data));
     }
@@ -549,13 +552,24 @@ test('completion and transport renewal preserve the fullscreen phone document fo
   phone.receive({ view: 'completed', anchors: [] });
   expect(phone.fullscreenExits()).toBe(0);
   const urls: string[] = [];
+  const storage = new Map<string, string>();
+  const pageKey = '12345678-1234-1234-1234-123456789012';
+  Object.assign(phone.scope, {
+    localStorage: {
+      setItem: (key: string, value: string) => storage.set(key, value),
+    },
+  });
   let ready = false;
   phone.scope.fetch = async (url: string) => {
     urls.push(url);
     return {
       ok: ready,
       headers: new Headers(),
-      json: async () => ({ pageId: 'next-page', markers: Array(6).fill('') }),
+      json: async () => ({
+        pageId: 'next-page',
+        pageKey,
+        markers: Array(6).fill(''),
+      }),
     };
   };
   phone.disconnect(1006);
@@ -567,8 +581,11 @@ test('completion and transport renewal preserve the fullscreen phone document fo
   };
   await retry();
   expect(phone.reloaded()).toBe(false);
+  expect(storage.size).toBe(0);
   ready = true;
   await retry();
+  expect(storage.get('midscene-screen-page-key')).toBe(pageKey);
+  expect(storage.get('midscene-screen-page-token')).toBe('saved');
   expect(phone.reloaded()).toBe(false);
   phone.openSocket();
   phone.receive({ view: 'markers', anchors: [] });
@@ -582,6 +599,23 @@ test('completion and transport renewal preserve the fullscreen phone document fo
     'http://localhost/phone?token=saved',
     'http://localhost/phone?token=saved',
   ]);
+});
+
+test('renews a stalled socket handshake without waiting for its close event', async () => {
+  const phone = openPhone(700, 47, 34);
+  const fire = async () => {
+    const [id, callback] = [...phone.timers][0];
+    phone.timers.delete(id);
+    await callback();
+  };
+  phone.disconnect(1006);
+  await fire(); // First reconnect never opens or closes.
+  await fire(); // Handshake timeout schedules a new attempt.
+  await fire();
+  phone.openSocket();
+  expect(phone.last().pageId).toBe('next-page');
+  expect(phone.timers.size).toBe(0);
+  expect(phone.reloaded()).toBe(false);
 });
 
 test('a replaced phone page does not reconnect and steal the new page session', () => {

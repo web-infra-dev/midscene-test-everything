@@ -2,6 +2,7 @@ import { expect, test } from '@rstest/core';
 import sharp from 'sharp';
 import { calibrationPageMarkers } from '../src/assisted-contracts.js';
 import {
+  captureScreenMarkers,
   detectCalibrationMarkers,
   detectScreenFromMarkers,
   markerSvg,
@@ -290,3 +291,27 @@ test('maps each of two simultaneously visible screens using its own marker IDs',
   expect(left.accuracy.validation.maxErrorCssPx).toBeLessThanOrEqual(3);
   expect(right.accuracy.validation.maxErrorCssPx).toBeLessThanOrEqual(3);
 });
+
+test('recaptures transient marker failures and stops after three failed batches', async () => {
+  const good = await photograph();
+  const blank = await sharp({
+    create: { width: 160, height: 160, channels: 3, background: 'white' },
+  })
+    .jpeg()
+    .toBuffer();
+  let count = 0;
+  const recovered = await captureScreenMarkers(
+    async () => (++count <= 8 ? blank : good),
+    layout,
+  );
+  expect(count).toBe(16);
+  expect(recovered.validFrames).toBe(8);
+  count = 0;
+  await expect(
+    captureScreenMarkers(async () => {
+      count++;
+      return blank;
+    }, layout),
+  ).rejects.toThrow('Only 0 of 8 frames passed');
+  expect(count).toBe(24);
+}, 20000);

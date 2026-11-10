@@ -54,10 +54,10 @@ export function ExplorationProgress({
         <Tag>
           {t(
             explorationMode === 'slide'
-              ? 'Sliding collection'
+              ? 'Fast'
               : explorationMode === 'fast'
                 ? 'Fast probing'
-                : 'Standard probing',
+                : 'Regular',
           )}
         </Tag>
         <Typography.Text strong>
@@ -97,7 +97,7 @@ export function ExplorationProgress({
       {explorationMode !== 'standard' && (
         <Typography.Paragraph type="secondary">
           {t(
-            'Fast and sliding collection assume a horizontal screen and a compliant tip. Secure the phone on a rigid support; do not hold it by hand during motion.',
+            'This mode assumes a horizontal screen and a compliant tip. Secure the phone on a rigid support; do not hold it by hand during motion.',
           )}
         </Typography.Paragraph>
       )}

@@ -11,12 +11,12 @@ import zhCN from 'antd/locale/zh_CN';
 import { Languages } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import logo from './assets/midscene-logo.png';
-import { CameraOnlyWorkspace } from './components/CameraOnlyWorkspace';
 import { ConnectionScreen } from './components/ConnectionScreen';
 import { DeviceWorkspace } from './components/DeviceWorkspace';
 import { useConnection } from './connection';
 import { useSetupStore } from './hooks/useRobotArm';
 import { usePreferences, useT } from './i18n';
+import { useTasks } from './tasks';
 import './App.less';
 import './components/robot-arm/Setup.less';
 
@@ -27,9 +27,9 @@ export function App(views: PlaygroundViews) {
   const { language, setLanguage } = usePreferences();
   const { phase, check } = useConnection();
   const connected = phase === 'connected';
-  const [cameraOnly, setCameraOnly] = useState(false);
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
   useEffect(() => {
-    if (connected) setCameraOnly(false);
+    if (connected) setWorkspaceOpen(true);
   }, [connected]);
   useEffect(() => {
     let disposed = false;
@@ -40,25 +40,6 @@ export function App(views: PlaygroundViews) {
         if (disposed) return;
         const store = useSetupStore.getState();
         const connection = useConnection.getState();
-        const runtime = connection.runtime;
-        const state = runtime?.state;
-        if (
-          connection.phase === 'connected' &&
-          connection.recoveryRequired &&
-          !connection.controlPending &&
-          !store.busy &&
-          state?.connected &&
-          !runtime?.aiRun &&
-          runtime?.operation?.status !== 'running' &&
-          !runtime?.softwarePaused &&
-          !state.moving &&
-          !state.dragMode &&
-          !state.paused &&
-          !state.faults.length
-        ) {
-          await connection.recover();
-          if (disposed) return;
-        }
         const session = connection.setupSession;
         if (
           !store.setup ||
@@ -80,11 +61,12 @@ export function App(views: PlaygroundViews) {
   useEffect(() => {
     useCalibrationLanguage.getState().setLanguage(language);
     document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en';
-    document.title = t('playground');
   }, [language]);
   useEffect(
     () =>
       useConnection.subscribe((next, previous) => {
+        if (next.setupSession !== previous.setupSession)
+          useTasks.getState().reset();
         if (
           !next.runtime ||
           !previous.runtime ||
@@ -111,7 +93,7 @@ export function App(views: PlaygroundViews) {
               <div className="brand">
                 <img src={logo} alt="Midscene" />
                 <span className="brand-divider" />
-                <span>{t('playground')}</span>
+                <span translate="no">Robot Playground</span>
               </div>
               <div className="header-actions">
                 <VoiceSettings compact />
@@ -141,12 +123,10 @@ export function App(views: PlaygroundViews) {
                 </Button>
               </div>
             </header>
-            {connected ? (
-              <DeviceWorkspace />
-            ) : cameraOnly ? (
-              <CameraOnlyWorkspace />
+            {workspaceOpen || connected ? (
+              <DeviceWorkspace connected={connected} />
             ) : (
-              <ConnectionScreen onSkip={() => setCameraOnly(true)} />
+              <ConnectionScreen onSkip={() => setWorkspaceOpen(true)} />
             )}
           </div>
         </AntApp>

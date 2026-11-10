@@ -90,11 +90,64 @@ it('offers automatic collection before recording the safe position', () => {
       onCheckCamera: () => {},
     }),
   );
-  expect(html).toContain('标准探测');
+  expect(html).toContain('普通');
+  const radios = html.match(/<input[^>]+>/g) ?? [];
+  expect(
+    radios
+      .filter((input) => input.includes('type="radio"'))
+      .map((input) => /value="(.*?)"/.exec(input)?.[1]),
+  ).toEqual(['slide', 'standard']);
+  expect(radios.find((input) => input.includes('value="slide"'))).toContain(
+    'checked=""',
+  );
+  expect(
+    radios.filter((input) => input.includes('type="checkbox"')),
+  ).toHaveLength(1);
+  expect(html).toContain('屏幕水平固定、配置就绪、工作区净空');
   expect(html).toContain('自动执行悬停与接触边界验证');
   expect(html).not.toContain('Record Safe Position');
   expect(html).not.toContain('15 点');
 });
+
+it.each([true, false])(
+  'uses the reference step only if the selected screen needs a reference (has reference: %s)',
+  (hasReference) => {
+    const value = controller();
+    value.session = {
+      id: 'current-screen',
+      stage: 'ready',
+      teachingId: 'shared-installation',
+      referencePosition: hasReference
+        ? {
+            frame: 'base',
+            positionMm: { x: 1, y: 2, z: 50 },
+            orientation: { x: 0, y: 0, z: 0, w: 1 },
+          }
+        : undefined,
+      phoneConnected: true,
+      points: [],
+      verification: [],
+      samples: 0,
+    } as NonNullable<AssistedCalibrationController['session']>;
+    const html = renderToStaticMarkup(
+      createElement(WebCalibrationWorkspace, {
+        controller: value,
+        prepareFromTeaching: true,
+        footer: null,
+        onActivated: async () => {},
+      }),
+    );
+    if (hasReference) {
+      expect(html).not.toContain('设置标定参考位');
+      expect(html).not.toContain('上一步');
+      expect(html).toContain('1 采集标定点');
+      expect(html).toContain('普通');
+    } else {
+      expect(html).toContain('设置标定参考位');
+      expect(html).toContain('进入拖动模式');
+    }
+  },
+);
 
 it('explains the phone requirement without blocking reference-position recording', () => {
   const value = controller(false);
@@ -125,3 +178,46 @@ it('explains the phone requirement without blocking reference-position recording
   expect(html).toContain('手机连接已断开');
   expect(html).toContain('连接手机');
 });
+
+it('offers phone and mapping recovery when a restarted host has no assisted session', () => {
+  const value = controller(false);
+  value.error = undefined;
+  const html = renderToStaticMarkup(
+    createElement(WebCalibrationWorkspace, {
+      controller: value,
+      footer: null,
+      prepareFromTeaching: true,
+      onActivated: async () => {},
+      onConnectPhone: () => {},
+      onCheckCamera: () => {},
+    }),
+  );
+  expect(html).toContain('手机连接已断开');
+  expect(html).toContain('连接手机');
+  expect(html).toContain('检查相机映射');
+});
+
+it.each(['slide', 'standard', 'fast'] as const)(
+  'offers a confirmed regular retry only after sliding collection fails (%s)',
+  (explorationMode) => {
+    const value = controller();
+    value.session = {
+      id: 'failed',
+      stage: 'interrupted',
+      collectionFailed: true,
+      explorationMode,
+      phoneConnected: true,
+    } as NonNullable<AssistedCalibrationController['session']>;
+    const render = () =>
+      renderToStaticMarkup(
+        createElement(WebCalibrationWorkspace, {
+          controller: value,
+          footer: null,
+          onActivated: async () => {},
+        }),
+      );
+    expect(render().includes('确认重试')).toBe(explorationMode === 'slide');
+    value.session.collectionFailed = false;
+    expect(render()).not.toContain('确认重试');
+  },
+);

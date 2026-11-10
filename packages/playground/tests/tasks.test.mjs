@@ -22,13 +22,17 @@ class Device {
     this.destroyed = true;
   }
 }
-function fixture({ DeviceClass = Device, behavior = {} } = {}) {
+function fixture({
+  DeviceClass = Device,
+  behavior = {},
+  physicalCamera = (id) => id,
+} = {}) {
   const agents = [];
   const devices = {
     arm: {},
     cameras: {},
     async open(id) {
-      return { cameraId: id };
+      return { cameraId: physicalCamera(id) };
     },
   };
   const tasks = new PlaygroundTasks(devices, {
@@ -357,6 +361,22 @@ test('repeated and concurrent creation reuses one conversation per device', asyn
     assert.notEqual(a.id, b.id);
     assert.equal(agents.length, 2);
     assert.equal(tasks.list().length, 2);
+  } finally {
+    await tasks.close();
+  }
+});
+
+test('stopping one physical camera closes tasks for all of its screens', async () => {
+  const { tasks } = fixture({
+    physicalCamera: (id) => (id === 'right' ? 'left' : id),
+  });
+  try {
+    for (const id of ['left', 'right', 'other']) await tasks.create(id);
+    await tasks.closeCamera('left');
+    assert.deepEqual(
+      tasks.list().map((t) => t.cameraId),
+      ['other'],
+    );
   } finally {
     await tasks.close();
   }

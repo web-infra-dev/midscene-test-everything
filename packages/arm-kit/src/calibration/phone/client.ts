@@ -155,7 +155,7 @@ export function mountCalibrationPhonePage(
       ? crypto.randomUUID()
       : Math.random().toString(36).slice(2) + Date.now();
   const browserInstanceId = pageId;
-  const instanceKey = `midscene-screen-instance:${location.search}`;
+  let instanceKey = `midscene-screen-instance:${location.search}`;
   let resumeBrowserInstanceId: string | undefined;
   let claimBrowserInstance = false;
   try {
@@ -526,6 +526,8 @@ export function mountCalibrationPhonePage(
         '',
         `/phone-calibration?token=${encodeURIComponent(next.pairingToken)}`,
       );
+      instanceKey = `midscene-screen-instance:${location.search}`;
+      delete document.body.dataset.cameraPreview;
       delete document.body.dataset.preview;
       socket.close();
       return;
@@ -646,7 +648,7 @@ export function mountCalibrationPhonePage(
                   : stages[next.view],
       );
     connection.textContent = capture
-      ? `${capture.mode === 'slide' ? (zh ? '滑动采样' : 'Sliding') : capture.mode === 'fast' ? (zh ? '快速探测' : 'Fast probing') : (zh ? '标准探测' : 'Standard probing')} · ${next.automaticPhase === 'local' ? (zh ? '方向探点' : 'Direction probe') : zh ? '网格点' : 'Grid point'} ${capture.index} / ${capture.total}`
+      ? `${capture.mode === 'slide' ? (zh ? '快速' : 'Fast') : capture.mode === 'fast' ? (zh ? '快速探测' : 'Fast probing') : (zh ? '普通' : 'Regular')} · ${next.automaticPhase === 'local' ? (zh ? '方向探点' : 'Direction probe') : zh ? '网格点' : 'Grid point'} ${capture.index} / ${capture.total}`
       : next.view === 'capture-failed'
         ? (next.error ?? '')
         : '';
@@ -975,7 +977,18 @@ export function mountCalibrationPhonePage(
         );
     }
     reportedWake = body.wakeState;
-    socket.send(JSON.stringify(body));
+    // Only the standalone preview may ask to resume this browser's saved screen.
+    let savedScreenToken: string | null = null;
+    if (document.body.dataset.cameraPreview === 'true') {
+      try {
+        savedScreenToken = localStorage.getItem('midscene-screen-page-token');
+      } catch {
+        /* First-time pairing also works without browser storage. */
+      }
+    }
+    socket.send(
+      JSON.stringify(savedScreenToken ? { ...body, savedScreenToken } : body),
+    );
   }
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let reconnectDelay = 1000;
@@ -993,16 +1006,6 @@ export function mountCalibrationPhonePage(
         });
         if (response.ok) {
           const next = await response.json();
-          if (
-            typeof next.pageKey === 'string' &&
-            /^[a-f0-9-]{36}$/.test(next.pageKey)
-          ) {
-            try {
-              localStorage.setItem('midscene-screen-page-key', next.pageKey);
-            } catch {
-              /* Storage may be disabled; transport renewal still works. */
-            }
-          }
           const markers = document.querySelectorAll('.mapping-marker');
           if (
             typeof next.pageId !== 'string' ||
@@ -1013,6 +1016,21 @@ export function mountCalibrationPhonePage(
           markers.forEach((marker, i) => {
             marker.outerHTML = next.markers[i];
           });
+          const token = new URL(location.href).searchParams.get('token');
+          if (
+            typeof next.pageKey === 'string' &&
+            /^[a-f0-9-]{36}$/.test(next.pageKey) &&
+            token
+          ) {
+            try {
+              localStorage.setItem('midscene-screen-page-token', token);
+              localStorage.setItem('midscene-screen-page-key', next.pageKey);
+            } catch {
+              /* Transport renewal does not require storage. */
+            }
+          }
+          if (typeof next.label === 'string')
+            element('page-label').textContent = next.label;
           pageId = next.pageId;
           reconnectDelay = 1000;
           connect();
@@ -1029,18 +1047,29 @@ export function mountCalibrationPhonePage(
     const url = new URL('/phone-calibration/session', location.href);
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     url.search = location.search;
-    socket = new WebSocket(url);
+    const transport = new WebSocket(url);
+    socket = transport;
+    let endedTransport = false;
     let heartbeat: ReturnType<typeof setInterval>;
     let lastReply = performance.now();
-    socket.onopen = () => {
+    const stalled = () => {
+      if (endedTransport) return;
+      disconnected(1006);
+      transport.close();
+    };
+    const opening = setTimeout(stalled, policy.displayFreshMs);
+    transport.onopen = () => {
+      if (endedTransport) return;
+      clearTimeout(opening);
+      lastReply = performance.now();
       send();
       heartbeat = setInterval(() => {
-        if (socket.readyState !== WebSocket.OPEN) return;
         if (performance.now() - lastReply > policy.displayFreshMs) {
-          socket.close();
+          stalled();
           return;
         }
-        socket.send('ping');
+        if (transport.readyState !== WebSocket.OPEN) return;
+        transport.send('ping');
         if (
           reportedWake !== wakeState() ||
           state?.view === 'collect' ||
@@ -1049,7 +1078,8 @@ export function mountCalibrationPhonePage(
           send();
       }, policy.heartbeatMs);
     };
-    socket.onmessage = (event) => {
+    transport.onmessage = (event) => {
+      if (endedTransport) return;
       lastReply = performance.now();
       if (event.data !== 'pong') {
         claimBrowserInstance = false;
@@ -1062,7 +1092,11 @@ export function mountCalibrationPhonePage(
         paint(JSON.parse(event.data));
       }
     };
-    socket.onclose = (event) => {
+    transport.onclose = (event) => disconnected(event.code, event.reason);
+    function disconnected(code: number, reason?: string) {
+      if (endedTransport) return;
+      endedTransport = true;
+      clearTimeout(opening);
       clearInterval(heartbeat);
       touches = [];
       touchEvents.length = 0;
@@ -1082,8 +1116,8 @@ export function mountCalibrationPhonePage(
       state = undefined;
       hideGuidance();
       document.body.dataset.connectionError = 'true';
-      const replaced = event.code === 4410;
-      const ended = event.code === 1000 && event.reason === 'Preview ended';
+      const replaced = code === 4410;
+      const ended = code === 1000 && reason === 'Preview ended';
       message.textContent = label(
         ended ? 'closed' : replaced ? 'replaced' : 'offline',
       );
@@ -1114,7 +1148,7 @@ export function mountCalibrationPhonePage(
           element('fullscreen-controls').append(claim);
         }
       } else reconnectPage();
-    };
+    }
   }
 
   const surface = element('surface');

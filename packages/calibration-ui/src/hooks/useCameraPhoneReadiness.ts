@@ -65,7 +65,13 @@ export function deriveCameraPhoneReadiness(input: {
     ready:
       input.resolved &&
       cameraOnline &&
-      readyPhones.length >= requiredPhones &&
+      (selectedCamera?.screenBindings?.length
+        ? selectedCamera.screenBindings.every((screen) =>
+            readyPhones.some((page) =>
+              isRequiredPhonePage(page, cameraId, [screen]),
+            ),
+          )
+        : readyPhones.length > 0) &&
       !input.error,
     readyPhones,
     requiredPhones,
