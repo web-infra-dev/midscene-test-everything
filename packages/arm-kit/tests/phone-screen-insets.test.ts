@@ -7,13 +7,30 @@ import {
 import { calibrationPhonePage } from '../src/calibration/phone/page.js';
 
 // Execute the actual serialized phone page with no Fullscreen API available.
-function openPhone(height: number, top: number, bottom: number, ios = true) {
+function openPhone(
+  height: number,
+  top: number,
+  bottom: number,
+  ios = true,
+  fullscreenApi = false,
+  rejectPrimaryLock = false,
+  orientationApi: 'standard' | 'legacy' | 'none' = 'standard',
+) {
   const updates: CalibrationPageUpdate[] = [];
   const listeners = new Map<string, (event?: unknown) => void>();
   let socket!: Socket;
   let reloaded = false;
   let fullscreenExits = 0;
-  const root = {};
+  const orientationLocks: string[] = [];
+  let fullscreenElement: object | null = null;
+  const root: { requestFullscreen?: () => Promise<void> } = {
+    requestFullscreen: fullscreenApi
+      ? async () => {
+          fullscreenElement = root;
+        }
+      : undefined,
+  };
+  if (!ios && !fullscreenApi) fullscreenElement = root;
   const timers = new Map<number, () => unknown>();
   let nextTimer = 0;
   class Socket {
@@ -53,6 +70,7 @@ function openPhone(height: number, top: number, bottom: number, ios = true) {
     setAttribute(name: string, value: string) {
       this.attributes[name] = value;
     },
+    onclick: undefined as (() => void | Promise<void>) | undefined,
     style: {},
     dataset: {},
     classList: { add() {}, remove() {} },
@@ -65,6 +83,10 @@ function openPhone(height: number, top: number, bottom: number, ios = true) {
     remove() {},
   });
   const elements = new Map<string, ReturnType<typeof element>>();
+  const elementById = (id: string) => {
+    if (!elements.has(id)) elements.set(id, element());
+    return elements.get(id)!;
+  };
   const viewport = { scale: 1, offsetTop: 0, addEventListener() {} };
   const scope = {
     URL,
@@ -110,22 +132,34 @@ function openPhone(height: number, top: number, bottom: number, ios = true) {
     document: {
       hidden: false,
       documentElement: root,
-      fullscreenElement: ios ? null : root,
+      get fullscreenElement() {
+        return fullscreenElement;
+      },
       exitFullscreen: () => {
         fullscreenExits++;
       },
-      body: { dataset: {}, appendChild() {} },
+      body: {
+        dataset: {},
+        style: {
+          values: {} as Record<string, string>,
+          setProperty(name: string, value: string) {
+            this.values[name] = value;
+          },
+        },
+        appendChild() {},
+      },
       createElement: element,
       querySelector: (selector: string) =>
         selector.startsWith('meta')
           ? {
               getAttribute: () => 'width=device-width,viewport-fit=cover',
             }
-          : null,
-      getElementById: (id: string) => {
-        if (!elements.has(id)) elements.set(id, element());
-        return elements.get(id);
-      },
+          : selector === 'button#marker-fullscreen'
+            ? elementById('marker-fullscreen')
+            : selector === 'small#fullscreen-help'
+              ? elementById('fullscreen-help')
+              : null,
+      getElementById: elementById,
       addEventListener(
         name: string,
         callback: (event: unknown) => void,
@@ -150,7 +184,25 @@ function openPhone(height: number, top: number, bottom: number, ios = true) {
       screen: {
         width: 390,
         height: 844,
-        orientation: { type: 'portrait-primary' },
+        orientation:
+          orientationApi === 'standard'
+            ? {
+                type: 'portrait-primary',
+                lock: async (value: string) => {
+                  orientationLocks.push(value);
+                  if (rejectPrimaryLock && value === 'portrait-primary')
+                    throw new Error('Unsupported portrait alias');
+                },
+              }
+            : { type: 'portrait-primary' },
+        ...(orientationApi === 'legacy'
+          ? {
+              lockOrientation: (value: string) => {
+                orientationLocks.push(value);
+                return true;
+              },
+            }
+          : {}),
       },
       addEventListener: (type: string, listener: (event?: unknown) => void) => {
         listeners.set(type, listener);
@@ -167,6 +219,8 @@ function openPhone(height: number, top: number, bottom: number, ios = true) {
     reloaded: () => reloaded,
     openSocket: () => socket.onopen(),
     fullscreenExits: () => fullscreenExits,
+    orientationLocks,
+    windowListeners: listeners,
     surfaceListeners,
     documentListeners,
     flushEvents: () => {
@@ -191,6 +245,12 @@ function openPhone(height: number, top: number, bottom: number, ios = true) {
 
 test('iPhone helper uses cover and reports split system bars without Fullscreen API', () => {
   expect(calibrationPhonePage('test')).toContain('viewport-fit=cover');
+  expect(calibrationPhonePage('test')).toContain(
+    '<meta name="x5-orientation" content="portrait">',
+  );
+  expect(calibrationPhonePage('test')).toContain(
+    '<meta name="x5-fullscreen" content="true">',
+  );
   const phone = openPhone(700, 47, 34);
   expect(phone.last()).toMatchObject({
     visible: true,
@@ -222,6 +282,84 @@ test('unknown safe areas and Android retain the existing single-edge fallback', 
   const phone = openPhone(700, 47, 34, false);
   phone.tap(47);
   expect(phone.last().layout.topInset).toBeUndefined();
+});
+
+test('Android fullscreen requests the primary portrait orientation lock', async () => {
+  const phone = openPhone(800, 0, 0, false, true);
+  await phone.elements.get('marker-fullscreen')?.onclick?.();
+  expect(phone.orientationLocks).toEqual(['portrait-primary']);
+});
+
+test('Android falls back to the generic portrait lock alias', async () => {
+  const phone = openPhone(800, 0, 0, false, true, true);
+  await phone.elements.get('marker-fullscreen')?.onclick?.();
+  expect(phone.orientationLocks).toEqual(['portrait-primary', 'portrait']);
+});
+
+test('Android falls back to the legacy screen orientation API', async () => {
+  const phone = openPhone(800, 0, 0, false, true, false, 'legacy');
+  await phone.elements.get('marker-fullscreen')?.onclick?.();
+  expect(phone.orientationLocks).toEqual(['portrait-primary']);
+});
+
+test('Android re-locks portrait if fullscreen orientation turns landscape', async () => {
+  const phone = openPhone(800, 0, 0, false, true);
+  await phone.elements.get('marker-fullscreen')?.onclick?.();
+  phone.orientationLocks.length = 0;
+  phone.scope.window.screen.orientation.type = 'landscape-primary';
+  phone.windowListeners.get('orientationchange')?.();
+  await Promise.resolve();
+  expect(phone.orientationLocks).toEqual(['portrait-primary']);
+});
+
+test('Android renders a portrait surface when every orientation API is ignored', async () => {
+  const phone = openPhone(800, 0, 0, false, true, false, 'none');
+  phone.scope.innerWidth = 844;
+  phone.scope.innerHeight = 390;
+  phone.scope.window.screen.width = 844;
+  phone.scope.window.screen.height = 390;
+  phone.scope.window.screen.orientation.type = 'landscape-primary';
+  phone.scope.window.screen.orientation.angle = 90;
+  await phone.elements.get('marker-fullscreen')?.onclick?.();
+  expect(phone.scope.document.body.dataset.portraitFallback).toBe('true');
+  expect(phone.scope.document.body.style.values).toMatchObject({
+    '--portrait-width': '390px',
+    '--portrait-height': '844px',
+    '--portrait-rotation': '-90deg',
+  });
+  expect(phone.last().layout).toMatchObject({ width: 390, height: 844 });
+  phone.surfaceListeners.get('pointerdown')?.({
+    pointerId: 7,
+    pointerType: 'touch',
+    clientX: 100,
+    clientY: 200,
+    preventDefault() {},
+  });
+  expect(phone.last().contact).toMatchObject({ point: { x: 190, y: 100 } });
+});
+
+test('portrait fallback maps the opposite landscape rotation back to page coordinates', async () => {
+  const phone = openPhone(800, 0, 0, false, true, false, 'none');
+  phone.scope.innerWidth = 844;
+  phone.scope.innerHeight = 390;
+  phone.scope.window.screen.width = 844;
+  phone.scope.window.screen.height = 390;
+  phone.scope.window.screen.orientation.type = 'landscape-secondary';
+  phone.scope.window.screen.orientation.angle = 270;
+  await phone.elements.get('marker-fullscreen')?.onclick?.();
+  expect(phone.scope.document.body.style.values).toMatchObject({
+    '--portrait-width': '390px',
+    '--portrait-height': '844px',
+    '--portrait-rotation': '90deg',
+  });
+  phone.surfaceListeners.get('pointerdown')?.({
+    pointerId: 8,
+    pointerType: 'touch',
+    clientX: 100,
+    clientY: 200,
+    preventDefault() {},
+  });
+  expect(phone.last().contact).toMatchObject({ point: { x: 200, y: 744 } });
 });
 
 test('reports actual missing-inset evidence without changing geometry revisions', () => {

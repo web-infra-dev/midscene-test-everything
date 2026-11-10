@@ -248,7 +248,48 @@ export function mountCalibrationPhonePage(
       window.screen.orientation?.type,
       visualViewport?.scale,
       visualViewport?.offsetTop,
+      document.body.dataset.portraitFallback,
     ]);
+  const portraitFallback = () =>
+    document.body.dataset.portraitFallback === 'true';
+  const logicalViewport = () =>
+    portraitFallback()
+      ? {
+          width: Math.min(innerWidth, innerHeight),
+          height: Math.max(innerWidth, innerHeight),
+        }
+      : { width: innerWidth, height: innerHeight };
+  const orientationAngle = () => {
+    const value = window.screen.orientation?.angle;
+    if (Number.isFinite(value)) return Number(value);
+    const legacy = (window as Window & { orientation?: number }).orientation;
+    return Number.isFinite(legacy) ? Number(legacy) : 0;
+  };
+  function setPortraitFallback(active: boolean) {
+    if (document.body.dataset.portraitFallback === String(active)) return;
+    document.body.dataset.portraitFallback = String(active);
+    if (!active) {
+      document.body.style.setProperty('--portrait-width', '');
+      document.body.style.setProperty('--portrait-height', '');
+      document.body.style.setProperty('--portrait-rotation', '');
+      return;
+    }
+    const { width, height } = logicalViewport();
+    const angle = ((orientationAngle() % 360) + 360) % 360;
+    const rotation = angle === 270 ? 90 : angle === 180 ? 180 : -90;
+    document.body.style.setProperty('--portrait-width', `${width}px`);
+    document.body.style.setProperty('--portrait-height', `${height}px`);
+    document.body.style.setProperty('--portrait-rotation', `${rotation}deg`);
+  }
+  function pagePoint(clientX: number, clientY: number) {
+    if (!portraitFallback()) return { x: clientX, y: clientY };
+    const { width, height } = logicalViewport();
+    const angle = ((orientationAngle() % 360) + 360) % 360;
+    if (angle === 90) return { x: width - clientY, y: clientX };
+    if (angle === 270) return { x: clientY, y: height - clientX };
+    if (angle === 180) return { x: width - clientX, y: height - clientY };
+    return { x: clientX, y: clientY };
+  }
   let safeArea:
     | ({ key: string } & NonNullable<
         NonNullable<CalibrationPageLayout['insetDiagnostics']>['safeArea']
@@ -308,6 +349,7 @@ export function mountCalibrationPhonePage(
       (event) => {
         // Do not revise the accepted mapping from automated calibration touches.
         if (state && state.view !== 'markers') return;
+        if (portraitFallback()) return;
         const point =
           'changedTouches' in event ? event.changedTouches[0] : event;
         if (!point) return;
@@ -326,21 +368,30 @@ export function mountCalibrationPhonePage(
   }
 
   function layout(): CalibrationPageLayout {
+    const viewport = logicalViewport();
     const markers = Array.from(
       document.querySelectorAll<SVGElement>('.marker'),
     ).map((el) => {
       const r = el.getBoundingClientRect();
+      const point = pagePoint(r.x + r.width / 2, r.y + r.height / 2);
       return {
-        x: r.x + r.width / 2,
-        y: r.y + r.height / 2,
+        x: point.x,
+        y: point.y,
         size: r.width,
         code: Number(el.dataset.code),
         purpose: el.dataset.purpose as 'fit' | 'check',
       };
     });
     const display = window.screen;
-    const landscape = display.orientation?.type.startsWith('landscape');
-    const dimensions = [display.width, display.height];
+    const forced = portraitFallback();
+    const landscape =
+      !forced && display.orientation?.type.startsWith('landscape');
+    const dimensions = forced
+      ? [
+          Math.min(display.width, display.height),
+          Math.max(display.width, display.height),
+        ]
+      : [display.width, display.height];
     const screen = {
       ...(landscape === undefined
         ? { width: display.width, height: display.height }
@@ -354,10 +405,10 @@ export function mountCalibrationPhonePage(
           }),
       devicePixelRatio: window.devicePixelRatio,
     };
-    const topInset = iosTopInset(screen.height - innerHeight);
+    const topInset = forced ? 0 : iosTopInset(screen.height - viewport.height);
     const value = {
-      width: innerWidth,
-      height: innerHeight,
+      width: viewport.width,
+      height: viewport.height,
       screen,
       markers,
       topInset,
@@ -729,6 +780,102 @@ export function mountCalibrationPhonePage(
   };
   const fullscreenReady = () =>
     displayMode() === (platform === 'ios' ? 'standalone' : 'fullscreen');
+  const legacyOrientationScreen = window.screen as Screen & {
+    lockOrientation?: (
+      orientation: 'portrait-primary' | 'portrait',
+    ) => boolean | string;
+    mozLockOrientation?: (
+      orientation: 'portrait-primary' | 'portrait',
+    ) => boolean | string;
+    webkitLockOrientation?: (
+      orientation: 'portrait-primary' | 'portrait',
+    ) => boolean | string;
+  };
+  async function lockPortrait() {
+    const orientation = window.screen.orientation as ScreenOrientation & {
+      lock?: (orientation: 'portrait-primary' | 'portrait') => Promise<void>;
+    };
+    for (const value of ['portrait-primary', 'portrait'] as const) {
+      if (orientation.lock) {
+        try {
+          await orientation.lock(value);
+          return true;
+        } catch {
+          // Try the next alias or a vendor-specific API.
+        }
+      }
+      for (const method of [
+        legacyOrientationScreen.lockOrientation,
+        legacyOrientationScreen.mozLockOrientation,
+        legacyOrientationScreen.webkitLockOrientation,
+      ]) {
+        if (!method) continue;
+        try {
+          if (method.call(legacyOrientationScreen, value) !== false)
+            return true;
+        } catch {
+          // Another legacy implementation may still be available.
+        }
+      }
+    }
+    return false;
+  }
+  function verifyPortraitLock(locked: boolean) {
+    if (!fullscreenReady() || platform === 'ios') {
+      setPortraitFallback(false);
+      return;
+    }
+    const landscape =
+      window.screen.orientation?.type.startsWith('landscape') ?? false;
+    if (!locked) {
+      setPortraitFallback(landscape);
+      return;
+    }
+    if (!landscape) {
+      setPortraitFallback(false);
+      return;
+    }
+    setTimeout(() => {
+      if (!fullscreenReady()) return;
+      setPortraitFallback(
+        window.screen.orientation?.type.startsWith('landscape') ?? false,
+      );
+      send();
+    }, 250);
+  }
+  async function lockPortraitAfterFullscreen() {
+    if (nativeFullscreen() === root) {
+      const locked = await lockPortrait();
+      verifyPortraitLock(locked);
+      return locked;
+    }
+    await new Promise<void>((resolve) => {
+      const pending = {
+        timer: undefined as ReturnType<typeof setTimeout> | undefined,
+      };
+      const finish = () => {
+        document.removeEventListener('fullscreenchange', finish);
+        document.removeEventListener('webkitfullscreenchange', finish);
+        if (pending.timer) clearTimeout(pending.timer);
+        resolve();
+      };
+      document.addEventListener('fullscreenchange', finish);
+      document.addEventListener('webkitfullscreenchange', finish);
+      pending.timer = setTimeout(finish, 500);
+    });
+    const locked = await lockPortrait();
+    verifyPortraitLock(locked);
+    if (!locked) setTimeout(() => void enforcePortrait(), 250);
+    return locked;
+  }
+  function enforcePortrait() {
+    if (platform === 'ios' || !fullscreenReady()) return;
+    if (!window.screen.orientation?.type.startsWith('landscape')) {
+      setPortraitFallback(false);
+      return;
+    }
+    void lockPortrait().then(verifyPortraitLock);
+  }
   let switching = false;
   let displayFinished = false;
   function displayControls() {
@@ -753,6 +900,10 @@ export function mountCalibrationPhonePage(
             : 'Use the browser menu to enter full screen and continue calibration.';
   }
   async function enterFullscreen(fromGesture = false) {
+    if (fullscreenReady()) {
+      enforcePortrait();
+      return;
+    }
     if (
       !fullscreenButton ||
       switching ||
@@ -761,7 +912,6 @@ export function mountCalibrationPhonePage(
       platform === 'ios' ||
       (platform === 'harmonyos' && !fromGesture) ||
       (!fromGesture && state?.view !== 'markers') ||
-      fullscreenReady() ||
       !enter
     )
       return;
@@ -769,6 +919,7 @@ export function mountCalibrationPhonePage(
     awake.detach();
     try {
       await enter.call(root, { navigationUI: 'hide' });
+      await lockPortraitAfterFullscreen();
     } catch {
       // Browsers requiring transient activation can retry from the phone button.
     } finally {
@@ -786,6 +937,8 @@ export function mountCalibrationPhonePage(
       window
         .matchMedia?.(`(display-mode: ${mode})`)
         .addEventListener?.('change', send);
+    window.addEventListener('orientationchange', enforcePortrait);
+    window.screen.orientation?.addEventListener?.('change', enforcePortrait);
   }
   element('wake-gesture').textContent = zh
     ? '浏览器已阻止保持常亮'
@@ -1015,10 +1168,13 @@ export function mountCalibrationPhonePage(
           Number.isFinite(e.timeStamp) && e.timeStamp >= 0
             ? e.timeStamp
             : undefined;
+        const logical = point
+          ? pagePoint(point.clientX, point.clientY)
+          : undefined;
         const entry = trace(
           kind,
           'pointerType' in e ? e.pointerType : 'touch',
-          point ? { x: point.clientX, y: point.clientY } : undefined,
+          logical,
           {
             source: 'document',
             nativeTimestampMs: nativeTimestamp,
@@ -1060,16 +1216,12 @@ export function mountCalibrationPhonePage(
   }
   surface.addEventListener('contextmenu', (e) => e.preventDefault());
   surface.addEventListener('pointerdown', (e) => {
-    trace(
-      'pointerdown',
-      e.pointerType,
-      { x: e.clientX, y: e.clientY },
-      { source: 'surface' },
-    );
+    const point = pagePoint(e.clientX, e.clientY);
+    trace('pointerdown', e.pointerType, point, { source: 'surface' });
     e.preventDefault();
     pointers.set(e.pointerId, {
       id: newId(),
-      point: { x: e.clientX, y: e.clientY },
+      point,
     });
     surface.setPointerCapture(e.pointerId);
     if (pointers.size > 1) {
@@ -1080,7 +1232,7 @@ export function mountCalibrationPhonePage(
       return;
     }
     activePointer = e.pointerId;
-    contact = { x: e.clientX, y: e.clientY };
+    contact = point;
     contactId = pointers.get(e.pointerId)!.id;
     if (state?.view === 'collect' && state.capture) {
       contactStart ??= {
@@ -1100,10 +1252,11 @@ export function mountCalibrationPhonePage(
   });
   surface.addEventListener('pointermove', (e) => {
     const pointer = pointers.get(e.pointerId);
-    if (pointer) pointer.point = { x: e.clientX, y: e.clientY };
+    const point = pagePoint(e.clientX, e.clientY);
+    if (pointer) pointer.point = point;
     if (!contact || activePointer !== e.pointerId) return;
     e.preventDefault();
-    contact = { x: e.clientX, y: e.clientY };
+    contact = point;
     showMappingTouch(contact, 'move');
     if (
       downTarget &&
@@ -1143,19 +1296,15 @@ export function mountCalibrationPhonePage(
     if (!remaining) ambiguousPointers = false;
   };
   surface.addEventListener('pointerup', (e) => {
-    trace(
-      'pointerup',
-      e.pointerType,
-      { x: e.clientX, y: e.clientY },
-      { source: 'surface' },
-    );
+    const point = pagePoint(e.clientX, e.clientY);
+    trace('pointerup', e.pointerType, point, { source: 'surface' });
     pointers.delete(e.pointerId);
     if (activePointer !== e.pointerId) {
       void send();
       return;
     }
     e.preventDefault();
-    showMappingTouch({ x: e.clientX, y: e.clientY }, 'up');
+    showMappingTouch(point, 'up');
     if (
       contact &&
       downTarget &&
@@ -1166,8 +1315,8 @@ export function mountCalibrationPhonePage(
         downPoint.y - state.target.point.y,
       ) > policy.verificationRadiusPx ||
         Math.hypot(
-          e.clientX - state.target.point.x,
-          e.clientY - state.target.point.y,
+          point.x - state.target.point.x,
+          point.y - state.target.point.y,
         ) <= policy.verificationRadiusPx)
     ) {
       touches.push({
@@ -1176,7 +1325,7 @@ export function mountCalibrationPhonePage(
         durationMs: performance.now() - downAt,
         travelPx: Math.max(
           travelPx,
-          Math.hypot(e.clientX - downPoint.x, e.clientY - downPoint.y),
+          Math.hypot(point.x - downPoint.x, point.y - downPoint.y),
         ),
       });
     }
@@ -1201,7 +1350,7 @@ export function mountCalibrationPhonePage(
   surface.addEventListener('pointercancel', (e) => {
     trace('pointercancel', e.pointerType, undefined, { source: 'surface' });
     if (activePointer === e.pointerId)
-      showMappingTouch({ x: e.clientX, y: e.clientY }, 'cancel');
+      showMappingTouch(pagePoint(e.clientX, e.clientY), 'cancel');
     cancelContact(e);
   });
   surface.addEventListener('lostpointercapture', (e) => {

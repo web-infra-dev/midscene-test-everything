@@ -26,6 +26,7 @@ export const usePreferences = create<{
   },
 }));
 const messages = {
+  correctionSaved: ['透视校正已保存', 'Perspective correction saved'],
   transferTitle: ['设备切换路径', 'Device transfer route'],
   transferIntro: [
     '配置从当前设备到另一台设备的安全通道。先完成两台设备的标定，再验证路径；验证过程不会移动机械臂。',

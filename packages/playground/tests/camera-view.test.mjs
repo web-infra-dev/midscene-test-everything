@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { test } from '@rstest/core';
 import {
+  saveStandaloneCorrection,
   streamCameraPreview,
   streamStandalonePreview,
 } from '../src/server/camera-preview.ts';
@@ -146,4 +147,41 @@ test('camera-only MJPEG releases its lease when the viewer leaves, including dur
     await pending;
     assert.equal(owners.size, 0);
   }
+});
+
+test('camera-only correction is checked and saved through a released lease', async () => {
+  const owners = new Set();
+  const checked = [];
+  const saved = [];
+  const target = { width: 1080, height: 2400, rotation: 0 };
+  const correction = {
+    sourceWidth: 1920,
+    sourceHeight: 1080,
+    rotation: 0,
+    points: {
+      topLeft: { x: 10, y: 10 },
+      topRight: { x: 1000, y: 10 },
+      bottomRight: { x: 1000, y: 500 },
+      bottomLeft: { x: 10, y: 500 },
+    },
+  };
+  const cameras = {
+    async acquire(id, owner) {
+      assert.equal(id, 'camera');
+      owners.add(owner);
+      return {
+        checkCorrection: async (value) => checked.push(value),
+        setPerspective: async (value, nextTarget) =>
+          saved.push({ correction: value, target: nextTarget }),
+      };
+    },
+    async release(id, owner) {
+      assert.equal(id, 'camera');
+      assert.ok(owners.delete(owner));
+    },
+  };
+  await saveStandaloneCorrection(cameras, 'camera', correction, target);
+  assert.deepEqual(checked, [correction]);
+  assert.deepEqual(saved, [{ correction, target }]);
+  assert.equal(owners.size, 0);
 });

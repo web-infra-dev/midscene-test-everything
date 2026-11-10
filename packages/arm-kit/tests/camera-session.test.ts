@@ -113,6 +113,30 @@ it('persists correction by camera identity and invalidates the binding when geom
   );
 });
 
+it('persists the perspective output target with the camera correction', async () => {
+  const { manager } = await fixture();
+  const session = await manager.acquire('camera', 'a');
+  const correction = {
+    sourceWidth: 1920,
+    sourceHeight: 1080,
+    rotation: 0 as const,
+    points: {
+      topLeft: { x: 100, y: 100 },
+      topRight: { x: 500, y: 100 },
+      bottomRight: { x: 500, y: 900 },
+      bottomLeft: { x: 100, y: 900 },
+    },
+  };
+  const target = { width: 1080, height: 2400, rotation: 0 as const };
+  await session.setPerspective(correction, target);
+  expect(session.getPerspectiveTarget()).toEqual(target);
+  await manager.release('camera', 'a');
+  const restored = await manager.acquire('camera', 'b');
+  expect(restored.getPerspectiveTarget()).toEqual(target);
+  await restored.setCorrection({ ...correction, rotation: 90 });
+  expect(restored.getPerspectiveTarget()).toEqual(target);
+});
+
 it('isolates two screen corrections on one physical camera and restores each independently', async () => {
   const { manager, backend, closes } = await fixture();
   const a = await manager.acquire('camera', 'a', 'left');

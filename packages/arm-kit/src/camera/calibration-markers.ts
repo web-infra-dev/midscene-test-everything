@@ -167,7 +167,12 @@ export async function recognizeScreenMarkers(
   const detector = new MarkerCalibrationDetector();
   const quads: ScreenQuad[] = [];
   let reference: Awaited<ReturnType<typeof detector.detectFrame>> | undefined;
-  let frame: Buffer | undefined;
+  let best:
+    | {
+        detection: Awaited<ReturnType<typeof detector.detectFrame>>;
+        frame: Buffer;
+      }
+    | undefined;
   let lastFailure: unknown;
   const frameCount = 8;
   for (let i = 0; i < frameCount; i++) {
@@ -185,7 +190,13 @@ export async function recognizeScreenMarkers(
         );
       quads.push(detection.points);
       reference = detection;
-      frame = jpeg;
+      if (
+        !best ||
+        detection.markerIds.length > best.detection.markerIds.length ||
+        (detection.markerIds.length === best.detection.markerIds.length &&
+          detection.reprojectionRmsePx < best.detection.reprojectionRmsePx)
+      )
+        best = { detection, frame: jpeg };
     } catch (error) {
       if (
         !(error instanceof RobotVisionError) ||
@@ -195,7 +206,7 @@ export async function recognizeScreenMarkers(
       lastFailure = error;
     }
   }
-  if (!reference || !frame || quads.length < 4)
+  if (!reference || !best || quads.length < 4)
     throw new RobotVisionError(
       'NO_SCREEN_DETECTED',
       `Only ${quads.length} of 8 frames passed. ${lastFailure instanceof Error ? lastFailure.message : ''}`,
@@ -217,16 +228,16 @@ export async function recognizeScreenMarkers(
   return {
     correction: {
       points,
-      sourceWidth: reference.imageWidth,
-      sourceHeight: reference.imageHeight,
+      sourceWidth: best.detection.imageWidth,
+      sourceHeight: best.detection.imageHeight,
       rotation: 0 as const,
     },
-    jpeg: frame.toString('base64'),
-    markerIds: reference.markerIds,
+    jpeg: best.frame.toString('base64'),
+    markerIds: best.detection.markerIds,
     validFrames: quads.length,
     frameCount,
     jitterPx,
-    errorPx: reference.reprojectionRmsePx,
+    errorPx: best.detection.reprojectionRmsePx,
   };
 }
 

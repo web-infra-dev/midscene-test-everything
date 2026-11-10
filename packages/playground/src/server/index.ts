@@ -24,6 +24,7 @@ import {
 } from '@midscene/arm-kit/internal/storage/layout';
 import { PlaygroundArmControls } from './arm-controls.js';
 import {
+  saveStandaloneCorrection,
   streamCameraPreview,
   streamStandalonePreview,
 } from './camera-preview.js';
@@ -805,6 +806,22 @@ export async function startPlaygroundHost({
         const { camera: session } = await devices.open(camera.id, true);
         const stream = session.stream;
         return send(200, { stream: stream.getInfo() });
+      }
+      if (url.pathname === '/api/cameras/correction' && req.method === 'POST') {
+        if (devices)
+          return send(409, {
+            error: 'Save the correction through the connected device',
+          });
+        const input = await readBody(req, 65536);
+        if (typeof input.id !== 'string' || !input.correction)
+          return send(400, { error: 'Camera id and correction are required' });
+        await saveStandaloneCorrection(
+          cameraManager,
+          input.id,
+          input.correction,
+          input.perspectiveTarget,
+        );
+        return send(200, { ok: true });
       }
       if (url.pathname === '/api/cameras/stop' && req.method === 'POST') {
         const input = await readBody(req);

@@ -21,11 +21,13 @@ import { PerspectiveTransformer } from './perspective-transformer.js';
 import { checkPerspectiveValidity } from './perspective-validity.js';
 import type { CameraBackend, CameraDevice } from './types.js';
 import { validateQuad } from './vision-geometry.js';
+import type { PerspectiveTarget } from './vision-types.js';
 
 export type { CameraCorrection } from '../contracts.js';
 /** Camera, current image correction and identity used by Device and calibration. */
 export class CameraSession implements CalibrationVision {
   private correction?: CameraCorrection;
+  private target?: PerspectiveTarget;
   private writeChain = Promise.resolve();
   private readonly transformer = new PerspectiveTransformer();
   private readonly perspective = new PerspectiveMonitor({
@@ -69,6 +71,10 @@ export class CameraSession implements CalibrationVision {
       throw new Error('Stored camera identity does not match');
     this.validate(data.correction);
     this.correction = data.correction;
+    if (data.perspectiveTarget) {
+      this.validateTarget(data.perspectiveTarget);
+      this.target = data.perspectiveTarget;
+    }
     await this.perspective.load();
   }
   async forScreen(screenId: string): Promise<CameraSession> {
@@ -83,6 +89,9 @@ export class CameraSession implements CalibrationVision {
   }
   getCorrection(): CameraCorrection | undefined {
     return this.correction && structuredClone(this.correction);
+  }
+  getPerspectiveTarget(): PerspectiveTarget | undefined {
+    return this.target && structuredClone(this.target);
   }
   private validate(correction: CameraCorrection): void {
     if (
@@ -104,19 +113,54 @@ export class CameraSession implements CalibrationVision {
       )
         throw new Error('Camera corner lies outside the source image');
   }
+  private validateTarget(target: PerspectiveTarget): void {
+    if (
+      !target ||
+      !Number.isInteger(target.width) ||
+      !Number.isInteger(target.height) ||
+      target.width < 1 ||
+      target.height < 1 ||
+      target.width > 7680 ||
+      target.height > 7680 ||
+      ![0, 90, 180, 270].includes(target.rotation)
+    )
+      throw new Error('Invalid perspective target');
+  }
   setCorrection(input: CameraCorrection): Promise<void> {
     this.validate(input);
     const correction = structuredClone(input);
+    return this.writePerspective(correction, this.target);
+  }
+  setPerspective(
+    input: CameraCorrection,
+    target: PerspectiveTarget,
+  ): Promise<void> {
+    this.validate(input);
+    this.validateTarget(target);
+    return this.writePerspective(
+      structuredClone(input),
+      structuredClone(target),
+    );
+  }
+  private writePerspective(
+    correction: CameraCorrection,
+    target?: PerspectiveTarget,
+  ): Promise<void> {
     const operation = this.writeChain.then(async () => {
       await mkdir(this.directory, { recursive: true });
       const temporary = `${this.correctionFile}.${randomUUID()}.tmp`;
       await writeFile(
         temporary,
-        JSON.stringify({ cameraId: this.camera.id, correction }),
+        JSON.stringify({
+          cameraId: this.camera.id,
+          correction,
+          ...(target ? { perspectiveTarget: target } : {}),
+        }),
         { mode: 0o600 },
       );
       await rename(temporary, this.correctionFile);
       this.correction = correction;
+      this.target = target;
       await this.perspective.reset();
     });
     this.writeChain = operation.catch(() => undefined);

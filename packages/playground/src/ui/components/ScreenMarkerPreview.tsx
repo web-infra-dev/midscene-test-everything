@@ -1,3 +1,4 @@
+import type { PerspectiveRotation } from '@midscene/arm-kit-shared/camera/vision-types';
 import type { CameraCorrection } from '@midscene/arm-kit-shared/contracts';
 import {
   Alert,
@@ -14,8 +15,17 @@ import { useEffect, useRef, useState } from 'react';
 import { cameraPreviewUrl } from '../camera-preview';
 import { useLanguage } from '../i18n';
 
-interface MarkerResult {
+export interface CameraMarkerDetection {
   correction: CameraCorrection;
+  jpeg: string;
+  markerIds: number[];
+  validFrames: number;
+  frameCount: number;
+  jitterPx: number;
+  errorPx: number;
+  screenWidthPx: number;
+  screenHeightPx: number;
+  rotation: PerspectiveRotation;
 }
 interface MarkerSession {
   token: string;
@@ -39,12 +49,17 @@ export function ScreenMarkerPreview({
   id,
   name,
   onDetected,
+  openRequest = 0,
 }: {
   id: string;
   name: string;
-  onDetected(correction: CameraCorrection): void;
+  onDetected(result: CameraMarkerDetection): void;
+  openRequest?: number;
 }) {
   const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (openRequest > 0) setOpen(true);
+  }, [openRequest]);
   const title =
     useLanguage() === 'zh' ? '识别屏幕标记' : 'Detect screen markers';
   return (
@@ -64,8 +79,8 @@ export function ScreenMarkerPreview({
             key={id}
             id={id}
             name={name}
-            onDetected={(correction) => {
-              onDetected(correction);
+            onDetected={(result) => {
+              onDetected(result);
               setOpen(false);
             }}
           />
@@ -82,7 +97,7 @@ function MarkerDialog({
 }: {
   id: string;
   name: string;
-  onDetected(correction: CameraCorrection): void;
+  onDetected(result: CameraMarkerDetection): void;
 }) {
   const zh = useLanguage() === 'zh';
   const [session, setSession] = useState<MarkerSession>();
@@ -138,11 +153,11 @@ function MarkerDialog({
     // As in robot-vision, retry only failed marker batches. Each attempt gets fresh frames.
     async function capture(batch: number) {
       try {
-        const next = await request<MarkerResult>(
+        const next = await request<CameraMarkerDetection>(
           `${endpoint}?token=${session!.token}&pageKey=${encodeURIComponent(pageKey!)}`,
           { method: 'POST', signal: abort.signal },
         );
-        if (!abort.signal.aborted) finish.current(next.correction);
+        if (!abort.signal.aborted) finish.current(next);
       } catch (e) {
         if (abort.signal.aborted) return;
         const code = (e as { code?: string }).code;

@@ -132,7 +132,16 @@ export class MarkerPreview {
         );
         check();
         this.mappedPageKey = this.status().pageKey;
-        return result;
+        return {
+          ...result,
+          screenWidthPx: Math.round(
+            layout.screen.width * layout.screen.devicePixelRatio,
+          ),
+          screenHeightPx: Math.round(
+            layout.screen.height * layout.screen.devicePixelRatio,
+          ),
+          rotation: 0 as const,
+        };
       } finally {
         await cameras.release(this.cameraId, this.token);
       }

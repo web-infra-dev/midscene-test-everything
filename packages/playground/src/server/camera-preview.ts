@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { ServerResponse } from 'node:http';
 import type { CameraSessionManager } from '@midscene/arm-kit';
+import type { PerspectiveTarget } from '@midscene/arm-kit-shared/camera/vision-types';
+import type { CameraCorrection } from '@midscene/arm-kit-shared/contracts';
 import type { DeviceEntry } from './devices.js';
 
 /** Share the camera stream; corrected frames use the same accepted mapping as task screenshots. */
@@ -74,6 +76,24 @@ export async function streamStandalonePreview(
     const closed = new Promise<void>((resolve) => res.once('close', resolve));
     await streamCameraPreview(res, { camera });
     await closed;
+  } finally {
+    await cameras.release(id, owner);
+  }
+}
+
+/** Persist a camera-only perspective correction against one live camera frame. */
+export async function saveStandaloneCorrection(
+  cameras: CameraSessionManager,
+  id: string,
+  correction: CameraCorrection,
+  target?: PerspectiveTarget,
+) {
+  const owner = randomUUID();
+  const camera = await cameras.acquire(id, owner);
+  try {
+    await camera.checkCorrection(correction);
+    if (target) await camera.setPerspective(correction, target);
+    else await camera.setCorrection(correction);
   } finally {
     await cameras.release(id, owner);
   }

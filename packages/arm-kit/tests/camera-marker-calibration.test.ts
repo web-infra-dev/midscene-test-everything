@@ -202,6 +202,23 @@ test('preview finds the screen with two obscured markers and four good frames, a
   }
 }, 20000);
 
+test('returns the strongest complete frame after later frames lose a marker', async () => {
+  const complete = await photograph();
+  const partial = await photograph(false, layout.markers.slice(0, 4));
+  let index = 0;
+  const result = await recognizeScreenMarkers(
+    async () => (index++ < 4 ? complete : partial),
+    layout,
+  );
+  expect(result.markerIds).toEqual([10, 11, 12, 13, 14, 15]);
+  await expect(
+    detectCalibrationMarkers(
+      Buffer.from(result.jpeg, 'base64'),
+      layout.markers,
+    ),
+  ).resolves.toBeDefined();
+}, 20000);
+
 test('maps each of two simultaneously visible screens using its own marker IDs', async () => {
   const second = layout.markers.map((m) => ({ ...m, code: m.code + 10 }));
   const screen = (markers: typeof layout.markers, x: number) =>

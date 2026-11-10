@@ -1,5 +1,15 @@
+import type { PerspectiveTarget } from '@midscene/arm-kit-shared/camera/vision-types';
 import type { CameraCorrection } from '@midscene/arm-kit-shared/contracts';
-import { Alert, Button, Empty, Spin, Tag, Tooltip, Typography } from 'antd';
+import {
+  Alert,
+  App,
+  Button,
+  Empty,
+  Spin,
+  Tag,
+  Tooltip,
+  Typography,
+} from 'antd';
 import { RefreshCw } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { cameraPreviewUrl } from '../camera-preview';
@@ -7,20 +17,24 @@ import { type CameraEntry, cameraStateLabel, useCameras } from '../cameras';
 import { useT } from '../i18n';
 import { CameraRail } from './CameraRail';
 import { CameraStagePreview } from './CameraStagePreview';
+import { PerspectiveCorrectionDialog } from './PerspectiveCorrectionDialog';
 import { RobotConnectionDialog } from './RobotConnectionDialog';
 import { RobotReadinessCard } from './RobotReadinessCard';
-import { ScreenMarkerPreview } from './ScreenMarkerPreview';
+import {
+  type CameraMarkerDetection,
+  ScreenMarkerPreview,
+} from './ScreenMarkerPreview';
 import { WorkspaceLayout } from './WorkspaceLayout';
 import './CameraStage.less';
 
 export function CameraOnlyWorkspace() {
   const t = useT();
+  const { message } = App.useApp();
   const { cameras, selectedId, status, select, refresh, error } = useCameras();
   const [connectionOpen, setConnectionOpen] = useState(false);
-  const [outline, setOutline] = useState<{
-    id: string;
-    correction: CameraCorrection;
-  }>();
+  const [detection, setDetection] = useState<CameraMarkerDetection>();
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [markerOpenRequest, setMarkerOpenRequest] = useState(0);
   const [revision, setRevision] = useState(0);
   const [failedUrl, setFailedUrl] = useState<string>();
   const [frame, setFrame] = useState<{
@@ -53,6 +67,34 @@ export function CameraOnlyWorkspace() {
     },
   };
   const previewFailed = Boolean(url && failedUrl === url);
+  const clearCorrection = () => {
+    setDetection(undefined);
+    setEditorOpen(false);
+  };
+  const changeCamera = (id: string) => {
+    select(id);
+    clearCorrection();
+  };
+  const saveCorrection = async (
+    correction: CameraCorrection,
+    target: PerspectiveTarget,
+  ) => {
+    if (!selected || !detection) return;
+    const response = await fetch('/api/cameras/correction', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: selected.id,
+        correction,
+        perspectiveTarget: target,
+      }),
+      signal: AbortSignal.timeout(30000),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error?.message ?? result.error);
+    clearCorrection();
+    message.success(t('correctionSaved'));
+  };
   return (
     <>
       <WorkspaceLayout
@@ -93,9 +135,11 @@ export function CameraOnlyWorkspace() {
                   key={selected.id}
                   id={selected.id}
                   name={selected.name}
-                  onDetected={(correction) =>
-                    setOutline({ id: selected.id, correction })
-                  }
+                  openRequest={markerOpenRequest}
+                  onDetected={(next) => {
+                    setDetection(next);
+                    setEditorOpen(true);
+                  }}
                 />
               )}
               <Tooltip title={t('refresh')}>
@@ -105,7 +149,8 @@ export function CameraOnlyWorkspace() {
                   icon={<RefreshCw size={16} />}
                   loading={status === 'loading'}
                   onClick={() => {
-                    setRevision((r) => r + 1);
+                    setRevision((value) => value + 1);
+                    clearCorrection();
                     void refresh();
                   }}
                 />
@@ -115,9 +160,7 @@ export function CameraOnlyWorkspace() {
           {error && <Alert type="error" showIcon message={error} />}
           <CameraStagePreview
             available={Boolean(url && !previewFailed)}
-            outline={
-              outline?.id === selected?.id ? outline?.correction : undefined
-            }
+            outline={selected ? detection?.correction : undefined}
           >
             {url && camera ? (
               previewFailed ? (
@@ -156,11 +199,23 @@ export function CameraOnlyWorkspace() {
               )}
               selectedId={selectedId}
               selectedPreviewUrl={url}
-              onSelect={select}
+              onSelect={changeCamera}
             />
           )}
         </section>
       </WorkspaceLayout>
+      <PerspectiveCorrectionDialog
+        cameraName={selected?.name ?? ''}
+        detection={detection}
+        onApply={saveCorrection}
+        onClose={() => setEditorOpen(false)}
+        onDetectAgain={() => {
+          setEditorOpen(false);
+          setDetection(undefined);
+          setMarkerOpenRequest((value) => value + 1);
+        }}
+        open={editorOpen && Boolean(detection)}
+      />
       <RobotConnectionDialog
         open={connectionOpen}
         onClose={() => setConnectionOpen(false)}
