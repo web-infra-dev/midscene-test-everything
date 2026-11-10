@@ -27,6 +27,7 @@ export class MarkerPreview {
   constructor(
     readonly cameraId: string,
     readonly slot: number,
+    readonly screenId?: string,
   ) {
     // Reserve 10–15 for the SDK calibration page; use the old workstation's distinct ID sets.
     this.codes = CALIBRATION_MARKER_CODES.map((code) => code + slot * 10);

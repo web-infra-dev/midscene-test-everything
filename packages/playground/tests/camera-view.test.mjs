@@ -275,13 +275,13 @@ test('camera-only correction is checked and saved through a released lease', asy
     },
   };
   const cameras = {
-    async acquire(id, owner) {
+    async acquire(id, owner, screenId) {
       assert.equal(id, 'camera');
       owners.add(owner);
       return {
-        checkCorrection: async (value) => checked.push(value),
+        checkCorrection: async (value) => checked.push({ value, screenId }),
         setPerspective: async (value, nextTarget) =>
-          saved.push({ correction: value, target: nextTarget }),
+          saved.push({ correction: value, target: nextTarget, screenId }),
       };
     },
     async release(id, owner) {
@@ -289,19 +289,68 @@ test('camera-only correction is checked and saved through a released lease', asy
       assert.ok(owners.delete(owner));
     },
   };
-  await saveStandaloneCorrection(cameras, 'camera', correction, target);
-  assert.deepEqual(checked, [correction]);
-  assert.deepEqual(saved, [{ correction, target }]);
+  await saveStandaloneCorrection(
+    cameras,
+    'camera',
+    correction,
+    target,
+    'right-screen',
+  );
+  assert.deepEqual(checked, [{ value: correction, screenId: 'right-screen' }]);
+  assert.deepEqual(saved, [{ correction, target, screenId: 'right-screen' }]);
   assert.equal(owners.size, 0);
 });
 
 test('camera-only correction clear does not need a camera lease', async () => {
   const cleared = [];
   const cameras = {
-    async clearPerspective(id) {
-      cleared.push(id);
+    async clearPerspective(id, screenId) {
+      cleared.push({ id, screenId });
     },
   };
-  await clearStandaloneCorrection(cameras, 'camera');
-  assert.deepEqual(cleared, ['camera']);
+  await clearStandaloneCorrection(cameras, 'camera', 'right-screen');
+  assert.deepEqual(cleared, [{ id: 'camera', screenId: 'right-screen' }]);
+});
+
+test('standalone corrected preview acquires the selected screen', async () => {
+  const f = fixture();
+  const acquired = [];
+  const owners = new Set();
+  const cameras = {
+    async acquire(id, owner, screenId) {
+      acquired.push({ id, screenId });
+      owners.add(owner);
+      return {
+        stream: f.stream,
+        getCorrection: () => ({
+          sourceWidth: 2,
+          sourceHeight: 2,
+          rotation: 0,
+          points: {
+            topLeft: { x: 0, y: 0 },
+            topRight: { x: 1, y: 0 },
+            bottomRight: { x: 1, y: 1 },
+            bottomLeft: { x: 0, y: 1 },
+          },
+        }),
+        getPerspectiveTarget: () => ({ width: 2, height: 2, rotation: 0 }),
+        rectifiedFrame: async () => Buffer.from('rectified'),
+      };
+    },
+    async release(_id, owner) {
+      owners.delete(owner);
+    },
+  };
+  const pending = streamStandalonePreview(
+    f.res,
+    cameras,
+    'camera',
+    'corrected',
+    'right-screen',
+  );
+  await tick();
+  assert.deepEqual(acquired, [{ id: 'camera', screenId: 'right-screen' }]);
+  f.res.destroy();
+  await pending;
+  assert.equal(owners.size, 0);
 });

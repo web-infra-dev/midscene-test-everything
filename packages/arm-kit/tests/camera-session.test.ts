@@ -340,6 +340,43 @@ it('isolates two screen corrections on one physical camera and restores each ind
   expect(restoredA.getCorrection()).toEqual(correction);
   expect(restoredB.getCorrection()?.rotation).toBe(90);
 });
+it('persists and clears a screen correction without touching the base camera', async () => {
+  const { manager } = await fixture();
+  const base = await manager.acquire('camera', 'base-owner');
+  const left = await manager.acquire('camera', 'left-owner', 'left');
+  const correction = {
+    sourceWidth: 1920,
+    sourceHeight: 1080,
+    rotation: 0 as const,
+    points: {
+      topLeft: { x: 100, y: 100 },
+      topRight: { x: 500, y: 100 },
+      bottomRight: { x: 500, y: 900 },
+      bottomLeft: { x: 100, y: 900 },
+    },
+  };
+  const target = { width: 400, height: 800, rotation: 0 as const };
+  await base.setPerspective(correction, target);
+  await left.setCorrection({ ...correction, rotation: 90 });
+  expect(await manager.persistedPerspective('camera')).toEqual({
+    correction,
+    target,
+  });
+  expect(await manager.persistedPerspective('camera', 'left')).toEqual({
+    correction: { ...correction, rotation: 90 },
+  });
+  await manager.clearPerspective('camera', 'left');
+  expect(left.getCorrection()).toBeUndefined();
+  expect(await manager.persistedPerspective('camera', 'left')).toBeUndefined();
+  expect(await manager.persistedPerspective('camera')).toEqual({
+    correction,
+    target,
+  });
+  expect(base.getCorrection()).toEqual(correction);
+  await manager.clearPerspective('camera');
+  expect(await manager.persistedPerspective('camera')).toBeUndefined();
+});
+
 it('rejects accepted vision evidence after the perspective changes or the camera identity differs', async () => {
   const { manager } = await fixture();
   const camera = await manager.acquire('camera', 'binding-test');

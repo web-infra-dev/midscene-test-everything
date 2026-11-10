@@ -27,12 +27,28 @@ export const usePreferences = create<{
 }));
 const messages = {
   correctionSaved: ['透视校正已保存', 'Perspective correction saved'],
+  cameraScreens: ['相机屏幕', 'Camera screens'],
+  detectScreenMarkers: ['识别屏幕标记', 'Detect screen markers'],
+  addScreen: ['添加屏幕', 'Add screen'],
+  screenBase: ['基础', 'Base'],
+  screenCorrected: ['已校正', 'Corrected'],
+  screenNotCorrected: ['未校正', 'Not corrected'],
+  screensAppearAfterScan: [
+    '手机扫码后，屏幕会自动出现在这里。',
+    'Screens appear here after phones scan the host code.',
+  ],
+  deleteScreen: ['删除屏幕', 'Delete screen'],
+  deleteScreenTitle: ['删除这块屏幕？', 'Delete this screen?'],
+  deleteScreenBody: [
+    '将删除该屏幕的透视校正，手机需要重新扫码连接。',
+    'This removes the screen correction; the phone must scan again.',
+  ],
   correctionCleared: ['透视校正已清除', 'Perspective correction cleared'],
   clearCorrection: ['清除透视校正', 'Clear perspective correction'],
   clearCorrectionTitle: ['清除透视校正？', 'Clear perspective correction?'],
   clearCorrectionBody: [
-    '将删除这台相机已保存的屏幕轮廓、输出尺寸和旋转。清除后预览回到原始画面，需要重新识别屏幕标记才能再次校正。',
-    'This removes the saved screen outline, output size and rotation for this camera. The preview returns to the original view, and you must detect the screen markers again to correct it.',
+    '将删除这台相机所有已标定屏幕的轮廓、输出尺寸和旋转，并移除屏幕 2 之后的设备，只保留屏幕 1（基础）。手机需要重新扫码才能再次标定。',
+    'This removes every calibrated screen outline, output size and rotation for this camera, deletes the devices after Screen 1, and keeps only the base screen. Phones must scan again to recalibrate.',
   ],
   transferTitle: ['设备切换路径', 'Device transfer route'],
   transferIntro: [

@@ -23,6 +23,7 @@ import {
   robotDataRoot,
 } from '@midscene/arm-kit/internal/storage/layout';
 import { PlaygroundArmControls } from './arm-controls.js';
+import { CameraCalibrationSession } from './camera-calibration-session.js';
 import {
   type CameraPreviewView,
   clearStandaloneCorrection,
@@ -30,6 +31,13 @@ import {
   streamCameraPreview,
   streamStandalonePreview,
 } from './camera-preview.js';
+import {
+  BASE_SCREEN_ID,
+  addCameraScreen,
+  assertCameraScreen,
+  listCameraScreens,
+  removeCameraScreen,
+} from './camera-screens.js';
 import { CodeSetup } from './code-setup.js';
 import { PlaygroundDevices } from './devices.js';
 import { MarkerPreview } from './marker-preview.js';
@@ -100,6 +108,9 @@ async function readBody(req: IncomingMessage, limit = 8192) {
   }
   return JSON.parse(text || '{}');
 }
+function screenIdFrom(value: string | null | undefined) {
+  return !value || value === BASE_SCREEN_ID ? undefined : value;
+}
 interface HostOptions {
   autoConnect?: boolean;
   createSetup(context: SessionContext): HostSetup;
@@ -125,6 +136,8 @@ export async function startPlaygroundHost({
   developmentOrigins = [],
 }: HostOptions) {
   const markerPreviews = new Map<string, MarkerPreview>();
+  const calibrationSessions = new Map<string, CameraCalibrationSession>();
+  const calibrationSessionsByBind = new Map<string, CameraCalibrationSession>();
   /** Camera-only workspace leases, keyed by lease token -> camera id. */
   const cameraLeases = new Map<string, string>();
   const wifiInterfaces = await discoverWifiInterfaces();
@@ -133,6 +146,13 @@ export async function startPlaygroundHost({
       ({ address, name }) => ({
         name,
         url: `http://${address}:${(server.address() as AddressInfo).port}/phone-calibration?token=${token}`,
+      }),
+    );
+  const phoneBindLinks = (token: string) =>
+    phoneAddresses({ wifiInterfaces, controllerHost: host }).map(
+      ({ address, name }) => ({
+        name,
+        url: `http://${address}:${(server.address() as AddressInfo).port}/phone-calibration?bind=${token}`,
       }),
     );
   const cameraManager = new CameraSessionManager();
@@ -320,6 +340,38 @@ export async function startPlaygroundHost({
               await readBody(req, 16384),
             ),
           );
+        }
+        if (
+          url.pathname === '/phone-calibration' &&
+          req.method === 'GET' &&
+          url.searchParams.get('bind')
+        ) {
+          const session = calibrationSessionsByBind.get(
+            url.searchParams.get('bind')!,
+          );
+          if (!session)
+            return send(410, {
+              error: 'Calibration session expired. Scan the new code.',
+            });
+          try {
+            const preview = await session.bind(cameraManager);
+            markerPreviews.set(preview.token, preview);
+            res.writeHead(302, {
+              Location: `/phone-calibration?token=${preview.token}`,
+              'Cache-Control': 'no-store',
+              'Referrer-Policy': 'no-referrer',
+            });
+            return res.end();
+          } catch (error) {
+            return send(
+              error instanceof Error && 'status' in error
+                ? Number(error.status)
+                : 409,
+              {
+                error: error instanceof Error ? error.message : String(error),
+              },
+            );
+          }
         }
         const page = await devices?.markerCalibration.phoneHost(
           url.searchParams.get('token'),
@@ -681,7 +733,7 @@ export async function startPlaygroundHost({
           const status = await devices.startCalibration(id);
           // A camera-only page can join the calibrated Device without a second scan.
           const preview = [...markerPreviews.values()].find(
-            (p) => p.cameraId === id,
+            (p) => p.cameraId === id && !p.screenId,
           );
           if (preview) {
             const session = devices.entries.get(id)?.calibration;
@@ -725,20 +777,23 @@ export async function startPlaygroundHost({
           }
         }
         if (!token && id && req.method === 'POST') {
+          const screenId = screenIdFrom(url.searchParams.get('screen'));
           if (
             !(await listCameras({ includeBuiltIn: !devices })).some(
               (camera) => camera.id === id,
             )
           )
             return send(404, { error: 'Camera not found' });
+          await assertCameraScreen(cameraManager, id, screenId);
           const paired = [...markerPreviews.values()].find(
-            (page) => page.cameraId === id,
+            (page) => page.cameraId === id && page.screenId === screenId,
           );
           if (paired) {
             paired.showMarkers();
             return send(200, {
               token: paired.token,
               links: phoneLinks(paired.token),
+              screen: screenId ?? BASE_SCREEN_ID,
             });
           }
           const slot = Array.from({ length: 8 }, (_, i) => i + 1).find(
@@ -747,11 +802,12 @@ export async function startPlaygroundHost({
           );
           if (!slot)
             return send(409, { error: 'Close another marker preview first' });
-          const preview = new MarkerPreview(id, slot);
+          const preview = new MarkerPreview(id, slot, screenId);
           markerPreviews.set(preview.token, preview);
           return send(200, {
             token: preview.token,
             links: phoneLinks(preview.token),
+            screen: screenId ?? BASE_SCREEN_ID,
           });
         }
         const preview = markerPreviews.get(token ?? '');
@@ -781,6 +837,122 @@ export async function startPlaygroundHost({
           } finally {
             res.off('close', cancel);
           }
+        }
+        return send(405, { error: 'Method not allowed' });
+      }
+      if (url.pathname.startsWith('/api/cameras/calibration-sessions')) {
+        if (devices)
+          return send(409, {
+            error: 'Calibrate screens through the connected device',
+          });
+        for (const [key, item] of calibrationSessions) {
+          if (Date.now() - item.lastViewed > 5 * 60_000) {
+            await item.close(cameraManager);
+            for (const preview of item.previews)
+              markerPreviews.delete(preview.token);
+            calibrationSessions.delete(key);
+            calibrationSessionsByBind.delete(item.bindToken);
+          }
+        }
+        const action = url.pathname.slice(
+          '/api/cameras/calibration-sessions'.length,
+        );
+        if (action === '' && req.method === 'POST') {
+          const input = await readBody(req);
+          if (typeof input.id !== 'string')
+            return send(400, { error: 'Camera id is required' });
+          if (
+            !(await listCameras({ includeBuiltIn: true })).some(
+              (camera) => camera.id === input.id,
+            )
+          )
+            return send(404, { error: 'Camera not found' });
+          const screens = await listCameraScreens(cameraManager, input.id);
+          const session = new CameraCalibrationSession(input.id, screens);
+          calibrationSessions.set(session.token, session);
+          calibrationSessionsByBind.set(session.bindToken, session);
+          return send(200, {
+            token: session.token,
+            bindToken: session.bindToken,
+            links: phoneBindLinks(session.bindToken),
+            targets: session.status(),
+          });
+        }
+        const token = url.searchParams.get('token');
+        const session = token ? calibrationSessions.get(token) : undefined;
+        if (!session)
+          return send(404, { error: 'Calibration session expired' });
+        session.lastViewed = Date.now();
+        if (action === '' && req.method === 'GET')
+          return send(200, {
+            token: session.token,
+            bindToken: session.bindToken,
+            links: phoneBindLinks(session.bindToken),
+            targets: session.status(),
+          });
+        if (action === '' && req.method === 'DELETE') {
+          await session.close(cameraManager);
+          for (const preview of session.previews)
+            markerPreviews.delete(preview.token);
+          calibrationSessions.delete(session.token);
+          calibrationSessionsByBind.delete(session.bindToken);
+          return send(200, { ok: true });
+        }
+        if (action === '/detect' && req.method === 'POST') {
+          const abort = new AbortController();
+          const cancel = () => abort.abort();
+          res.once('close', cancel);
+          try {
+            return send(200, {
+              screens: await session.detect(cameraManager, abort.signal),
+            });
+          } finally {
+            res.off('close', cancel);
+          }
+        }
+        if (action === '/apply' && req.method === 'POST') {
+          return send(200, await session.apply(cameraManager));
+        }
+        return send(405, { error: 'Method not allowed' });
+      }
+      if (url.pathname === '/api/cameras/screens') {
+        const id = url.searchParams.get('id');
+        if (req.method === 'GET') {
+          if (!id) return send(400, { error: 'Camera id is required' });
+          return send(200, {
+            screens: await listCameraScreens(cameraManager, id),
+          });
+        }
+        if (devices)
+          return send(409, {
+            error: 'Configure screens through the connected device',
+          });
+        if (req.method === 'POST') {
+          const input = await readBody(req);
+          if (typeof input.id !== 'string')
+            return send(400, { error: 'Camera id is required' });
+          if (
+            !(await listCameras({ includeBuiltIn: true })).some(
+              (camera) => camera.id === input.id,
+            )
+          )
+            return send(404, { error: 'Camera not found' });
+          return send(200, {
+            screen: await addCameraScreen(cameraManager, input.id, input.name),
+          });
+        }
+        if (req.method === 'DELETE') {
+          if (!id) return send(400, { error: 'Camera id is required' });
+          const screenId = url.searchParams.get('screen');
+          if (!screenId) return send(400, { error: 'Screen id is required' });
+          await removeCameraScreen(cameraManager, id, screenId);
+          for (const [token, preview] of markerPreviews) {
+            if (preview.cameraId === id && preview.screenId === screenId) {
+              preview.close();
+              markerPreviews.delete(token);
+            }
+          }
+          return send(200, { ok: true });
         }
         return send(405, { error: 'Method not allowed' });
       }
@@ -860,7 +1032,34 @@ export async function startPlaygroundHost({
           });
         const id = url.searchParams.get('id');
         if (!id) return send(400, { error: 'Camera id is required' });
-        await clearStandaloneCorrection(cameraManager, id);
+        if (url.searchParams.get('all') === 'true') {
+          for (const [key, session] of calibrationSessions) {
+            if (session.cameraId !== id) continue;
+            await session.close(cameraManager);
+            for (const preview of session.previews)
+              markerPreviews.delete(preview.token);
+            calibrationSessions.delete(key);
+            calibrationSessionsByBind.delete(session.bindToken);
+          }
+          for (const [token, preview] of markerPreviews) {
+            if (preview.cameraId !== id) continue;
+            preview.close();
+            markerPreviews.delete(token);
+          }
+          const screens = await listCameraScreens(cameraManager, id);
+          for (const screen of screens) {
+            if (!screen.base)
+              await removeCameraScreen(cameraManager, id, screen.id);
+          }
+          await clearStandaloneCorrection(cameraManager, id);
+          return send(200, {
+            ok: true,
+            screens: await listCameraScreens(cameraManager, id),
+          });
+        }
+        const screenId = screenIdFrom(url.searchParams.get('screen'));
+        if (screenId) await assertCameraScreen(cameraManager, id, screenId);
+        await clearStandaloneCorrection(cameraManager, id, screenId);
         return send(200, { ok: true });
       }
       if (url.pathname === '/api/cameras/correction' && req.method === 'POST') {
@@ -871,11 +1070,15 @@ export async function startPlaygroundHost({
         const input = await readBody(req, 65536);
         if (typeof input.id !== 'string' || !input.correction)
           return send(400, { error: 'Camera id and correction are required' });
+        const screenId = screenIdFrom(input.screen);
+        if (screenId)
+          await assertCameraScreen(cameraManager, input.id, screenId);
         await saveStandaloneCorrection(
           cameraManager,
           input.id,
           input.correction,
           input.perspectiveTarget,
+          screenId,
         );
         return send(200, { ok: true });
       }
@@ -894,7 +1097,9 @@ export async function startPlaygroundHost({
         if (!devices && id) {
           if (req.headers['sec-fetch-site'] === 'cross-site')
             return send(403, { error: 'Open camera previews in Playground' });
-          await streamStandalonePreview(res, cameraManager, id, view);
+          const screenId = screenIdFrom(url.searchParams.get('screen'));
+          if (screenId) await assertCameraScreen(cameraManager, id, screenId);
+          await streamStandalonePreview(res, cameraManager, id, view, screenId);
           return;
         }
         const entry = devices?.entries.get(id);
@@ -1005,6 +1210,10 @@ export async function startPlaygroundHost({
         server.closeAllConnections();
         await setup.pending?.catch(() => {});
         await disconnectArm();
+        for (const session of calibrationSessions.values())
+          await session.close(cameraManager);
+        calibrationSessions.clear();
+        calibrationSessionsByBind.clear();
         for (const preview of markerPreviews.values()) preview.close();
         markerPreviews.clear();
         cameraLeases.clear();

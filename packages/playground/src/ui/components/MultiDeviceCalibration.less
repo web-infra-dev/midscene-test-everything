@@ -1,0 +1,44 @@
+.multi-device-bind {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  border: 1px solid rgb(0 0 0 / 8%);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.multi-device-qr {
+  display: grid;
+  flex: none;
+  place-items: center;
+  min-width: 168px;
+  min-height: 168px;
+}
+
+.multi-device-targets {
+  display: grid;
+  gap: 6px;
+}
+
+.multi-device-target {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-radius: 6px;
+  background: rgb(0 0 0 / 3%);
+  padding: 8px 10px;
+}
+
+.multi-device-results {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+
+  canvas {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: 0 auto;
+  }
+}

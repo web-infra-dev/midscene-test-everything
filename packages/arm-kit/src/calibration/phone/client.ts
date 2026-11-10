@@ -339,19 +339,14 @@ export function mountCalibrationPhonePage(
       };
     });
     const display = window.screen;
-    const landscape = display.orientation?.type.startsWith('landscape');
+    // The viewport is the authoritative orientation. iOS standalone pages can
+    // keep a stale `screen.orientation` value after launch, which must not swap
+    // the reported physical screen and fail the bounds check.
+    const portrait = innerHeight >= innerWidth;
     const dimensions = [display.width, display.height];
     const screen = {
-      ...(landscape === undefined
-        ? { width: display.width, height: display.height }
-        : {
-            width: landscape
-              ? Math.max(...dimensions)
-              : Math.min(...dimensions),
-            height: landscape
-              ? Math.min(...dimensions)
-              : Math.max(...dimensions),
-          }),
+      width: portrait ? Math.min(...dimensions) : Math.max(...dimensions),
+      height: portrait ? Math.max(...dimensions) : Math.min(...dimensions),
       devicePixelRatio: window.devicePixelRatio,
     };
     const topInset = iosTopInset(screen.height - innerHeight);

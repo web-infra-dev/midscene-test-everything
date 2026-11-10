@@ -127,9 +127,14 @@ export async function streamStandalonePreview(
   cameras: CameraSessionManager,
   id: string,
   view: CameraPreviewView = 'raw',
+  screenId?: string,
 ) {
   const owner = randomUUID();
-  const camera = await cameras.acquire(id, owner);
+  const camera = await cameras.acquire(
+    id,
+    owner,
+    view === 'corrected' ? screenId : undefined,
+  );
   const previous = standalonePreviews.get(id);
   const active = previous ?? new Set<ServerResponse>();
   active.add(res);
@@ -177,9 +182,10 @@ export async function saveStandaloneCorrection(
   id: string,
   correction: CameraCorrection,
   target?: PerspectiveTarget,
+  screenId?: string,
 ) {
   const owner = randomUUID();
-  const camera = await cameras.acquire(id, owner);
+  const camera = await cameras.acquire(id, owner, screenId);
   try {
     await camera.checkCorrection(correction);
     if (target) await camera.setPerspective(correction, target);
@@ -193,6 +199,7 @@ export async function saveStandaloneCorrection(
 export async function clearStandaloneCorrection(
   cameras: CameraSessionManager,
   id: string,
+  screenId?: string,
 ) {
-  await cameras.clearPerspective(id);
+  await cameras.clearPerspective(id, screenId);
 }

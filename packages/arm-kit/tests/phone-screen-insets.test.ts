@@ -304,6 +304,18 @@ test('a portrait start falls back to the legacy screen orientation API', async (
   expect(phone.orientationLocks).toEqual(['portrait-primary']);
 });
 
+test('iOS standalone follows the viewport when screen.orientation is stale', () => {
+  const phone = openPhone(844, 0, 0);
+  phone.scope.navigator.standalone = true;
+  phone.scope.window.screen.orientation.type = 'landscape-primary';
+  phone.resize();
+  expect(phone.last().layout.screen).toMatchObject({
+    width: 390,
+    height: 844,
+  });
+  expect(phone.last().layout.topInset).toBeUndefined();
+});
+
 test('Android waits for the phone button before requesting browser fullscreen', async () => {
   const phone = openPhone(800, 0, 0, false, true);
   phone.receive({ view: 'markers', markerRequest: 'markers-1' });

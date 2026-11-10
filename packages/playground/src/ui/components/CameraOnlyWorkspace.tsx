@@ -1,5 +1,3 @@
-import type { PerspectiveTarget } from '@midscene/arm-kit-shared/camera/vision-types';
-import type { CameraCorrection } from '@midscene/arm-kit-shared/contracts';
 import {
   Alert,
   App,
@@ -11,20 +9,24 @@ import {
   Tooltip,
   Typography,
 } from 'antd';
-import { Eraser, RefreshCw } from 'lucide-react';
+import { Eraser, RefreshCw, ScanLine } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { type CameraView, cameraPreviewUrl } from '../camera-preview';
+import {
+  BASE_SCREEN_ID,
+  type CameraScreenEntry,
+  cameraScreenName,
+  fetchCameraScreens,
+  removeCameraScreen,
+} from '../camera-screens';
 import { type CameraEntry, cameraStateLabel, useCameras } from '../cameras';
 import { useLanguage, useT } from '../i18n';
 import { CameraRail } from './CameraRail';
+import { CameraScreensPanel } from './CameraScreensPanel';
 import { CameraStagePreview } from './CameraStagePreview';
-import { PerspectiveCorrectionDialog } from './PerspectiveCorrectionDialog';
+import { MultiDeviceCalibrationDialog } from './MultiDeviceCalibrationDialog';
 import { RobotConnectionDialog } from './RobotConnectionDialog';
 import { RobotReadinessCard } from './RobotReadinessCard';
-import {
-  type CameraMarkerDetection,
-  ScreenMarkerPreview,
-} from './ScreenMarkerPreview';
 import { WorkspaceLayout } from './WorkspaceLayout';
 import './CameraStage.less';
 
@@ -46,23 +48,21 @@ export function CameraOnlyWorkspace() {
     select,
     refresh,
     error,
-    markCorrection,
     markCorrectionCleared,
   } = useCameras();
   const [connectionOpen, setConnectionOpen] = useState(false);
-  const [detection, setDetection] = useState<CameraMarkerDetection>();
-  const [saved, setSaved] = useState<{
-    correction: CameraCorrection;
-    target: PerspectiveTarget;
-  }>();
+  const [screens, setScreens] = useState<CameraScreenEntry[]>([]);
+  const [selectedScreenId, setSelectedScreenId] =
+    useState<string>(BASE_SCREEN_ID);
+  const [screensError, setScreensError] = useState<string>();
+  const [screensRevision, setScreensRevision] = useState(0);
+  const [calibrationOpen, setCalibrationOpen] = useState(false);
   const [correctionCleared, setCorrectionCleared] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [previewSuspended, setPreviewSuspended] = useState(false);
   const [leaseReady, setLeaseReady] = useState(false);
   const [leaseError, setLeaseError] = useState<string>();
   const [view, setView] = useState<CameraView>('raw');
-  const [editorOpen, setEditorOpen] = useState(false);
-  const [markerOpenRequest, setMarkerOpenRequest] = useState(0);
   const [revision, setRevision] = useState(0);
   const [failedUrl, setFailedUrl] = useState<string>();
   const [frame, setFrame] = useState<{
@@ -88,6 +88,32 @@ export function CameraOnlyWorkspace() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+  useEffect(() => {
+    if (!selectedId) {
+      setScreens([]);
+      setSelectedScreenId(BASE_SCREEN_ID);
+      return;
+    }
+    const abort = new AbortController();
+    setScreensError(undefined);
+    void fetchCameraScreens(selectedId, abort.signal)
+      .then((next) => {
+        if (abort.signal.aborted) return;
+        setScreens(next);
+        setSelectedScreenId((current) =>
+          next.some((screen) => screen.id === current)
+            ? current
+            : (next.find((screen) => screen.base)?.id ?? BASE_SCREEN_ID),
+        );
+      })
+      .catch((cause) => {
+        if (!abort.signal.aborted)
+          setScreensError(
+            cause instanceof Error ? cause.message : String(cause),
+          );
+      });
+    return () => abort.abort();
+  }, [selectedId, screensRevision]);
   // Keep one camera lease for the whole workspace. Preview responses then
   // come and go without stopping the camera, so clearing a correction or
   // switching raw/corrected never restarts the device.
@@ -140,17 +166,42 @@ export function CameraOnlyWorkspace() {
     };
   }, [selectedId]);
   const selected = cameras.find((camera) => camera.id === selectedId);
+  const selectedScreen =
+    screens.find((screen) => screen.id === selectedScreenId) ??
+    screens.find((screen) => screen.base) ??
+    (selected
+      ? {
+          id: BASE_SCREEN_ID,
+          name: 'Screen 1',
+          base: true,
+          hasCorrection: Boolean(selected.hasCorrection),
+          ...(selected.perspectiveTarget
+            ? { perspectiveTarget: selected.perspectiveTarget }
+            : {}),
+        }
+      : undefined);
+  const activeScreenId = selectedScreen?.base ? undefined : selectedScreen?.id;
   const hasCorrection =
-    !correctionCleared && Boolean(saved ?? selected?.hasCorrection);
+    !correctionCleared && Boolean(selectedScreen?.hasCorrection);
   const effectiveView: CameraView =
     view === 'corrected' && hasCorrection ? 'corrected' : 'raw';
-  const target = hasCorrection
-    ? (saved?.target ?? selected?.perspectiveTarget)
-    : undefined;
+  const target = hasCorrection ? selectedScreen?.perspectiveTarget : undefined;
+  const outlines = screens.flatMap((screen) =>
+    screen.hasCorrection && screen.correction
+      ? [
+          {
+            id: screen.id,
+            name: cameraScreenName(screen, zh),
+            correction: screen.correction,
+            active: screen.id === selectedScreen?.id,
+          },
+        ]
+      : [],
+  );
   const url =
     previewSuspended || !leaseReady || !selected
       ? undefined
-      : `${cameraPreviewUrl(selected.id, effectiveView)}&revision=${revision}`;
+      : `${cameraPreviewUrl(selected.id, effectiveView, activeScreenId)}&revision=${revision}`;
   // Before robot connection, the preview opens its stream on demand. Use the
   // displayed frame as evidence when no stream metadata is available yet.
   const displayed = frame?.url === url ? frame : undefined;
@@ -170,45 +221,42 @@ export function CameraOnlyWorkspace() {
     },
   };
   const previewFailed = Boolean(url && failedUrl === url);
-  const dismissDetection = () => {
-    setDetection(undefined);
-    setEditorOpen(false);
-  };
   const changeCamera = (id: string) => {
     select(id);
-    dismissDetection();
-    setSaved(undefined);
     setCorrectionCleared(false);
     setClearing(false);
     setView('raw');
+    setScreens([]);
+    setSelectedScreenId(BASE_SCREEN_ID);
+    setFailedUrl(undefined);
   };
-  const saveCorrection = async (
-    correction: CameraCorrection,
-    target: PerspectiveTarget,
-  ) => {
-    if (!selected || !detection) return;
-    const response = await fetch('/api/cameras/correction', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id: selected.id,
-        correction,
-        perspectiveTarget: target,
-      }),
-      signal: AbortSignal.timeout(30000),
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error?.message ?? result.error);
-    // Keep the accepted result in the stage: switch to the corrected stream and
-    // frame it with the saved output size instead of leaving the raw camera shot.
-    setSaved({ correction, target });
-    markCorrection(selected.id, target);
+  const changeScreen = (id: string) => {
+    if (id === selectedScreenId) return;
+    setSelectedScreenId(id);
     setCorrectionCleared(false);
-    setDetection(undefined);
-    setEditorOpen(false);
-    setView('corrected');
+    setFailedUrl(undefined);
     setRevision((value) => value + 1);
-    message.success(t('correctionSaved'));
+  };
+  const deleteScreen = async (screen: CameraScreenEntry) => {
+    if (!selected || screen.base) return;
+    setScreensError(undefined);
+    try {
+      await removeCameraScreen(selected.id, screen.id);
+      setScreens((current) =>
+        current.filter((entry) => entry.id !== screen.id),
+      );
+      if (selectedScreenId === screen.id) {
+        setSelectedScreenId(BASE_SCREEN_ID);
+        setCorrectionCleared(false);
+        setView('raw');
+        setFailedUrl(undefined);
+        setRevision((value) => value + 1);
+      }
+    } catch (cause) {
+      const text = cause instanceof Error ? cause.message : String(cause);
+      setScreensError(text);
+      message.error(text);
+    }
   };
   const clearCorrection = async () => {
     if (!selected || clearing) return;
@@ -222,16 +270,26 @@ export function CameraOnlyWorkspace() {
     setRevision((value) => value + 1);
     try {
       const response = await fetch(
-        `/api/cameras/correction?id=${encodeURIComponent(id)}`,
-        { method: 'DELETE', signal: AbortSignal.timeout(10000) },
+        `/api/cameras/correction?id=${encodeURIComponent(id)}&all=true`,
+        { method: 'DELETE', signal: AbortSignal.timeout(15000) },
       );
       const result = await response.json().catch(() => ({}));
       if (!response.ok)
         throw new Error(result.error?.message ?? result.error ?? 'Failed');
-      setSaved(undefined);
-      setDetection(undefined);
-      setEditorOpen(false);
       setCorrectionCleared(true);
+      setSelectedScreenId(BASE_SCREEN_ID);
+      setScreens(
+        Array.isArray(result.screens) && result.screens.length
+          ? result.screens
+          : [
+              {
+                id: BASE_SCREEN_ID,
+                name: 'Screen 1',
+                base: true,
+                hasCorrection: false,
+              },
+            ],
+      );
       markCorrectionCleared(id);
       message.success(t('correctionCleared'));
     } catch (cause) {
@@ -255,11 +313,21 @@ export function CameraOnlyWorkspace() {
     <>
       <WorkspaceLayout
         sidebar={
-          <RobotReadinessCard
-            camera={camera}
-            connected={false}
-            onOpenSetup={() => setConnectionOpen(true)}
-          />
+          <>
+            {selected && (
+              <CameraScreensPanel
+                onRemove={(screen) => void deleteScreen(screen)}
+                onSelect={changeScreen}
+                screens={screens}
+                selectedId={selectedScreen?.id ?? BASE_SCREEN_ID}
+              />
+            )}
+            <RobotReadinessCard
+              camera={camera}
+              connected={false}
+              onOpenSetup={() => setConnectionOpen(true)}
+            />
+          </>
         }
       >
         <section className="camera-stage">
@@ -287,23 +355,12 @@ export function CameraOnlyWorkspace() {
             </div>
             <div className="camera-stage-actions">
               {selected && (
-                <ScreenMarkerPreview
-                  key={selected.id}
-                  id={selected.id}
-                  name={selected.name}
-                  openRequest={markerOpenRequest}
-                  onOpenChange={(open) => {
-                    if (open) setView('raw');
-                  }}
-                  onDetected={(next) => {
-                    // Keep the raw stream (and close the rectified one) while
-                    // the operator edits corners; the corrected view returns on
-                    // Apply.
-                    setView('raw');
-                    setDetection(next);
-                    setEditorOpen(true);
-                  }}
-                />
+                <Button
+                  icon={<ScanLine size={16} />}
+                  onClick={() => setCalibrationOpen(true)}
+                >
+                  {t('detectScreenMarkers')}
+                </Button>
               )}
               {hasCorrection && (
                 <>
@@ -335,7 +392,7 @@ export function CameraOnlyWorkspace() {
                   loading={status === 'loading'}
                   onClick={() => {
                     setRevision((value) => value + 1);
-                    dismissDetection();
+                    setScreensRevision((value) => value + 1);
                     void refresh();
                   }}
                 />
@@ -344,14 +401,12 @@ export function CameraOnlyWorkspace() {
           </header>
           {error && <Alert type="error" showIcon message={error} />}
           {leaseError && <Alert type="error" showIcon message={leaseError} />}
+          {screensError && (
+            <Alert type="error" showIcon message={screensError} />
+          )}
           <CameraStagePreview
             available={Boolean(url && !previewFailed)}
-            outline={
-              effectiveView === 'raw'
-                ? (detection?.correction ??
-                  (hasCorrection ? saved?.correction : undefined))
-                : undefined
-            }
+            outlines={effectiveView === 'raw' ? outlines : undefined}
             frameSize={
               effectiveView === 'corrected' && target ? target : undefined
             }
@@ -408,17 +463,19 @@ export function CameraOnlyWorkspace() {
           )}
         </section>
       </WorkspaceLayout>
-      <PerspectiveCorrectionDialog
+      <MultiDeviceCalibrationDialog
+        cameraId={selected?.id ?? ''}
         cameraName={selected?.name ?? ''}
-        detection={detection}
-        onApply={saveCorrection}
-        onClose={() => setEditorOpen(false)}
-        onDetectAgain={() => {
-          setEditorOpen(false);
-          setDetection(undefined);
-          setMarkerOpenRequest((value) => value + 1);
+        onApplied={() => {
+          setSelectedScreenId(BASE_SCREEN_ID);
+          setCorrectionCleared(false);
+          setView('raw');
+          setFailedUrl(undefined);
+          setRevision((value) => value + 1);
+          setScreensRevision((value) => value + 1);
         }}
-        open={editorOpen && Boolean(detection)}
+        onClose={() => setCalibrationOpen(false)}
+        open={calibrationOpen && Boolean(selected)}
       />
       <RobotConnectionDialog
         open={connectionOpen}

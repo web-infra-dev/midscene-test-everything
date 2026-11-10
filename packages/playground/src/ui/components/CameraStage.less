@@ -90,12 +90,54 @@
   object-fit: contain;
 }
 
-.camera-stage-outline {
+.camera-stage-outlines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.screen-outline {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   pointer-events: none;
+}
+
+.screen-outline polygon {
+  fill: rgb(22 196 127 / 12%);
+  stroke: var(--rv-outline, #16c47f);
+  stroke-width: 5;
+  vector-effect: non-scaling-stroke;
+}
+
+.screen-outline:not(.screen-outline--active) polygon {
+  fill: rgb(22 196 127 / 5%);
+  opacity: 0.65;
+  stroke-width: 4;
+}
+
+.screen-outline-label {
+  position: absolute;
+  z-index: 3;
+  max-width: min(180px, 45%);
+  padding: 2px 7px;
+  overflow: hidden;
+  color: #fff;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  background: rgb(20 32 28 / 72%);
+  border: 1px solid rgb(255 255 255 / 35%);
+  border-radius: 999px;
+  transform: translate(-50%, 5px);
+}
+
+.screen-outline-label--active {
+  background: var(--rv-outline, #16c47f);
+  border-color: rgb(255 255 255 / 65%);
 }
 
 .camera-rail {

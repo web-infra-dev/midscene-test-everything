@@ -9,23 +9,107 @@ import {
   useState,
 } from 'react';
 import { useLanguage } from '../i18n';
+import { CameraScreenOutline } from './CameraScreenOutline';
+
+export interface CameraStageOutline {
+  id: string;
+  name: string;
+  correction: CameraCorrection;
+  active?: boolean;
+}
+
+/**
+ * The preview image uses object-fit: contain, while an SVG also preserves its
+ * aspect ratio. HTML labels must use the resulting image rectangle, not the
+ * full preview element, or letterboxing moves them away from their outline.
+ */
+export function fitPreviewContent(
+  containerWidth: number,
+  containerHeight: number,
+  sourceWidth: number,
+  sourceHeight: number,
+) {
+  if (
+    containerWidth <= 0 ||
+    containerHeight <= 0 ||
+    sourceWidth <= 0 ||
+    sourceHeight <= 0
+  )
+    return undefined;
+  const scale = Math.min(
+    containerWidth / sourceWidth,
+    containerHeight / sourceHeight,
+  );
+  const width = sourceWidth * scale;
+  const height = sourceHeight * scale;
+  return {
+    left: (containerWidth - width) / 2,
+    top: (containerHeight - height) / 2,
+    width,
+    height,
+  };
+}
 
 /** Keep the current stream attached while the operator inspects it full screen. */
 export function CameraStagePreview({
   children,
   available = true,
-  outline,
+  outlines,
   frameSize,
 }: {
   children: ReactNode;
   available?: boolean;
-  outline?: CameraCorrection;
+  outlines?: readonly CameraStageOutline[];
   /** Crop frame dimensions (a rectified screen) instead of the camera frame. */
   frameSize?: { width: number; height: number };
 }) {
   const frame = useRef<HTMLDivElement>(null);
   const [native, setNative] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [contentBox, setContentBox] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  }>();
+  const sourceWidth = outlines?.[0]?.correction.sourceWidth;
+  const sourceHeight = outlines?.[0]?.correction.sourceHeight;
+  useEffect(() => {
+    const element = frame.current;
+    if (!element || !sourceWidth || !sourceHeight) {
+      setContentBox(undefined);
+      return;
+    }
+    const measure = () => {
+      const next = fitPreviewContent(
+        element.clientWidth,
+        element.clientHeight,
+        sourceWidth,
+        sourceHeight,
+      );
+      setContentBox((previous) =>
+        previous &&
+        next &&
+        previous.left === next.left &&
+        previous.top === next.top &&
+        previous.width === next.width &&
+        previous.height === next.height
+          ? previous
+          : next,
+      );
+    };
+    measure();
+    const observer =
+      typeof ResizeObserver === 'undefined'
+        ? undefined
+        : new ResizeObserver(measure);
+    observer?.observe(element);
+    window.addEventListener('resize', measure);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [sourceWidth, sourceHeight, expanded, native]);
   useEffect(() => {
     const changed = () =>
       setNative(
@@ -75,29 +159,34 @@ export function CameraStagePreview({
       style={fittedStyle}
     >
       {children}
-      {outline && available && (
-        <svg
-          className="camera-stage-outline"
-          viewBox={`0 0 ${outline.sourceWidth} ${outline.sourceHeight}`}
-          role="img"
-          aria-label={zh ? '已识别的屏幕轮廓' : 'Detected screen outline'}
+      {outlines && available && outlines.length > 0 && (
+        <div
+          className="camera-stage-outlines"
+          style={
+            contentBox
+              ? {
+                  left: contentBox.left,
+                  top: contentBox.top,
+                  width: contentBox.width,
+                  height: contentBox.height,
+                  right: 'auto',
+                  bottom: 'auto',
+                }
+              : undefined
+          }
         >
-          <polygon
-            points={[
-              outline.points.topLeft,
-              outline.points.topRight,
-              outline.points.bottomRight,
-              outline.points.bottomLeft,
-            ]
-              .map((p) => `${p.x},${p.y}`)
-              .join(' ')}
-            fill="rgb(22 196 127 / 12%)"
-            stroke="#16c47f"
-            strokeWidth="4"
-            strokeLinejoin="round"
-            vectorEffect="non-scaling-stroke"
-          />
-        </svg>
+          {outlines.map((item) => (
+            <CameraScreenOutline
+              active={item.active}
+              imageHeight={item.correction.sourceHeight}
+              imageWidth={item.correction.sourceWidth}
+              key={item.id}
+              label={item.name}
+              points={item.correction.points}
+              screenId={item.id}
+            />
+          ))}
+        </div>
       )}
       {(available || full) && (
         <Button

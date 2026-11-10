@@ -1,0 +1,49 @@
+.camera-screens-card {
+  .ant-card-body {
+    padding: 8px;
+  }
+
+  .camera-screen-list {
+    display: grid;
+    gap: 4px;
+  }
+
+  .camera-screen-item {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    border-radius: 6px;
+    padding: 2px 4px;
+
+    &.is-active {
+      background: var(--midscene-accent-soft, rgb(22 196 127 / 12%));
+    }
+  }
+
+  .camera-screen-select {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    padding: 4px;
+    text-align: left;
+  }
+
+  .camera-screen-name {
+    overflow: hidden;
+    font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ant-tag {
+    margin: 0;
+    font-size: 11px;
+  }
+}

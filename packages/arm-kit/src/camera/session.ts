@@ -431,6 +431,10 @@ export class CameraSessionManager {
       streamStopTimeoutMs,
     );
   }
+  /** Directory that owns correction and screen manifest files. */
+  get dataDirectory(): string {
+    return this.directory;
+  }
   private serialize<T>(
     cameraId: string,
     operation: () => Promise<T>,
@@ -450,20 +454,23 @@ export class CameraSessionManager {
   /** List responses need the saved target without opening the camera. */
   async persistedPerspective(
     cameraId: string,
+    screenId?: string,
   ): Promise<StoredCameraPerspective | undefined> {
     try {
-      return await readCameraPerspective(this.directory, cameraId);
+      return await readCameraPerspective(this.directory, cameraId, screenId);
     } catch {
       return undefined;
     }
   }
-  /** Clear a camera-only correction without starting the camera. */
-  clearPerspective(cameraId: string): Promise<void> {
+  /** Clear one screen correction without starting the camera. */
+  clearPerspective(cameraId: string, screenId?: string): Promise<void> {
     // Deliberately outside serialize(): a camera that is still opening or
     // closing must not delay a clear, nor block the next acquire behind it.
-    const session = this.sessions.get(cameraId);
+    const session = screenId
+      ? this.screenSessions.get(JSON.stringify([cameraId, screenId]))
+      : this.sessions.get(cameraId);
     if (session) return session.clearPerspective();
-    const file = cameraPerspectiveFile(this.directory, cameraId);
+    const file = cameraPerspectiveFile(this.directory, cameraId, screenId);
     return Promise.all([
       rm(file, { force: true }),
       rm(`${file}.validity.json`, { force: true }),

@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { type CameraEntry, useCameras } from '../src/ui/cameras';
 import { CameraRail } from '../src/ui/components/CameraRail';
 import { CameraStagePreview } from '../src/ui/components/CameraStagePreview';
+import { fitPreviewContent } from '../src/ui/components/CameraStagePreview';
 
 const globals = globalThis as typeof globalThis & { React?: typeof React };
 const previousReact = globals.React;
@@ -71,6 +72,92 @@ test('a failed list refresh preserves the selected stream and reports the error'
   assert.equal(useCameras.getState().selectedId, null);
   assert.deepEqual(useCameras.getState().cameras, []);
   assert.equal(useCameras.getState().error, undefined);
+});
+
+test('labels use the contained image rectangle instead of the letterboxed stage', () => {
+  const box = fitPreviewContent(1492, 662.625, 1920, 1080);
+  assert.ok(box);
+  assert.ok(box.left > 150);
+  assert.ok(box.width < 1492);
+  assert.ok(Math.abs(box.width / box.height - 16 / 9) < 0.001);
+  const exact = fitPreviewContent(960, 540, 1920, 1080);
+  assert.deepEqual(exact, { left: 0, top: 0, width: 960, height: 540 });
+});
+
+test('labels the rotated screen on its own top edge', () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      CameraStagePreview,
+      {
+        outlines: [
+          {
+            id: 'rotated',
+            name: 'Screen 1',
+            correction: {
+              sourceWidth: 1000,
+              sourceHeight: 800,
+              rotation: 0,
+              points: {
+                topLeft: { x: 700, y: 100 },
+                topRight: { x: 700, y: 400 },
+                bottomRight: { x: 300, y: 400 },
+                bottomLeft: { x: 300, y: 100 },
+              },
+            },
+          },
+        ],
+      },
+      React.createElement('img', { src: 'preview.jpg', alt: '' }),
+    ),
+  );
+  assert.ok(markup.includes('left:70.00%'));
+  assert.ok(!markup.includes('left:50.00%'));
+});
+
+test('a raw preview labels every calibrated screen outline', () => {
+  const correction = {
+    sourceWidth: 1000,
+    sourceHeight: 800,
+    rotation: 0 as const,
+    points: {
+      topLeft: { x: 100, y: 100 },
+      topRight: { x: 400, y: 100 },
+      bottomRight: { x: 400, y: 500 },
+      bottomLeft: { x: 100, y: 500 },
+    },
+  };
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      CameraStagePreview,
+      {
+        outlines: [
+          {
+            id: 'base',
+            name: 'Screen 1',
+            correction,
+            active: true,
+          },
+          {
+            id: 'screen-2',
+            name: 'Screen 2',
+            correction: {
+              ...correction,
+              points: Object.fromEntries(
+                Object.entries(correction.points).map(([key, point]) => [
+                  key,
+                  { x: point.x + 400, y: point.y },
+                ]),
+              ) as typeof correction.points,
+            },
+          },
+        ],
+      },
+      React.createElement('img', { src: 'preview.jpg', alt: '' }),
+    ),
+  );
+  assert.ok(markup.includes('Screen 1'));
+  assert.ok(markup.includes('Screen 2'));
+  assert.equal((markup.match(/<polygon/g) ?? []).length, 2);
 });
 
 test('a corrected preview is framed by the saved target instead of the camera frame', () => {
