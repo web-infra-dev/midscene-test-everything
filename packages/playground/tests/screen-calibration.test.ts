@@ -22,7 +22,7 @@ const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
-async function fixture() {
+async function fixture({ screens = true }: { screens?: boolean } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'screen-bench-test-'));
   const adapter = new TestRobotAdapter();
   const store = new ProfileStore(join(directory, 'profiles.json'));
@@ -95,21 +95,28 @@ async function fixture() {
     },
   });
   const service = devices.markerCalibration;
-  const session = await service.create('cam', ['Screen 1', 'Screen 2']);
-  for (const target of session.targets)
+  // A bench can start without any saved screen, which is the state the phone
+  // dialog and the camera-mapping step have to grow from.
+  const session = screens
+    ? await service.create('cam', ['Screen 1', 'Screen 2'])
+    : undefined;
+  for (const target of session?.targets ?? [])
     await service.pageAction({
       action: 'create-display',
-      visionSessionId: session.id,
+      visionSessionId: session!.id,
       targetId: target.id,
       visionToken: target.token,
     });
-  const link = (await service.pageAction({
-    action: 'bind-link',
-    visionSessionId: session.id,
-    targets: session.targets.map((t) => ({ id: t.id, token: t.token })),
-  })) as { path: string };
-  const ticket = link.path.split('=')[1];
+  const link = session
+    ? ((await service.pageAction({
+        action: 'bind-link',
+        visionSessionId: session.id,
+        targets: session.targets.map((t) => ({ id: t.id, token: t.token })),
+      })) as { path: string })
+    : undefined;
+  const ticket = link?.path.split('=')[1];
   async function connect(pageKey = randomUUID()) {
+    if (!session || !ticket) throw new Error('No marker session in fixture');
     const registered = await service.register({ pageKey, ticket });
     const token = new URL(registered.url, 'http://localhost').searchParams.get(
       'token',
@@ -140,6 +147,7 @@ async function fixture() {
     return { page, targetHost, pageKey, token, targetId, pageId };
   }
   async function render(missingSecond = false, secondOffsetX = 0) {
+    if (!session) throw new Error('No marker session in fixture');
     const chunks = session.targets
       .map(
         (target, index) =>
@@ -149,7 +157,10 @@ async function fixture() {
           )
             .map((m, i) => ({ ...m, code: devices.markerCodes(target.id)[i] }))
             .filter(
-              (m) => !missingSecond || index === 0 || m.purpose !== 'check',
+              (m) =>
+                !missingSecond ||
+                index === 0 ||
+                (m.purpose === 'fit' && m.x < 200),
             )
             .map((m) =>
               markerSvg(m.code).replace(
@@ -174,7 +185,7 @@ async function fixture() {
     store,
     devices,
     service,
-    session,
+    session: session!,
     connect,
     render,
     host,
@@ -266,6 +277,8 @@ it('keeps saved identity when restoring home, and permits explicit release and r
     keepBinding: true,
   });
   expect(first.page.summary().mode).toBe('waiting');
+  // The marker display is released too, so the dialog can bind the page again.
+  expect(first.page.summary().targetDisplayId).toBeUndefined();
   expect(
     f.store.list().screenPages?.find((p) => p.id === first.page.saved.id)
       ?.targetId,
@@ -465,7 +478,7 @@ it('pairs directly from the phone dialog without a marker session and keeps QR a
     'token',
   );
   const page = (await service.phoneHost(token))!;
-  expect(page.saved.targetId).toBe(f.session.targets[0].id);
+  expect(page.saved.targetId).toBeDefined();
   expect(page.mode).toBe('mapping');
   const same = await service.register({
     pageKey: page.saved.pageKey,
@@ -475,8 +488,94 @@ it('pairs directly from the phone dialog without a marker session and keeps QR a
   expect(f.store.list().screenPages).toHaveLength(1);
   expect(f.adapter.movements).toHaveLength(0);
 });
+it('creates one named screen per device when connected from the computer', async () => {
+  const f = await fixture({ screens: false });
+  for (const userAgent of ['Mozilla/5.0 (iPhone)', 'Mozilla/5.0 (iPhone)']) {
+    const { url } = await f.service.register(
+      { pageKey: randomUUID() },
+      userAgent,
+    );
+    const page = (await f.service.phoneHost(
+      new URL(url, 'http://localhost').searchParams.get('token'),
+    ))!;
+    expect(page.saved.targetId).toBeUndefined();
+    expect(page.saved.name).toBe(`iPhone · ${page.summary().label}`);
+    for (let attempt = 0; attempt < 2; attempt++)
+      await f.service.pageAction({
+        action: 'assign',
+        id: page.saved.id,
+        role: 'mapping',
+        cameraId: 'cam',
+      });
+    expect(
+      f.devices.screens().find((screen) => screen.id === page.saved.targetId)
+        ?.name,
+    ).toBe(page.saved.name);
+  }
+  expect(f.devices.screens()).toHaveLength(2);
+  expect(f.adapter.movements).toHaveLength(0);
+});
+it('keeps the screen label and the device label on the same name', async () => {
+  const f = await fixture();
+  const { page, targetId } = await f.connect();
+  await f.service.pageAction({
+    action: 'rename',
+    id: page.saved.id,
+    name: 'Left phone',
+  });
+  expect(
+    f.devices.screens().find((screen) => screen.id === targetId)!.name,
+  ).toBe('Left phone');
+});
+it('returns every paired page to its home view when the service starts', async () => {
+  const f = await fixture({ screens: false });
+  const info = (await f.service.pageAction({
+    action: 'list',
+    cameraId: 'cam',
+  })) as { pairing: { code: string } };
+  const registered = await f.service.register({
+    pageKey: randomUUID(),
+    code: info.pairing.code,
+  });
+  const token = new URL(registered.url, 'http://localhost').searchParams.get(
+    'token',
+  )!;
+  const page = (await f.service.phoneHost(token))!;
+  expect(page.mode).toBe('mapping');
+  // A restart builds a new service over the same store; the page comes back
+  // home but keeps the screen it was paired with.
+  const restarted = new ScreenCalibration(f.devices);
+  cleanups.push(() => restarted.close());
+  const listed = (await restarted.pageAction({
+    action: 'list',
+    cameraId: 'cam',
+  })) as { devices: Array<{ id: string; mode: string; screenId?: string }> };
+  const device = listed.devices.find((item) => item.id === page.saved.id)!;
+  expect(device.mode).toBe('waiting');
+  expect(device.screenId).toBe(page.saved.targetId);
+});
+it('forgets an offline page and keeps the screen it served', async () => {
+  const f = await fixture();
+  const { page, targetId } = await f.connect();
+  await f.service.pageAction({
+    action: 'release',
+    id: page.saved.id,
+    keepBinding: true,
+  });
+  expect(f.devices.screens().some((screen) => screen.id === targetId)).toBe(
+    true,
+  );
+  // No phone ever reported on this page in this test, so it counts as offline.
+  await f.service.pageAction({ action: 'forget', id: page.saved.id });
+  expect(f.store.list().screenPages).toHaveLength(0);
+  expect(f.devices.screens().some((screen) => screen.id === targetId)).toBe(
+    true,
+  );
+});
 it('does not steal a saved screen when more phones use the global connection code', async () => {
   const f = await fixture();
+  const first = await f.connect();
+  const second = await f.connect();
   const info = (await f.service.pageAction({
     action: 'list',
     cameraId: 'cam',
@@ -487,12 +586,11 @@ it('does not steal a saved screen when more phones use the global connection cod
       code: info.pairing.code,
     });
   const pages = f.store.list().screenPages!;
-  expect(pages.filter((p) => p.targetId)).toHaveLength(2);
-  expect(
-    new Set(pages.flatMap((p) => (p.targetId ? [p.targetId] : []))).size,
-  ).toBe(2);
-  expect(pages[2].targetId).toBeUndefined();
-  expect(f.devices.screens()).toHaveLength(2);
+  expect(pages).toHaveLength(5);
+  expect(new Set(pages.map((page) => page.targetId)).size).toBe(5);
+  expect(first.page.saved.targetId).toBe(first.targetId);
+  expect(second.page.saved.targetId).toBe(second.targetId);
+  expect(f.devices.screens()).toHaveLength(5);
   expect(f.adapter.movements).toHaveLength(0);
 });
 it('refuses a global reconnect while the bound screen is collecting samples', async () => {
@@ -501,14 +599,7 @@ it('refuses a global reconnect while the bound screen is collecting samples', as
     action: 'list',
     cameraId: 'cam',
   })) as { pairing: { code: string } };
-  const pageKey = randomUUID();
-  const registered = await f.service.register({
-    pageKey,
-    code: info.pairing.code,
-  });
-  const page = (await f.service.phoneHost(
-    new URL(registered.url, 'http://localhost').searchParams.get('token'),
-  ))!;
+  const { pageKey, page } = await f.connect();
   const original = page.host!.service.status;
   page.host!.service.status = () =>
     ({ id: 'active', stage: 'collecting' }) as ReturnType<typeof original>;

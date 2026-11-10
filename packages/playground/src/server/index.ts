@@ -213,6 +213,7 @@ export async function startPlaygroundHost({
           cameras: cameraManager,
           pairings,
           phoneLinks,
+          phoneEntryAtRoot: developmentOrigins.length > 0,
         });
         tasks = new PlaygroundTasks(devices);
         armControls = new PlaygroundArmControls(arm, tasks);
@@ -284,10 +285,21 @@ export async function startPlaygroundHost({
       res.end(JSON.stringify(data));
     };
     if (!url) return send(400, { error: 'Invalid URL' });
-    if (url.pathname.startsWith('/phone-calibration')) {
+    const lanPhoneRoot =
+      url.pathname === '/' &&
+      developmentOrigins.length > 0 &&
+      req.headers.host &&
+      !/^(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/i.test(req.headers.host);
+    if (
+      lanPhoneRoot ||
+      url.pathname === '/s' ||
+      url.pathname.startsWith('/phone-calibration')
+    ) {
       try {
         if (
-          url.pathname === '/phone-calibration/connect' &&
+          (lanPhoneRoot ||
+            url.pathname === '/s' ||
+            url.pathname === '/phone-calibration/connect') &&
           req.method === 'GET'
         ) {
           res.writeHead(200, {
@@ -314,6 +326,7 @@ export async function startPlaygroundHost({
             200,
             await devices.markerCalibration.register(
               await readBody(req, 16384),
+              req.headers['user-agent'],
             ),
           );
         }
@@ -339,6 +352,20 @@ export async function startPlaygroundHost({
         const calibration = await devices?.resolvePhoneHost(
           url.searchParams.get('token'),
         );
+        if (
+          !calibration &&
+          req.method === 'GET' &&
+          ['/phone-calibration', '/phone-calibration/'].includes(
+            url.pathname,
+          ) &&
+          req.headers.accept?.includes('text/html')
+        ) {
+          res.writeHead(302, {
+            Location: '/s',
+            'Cache-Control': 'no-store',
+          });
+          return res.end();
+        }
         if (!calibration)
           return send(503, {
             error: 'Phone session is not ready. Reconnecting…',
@@ -672,6 +699,10 @@ export async function startPlaygroundHost({
           await devices.ensureHost(id);
           return send(200, { phase: 'prepared' });
         }
+        if (action === 'cancel' && req.method === 'POST') {
+          await devices.cancelCalibration(id);
+          return send(200, devices.status(id));
+        }
         if (req.method === 'POST') devices.assertBatchIdle();
         if (action === 'start' && req.method === 'POST') {
           const status = await devices.startCalibration(id);
@@ -692,10 +723,6 @@ export async function startPlaygroundHost({
         }
         if (action === 'status' && req.method === 'GET')
           return send(200, devices.status(id));
-        if (action === 'cancel' && req.method === 'POST') {
-          await devices.cancelCalibration(id);
-          return send(200, devices.status(id));
-        }
         const session = devices.entries.get(id)?.calibration;
         if (req.method === 'POST' && action?.startsWith('assisted-calibration'))
           devices.assertCalibrationRunning(id);

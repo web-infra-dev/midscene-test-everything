@@ -1,5 +1,6 @@
 import type { ArmController } from '@midscene/arm-kit';
 import { controllerRuntime } from '@midscene/arm-kit/internal/controller-runtime';
+import { sharedCalibrationTool } from '@midscene/arm-kit/internal/runtime/profile-store';
 import type { PlaygroundArmControls } from './arm-controls.js';
 import type { PlaygroundSession, SessionInput } from './session.js';
 
@@ -48,14 +49,29 @@ export class StatusPanel {
     const profiles = runtime.profileStore.list();
     const calibration = this.options.getCalibrationSelection?.(cameraId);
     if (calibration && calibration.cameraId !== cameraId) return;
+    if (!cameraId) return;
+    const physicalCameraId =
+      profiles.screenTargets?.find((target) => target.id === cameraId)
+        ?.cameraId ?? cameraId;
+    const measured = profiles.calibrationSetups?.find(
+      (setup) =>
+        setup.deviceId === cameraId && setup.cameraId === physicalCameraId,
+    );
     const binding =
       calibration ??
+      measured ??
       profiles.devices?.find((item) => item.deviceId === cameraId) ??
+      sharedCalibrationTool(
+        profiles,
+        physicalCameraId,
+        arm.id,
+        arm.connectionIdentity,
+      ) ??
       profiles.devices?.find((item) => item.cameraId === cameraId) ??
       (profiles.workstation?.cameraId === cameraId
         ? profiles.workstation
         : undefined);
-    if (!binding || !cameraId) return;
+    if (!binding) return;
     const robot = profiles.robots.find(
       (item) => item.id === binding.robotProfileId,
     );

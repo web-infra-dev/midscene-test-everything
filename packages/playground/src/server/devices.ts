@@ -42,6 +42,7 @@ export class PlaygroundDevices {
   private Device: typeof RobotArmDevice;
   private Host: typeof CalibrationHost;
   private phoneLinks: PhoneLinks;
+  readonly phoneEntryAtRoot: boolean;
   private pairings?: PhonePairings;
   cameraErrors = new Map<string, string>();
   discoveryError?: string;
@@ -55,12 +56,14 @@ export class PlaygroundDevices {
       Device = RobotArmDevice,
       Host = CalibrationHost,
       phoneLinks = () => [],
+      phoneEntryAtRoot = false,
       pairings,
     }: {
       cameras?: CameraSessionManager;
       Device?: typeof RobotArmDevice;
       Host?: typeof CalibrationHost;
       phoneLinks?: PhoneLinks;
+      phoneEntryAtRoot?: boolean;
       pairings?: PhonePairings;
     } = {},
   ) {
@@ -69,6 +72,7 @@ export class PlaygroundDevices {
     this.Device = Device;
     this.Host = Host;
     this.phoneLinks = phoneLinks;
+    this.phoneEntryAtRoot = phoneEntryAtRoot;
     this.pairings = pairings;
   }
   screens() {
@@ -77,12 +81,18 @@ export class PlaygroundDevices {
     const defaults = [...this.entries]
       .filter(([id, e]) => id === e.cameraId && !saved.some((s) => s.id === id))
       .map(([id, e]) => ({ id, cameraId: id, name: e.camera.camera.name }));
-    return [...defaults, ...saved.filter((t) => !t.archived)].map((target) => ({
-      ...target,
-      hasCorrection: Boolean(
-        this.entries.get(target.id)?.camera.getCorrection(),
-      ),
-    }));
+    return [...defaults, ...saved.filter((t) => !t.archived)].map((target) => {
+      const camera = this.entries.get(target.id)?.camera;
+      const correction = camera?.getCorrection();
+      return {
+        ...target,
+        hasCorrection: Boolean(correction),
+        hasSavedPerspective: camera?.hasSavedPerspective() ?? false,
+        // The stage draws every screen's outline from the saved correction, so
+        // the list carries the quad instead of only a yes/no flag.
+        ...(correction ? { correction } : {}),
+      };
+    });
   }
   markerCodes(id: string) {
     const targets =
@@ -398,9 +408,10 @@ export class PlaygroundDevices {
       : { phase: 'idle' };
   }
   async cancelCalibration(id: string) {
-    await this.opening.get(id)?.catch(() => undefined);
     const entry = this.entries.get(id);
     const session = entry?.calibration;
+    if (!session) return;
+    this.assertBatchIdle();
     if (session && ['queued', 'running'].includes(session.phase))
       await entry?.host?.service.stop();
     session?.abort.abort();
