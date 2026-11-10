@@ -9,8 +9,13 @@ const source = readFileSync(
 const media = readFileSync(
   new URL('../assets/phone/awake.mp4', import.meta.url),
 );
+const androidUa =
+  'Mozilla/5.0 (Linux; Android 14; PJF110) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36';
 
-function load(withWakeLock = true) {
+function load(
+  withWakeLock = true,
+  userAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+) {
   const documentListeners = new Map<string, () => void>();
   const windowListeners = new Map<string, () => void>();
   let visible = true;
@@ -54,7 +59,9 @@ function load(withWakeLock = true) {
     release: rstest.fn(async () => undefined),
   };
   const request = rstest.fn(async () => lock);
-  const navigator = withWakeLock ? { wakeLock: { request } } : {};
+  const navigator = withWakeLock
+    ? { userAgent, wakeLock: { request } }
+    : { userAgent };
   const window = {
     addEventListener(name: string, listener: () => void) {
       windowListeners.set(name, listener);
@@ -152,6 +159,30 @@ describe('screen wake lock', () => {
     expect(page.video.pause).toHaveBeenCalled();
 
     pointer({ target: { closest: () => null } });
+    expect(page.video.play).toHaveBeenCalled();
+  });
+
+  it('never creates the wake video on Android, so fullscreen stays page fullscreen', async () => {
+    const page = load(false, androidUa);
+    await page.awake.start();
+    expect(page.createElement).not.toHaveBeenCalled();
+    expect(page.video.play).not.toHaveBeenCalled();
+  });
+
+  it('holds the native wake lock on Android when the page has one', async () => {
+    const page = load(true, androidUa);
+    await page.awake.start();
+    expect(page.request).toHaveBeenCalledWith('screen');
+    expect(page.createElement).not.toHaveBeenCalled();
+  });
+
+  it('keeps the video fallback on HarmonyOS, which reports Android compatibility', async () => {
+    const page = load(
+      false,
+      'Mozilla/5.0 (Linux; Android 12; HarmonyOS; NOH-AN00) AppleWebKit/537.36',
+    );
+    await page.awake.start();
+    expect(page.createElement).toHaveBeenCalledWith('video');
     expect(page.video.play).toHaveBeenCalled();
   });
 

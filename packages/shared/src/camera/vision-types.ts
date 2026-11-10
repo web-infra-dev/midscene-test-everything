@@ -265,4 +265,10 @@ export interface PerspectiveTransformOptions {
    * lands in the output's top-right corner at 90 degrees. Defaults to 0.
    */
   rotation?: PerspectiveRotation;
+  /**
+   * Pixel interpolation. Bilinear is the default for saved screenshots;
+   * nearest-neighbour is much cheaper for a live preview stream, where the
+   * output is shown far smaller than the target.
+   */
+  sampling?: 'bilinear' | 'nearest';
 }

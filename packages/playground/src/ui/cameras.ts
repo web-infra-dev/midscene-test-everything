@@ -1,9 +1,13 @@
+import type { PerspectiveTarget } from '@midscene/arm-kit-shared/camera/vision-types';
+import type { CameraCorrection } from '@midscene/arm-kit-shared/contracts';
 import { create } from 'zustand';
 
 export interface CameraEntry {
   id: string;
   name: string;
   hasCorrection?: boolean;
+  correction?: CameraCorrection;
+  perspectiveTarget?: PerspectiveTarget;
   error?: string;
   stream?: {
     state: string;
@@ -40,6 +44,12 @@ export const useCameras = create<{
   start: (id: string) => Promise<void>;
   stop: (id: string) => Promise<void>;
   refresh: (discover?: boolean) => Promise<void>;
+  markCorrection: (
+    id: string,
+    target: PerspectiveTarget,
+    correction: CameraCorrection,
+  ) => void;
+  markCorrectionCleared: (id: string) => void;
 }>((set, get) => ({
   cameras: [],
   selectedId: (() => {
@@ -81,6 +91,34 @@ export const useCameras = create<{
     } catch {
       // Selection still works when browser storage is unavailable.
     }
+  },
+  markCorrection: (id, target, correction) => {
+    set((state) => ({
+      cameras: state.cameras.map((camera) =>
+        camera.id === id
+          ? {
+              ...camera,
+              hasCorrection: true,
+              correction,
+              perspectiveTarget: target,
+            }
+          : camera,
+      ),
+    }));
+  },
+  markCorrectionCleared: (id) => {
+    set((state) => ({
+      cameras: state.cameras.map((camera) =>
+        camera.id === id
+          ? {
+              ...camera,
+              hasCorrection: false,
+              correction: undefined,
+              perspectiveTarget: undefined,
+            }
+          : camera,
+      ),
+    }));
   },
   refresh: async (discover = true) => {
     const revision = ++listRevision;

@@ -244,13 +244,15 @@ function openPhone(
 }
 
 test('iPhone helper uses cover and reports split system bars without Fullscreen API', () => {
-  expect(calibrationPhonePage('test')).toContain('viewport-fit=cover');
-  expect(calibrationPhonePage('test')).toContain(
-    '<meta name="x5-orientation" content="portrait">',
-  );
-  expect(calibrationPhonePage('test')).toContain(
-    '<meta name="x5-fullscreen" content="true">',
-  );
+  const html = calibrationPhonePage('test');
+  expect(html).toContain('viewport-fit=cover');
+  // The page reports the orientation it gets; it never asks the browser for one.
+  expect(html).not.toContain('name="screen-orientation"');
+  expect(html).not.toContain('name="x5-orientation"');
+  // Element fullscreen is the only full-screen request. Vendor fullscreen metas
+  // let some Android browsers replace the page with their own player surface.
+  expect(html).not.toContain('name="x5-fullscreen"');
+  expect(html).not.toContain('name="full-screen"');
   const phone = openPhone(700, 47, 34);
   expect(phone.last()).toMatchObject({
     visible: true,
@@ -284,35 +286,75 @@ test('unknown safe areas and Android retain the existing single-edge fallback', 
   expect(phone.last().layout.topInset).toBeUndefined();
 });
 
-test('Android fullscreen requests the primary portrait orientation lock', async () => {
+test('a portrait start requests the primary portrait orientation once', async () => {
   const phone = openPhone(800, 0, 0, false, true);
   await phone.elements.get('marker-fullscreen')?.onclick?.();
   expect(phone.orientationLocks).toEqual(['portrait-primary']);
 });
 
-test('Android falls back to the generic portrait lock alias', async () => {
+test('a portrait start falls back to the generic portrait lock alias', async () => {
   const phone = openPhone(800, 0, 0, false, true, true);
   await phone.elements.get('marker-fullscreen')?.onclick?.();
   expect(phone.orientationLocks).toEqual(['portrait-primary', 'portrait']);
 });
 
-test('Android falls back to the legacy screen orientation API', async () => {
+test('a portrait start falls back to the legacy screen orientation API', async () => {
   const phone = openPhone(800, 0, 0, false, true, false, 'legacy');
   await phone.elements.get('marker-fullscreen')?.onclick?.();
   expect(phone.orientationLocks).toEqual(['portrait-primary']);
 });
 
-test('Android re-locks portrait if fullscreen orientation turns landscape', async () => {
-  const phone = openPhone(800, 0, 0, false, true);
-  await phone.elements.get('marker-fullscreen')?.onclick?.();
-  phone.orientationLocks.length = 0;
+test('iOS standalone follows the viewport when screen.orientation is stale', () => {
+  const phone = openPhone(844, 0, 0);
+  phone.scope.navigator.standalone = true;
   phone.scope.window.screen.orientation.type = 'landscape-primary';
-  phone.windowListeners.get('orientationchange')?.();
-  await Promise.resolve();
-  expect(phone.orientationLocks).toEqual(['portrait-primary']);
+  phone.resize();
+  expect(phone.last().layout.screen).toMatchObject({
+    width: 390,
+    height: 844,
+  });
+  expect(phone.last().layout.topInset).toBeUndefined();
 });
 
-test('Android renders a portrait surface when every orientation API is ignored', async () => {
+test('Android waits for the phone button before requesting browser fullscreen', async () => {
+  const phone = openPhone(800, 0, 0, false, true);
+  phone.receive({ view: 'markers', markerRequest: 'markers-1' });
+  expect(phone.scope.document.fullscreenElement).toBeNull();
+  expect(phone.elements.get('marker-fullscreen')?.hidden).toBe(false);
+  await phone.elements.get('marker-fullscreen')?.onclick?.();
+  expect(phone.scope.document.fullscreenElement).toBe(
+    phone.scope.document.documentElement,
+  );
+});
+
+test('a landscape start never asks the browser to rotate to portrait', async () => {
+  const phone = openPhone(800, 0, 0, false, true);
+  phone.scope.innerWidth = 844;
+  phone.scope.innerHeight = 390;
+  phone.scope.window.screen.width = 844;
+  phone.scope.window.screen.height = 390;
+  phone.scope.window.screen.orientation.type = 'landscape-primary';
+  phone.scope.window.screen.orientation.angle = 90;
+  await phone.elements.get('marker-fullscreen')?.onclick?.();
+  expect(phone.orientationLocks).toEqual([]);
+  expect(phone.scope.document.body.dataset.portraitFallback).toBeUndefined();
+  expect(phone.last().layout).toMatchObject({
+    width: 844,
+    height: 390,
+    screen: { width: 844, height: 390 },
+  });
+  phone.surfaceListeners.get('pointerdown')?.({
+    pointerId: 7,
+    pointerType: 'touch',
+    clientX: 100,
+    clientY: 200,
+    preventDefault() {},
+  });
+  // A landscape page reports the same client coordinates the browser gave it.
+  expect(phone.last().contact).toMatchObject({ point: { x: 100, y: 200 } });
+});
+
+test('a browser that ignores the portrait lock keeps its own landscape layout', async () => {
   const phone = openPhone(800, 0, 0, false, true, false, 'none');
   phone.scope.innerWidth = 844;
   phone.scope.innerHeight = 390;
@@ -321,45 +363,13 @@ test('Android renders a portrait surface when every orientation API is ignored',
   phone.scope.window.screen.orientation.type = 'landscape-primary';
   phone.scope.window.screen.orientation.angle = 90;
   await phone.elements.get('marker-fullscreen')?.onclick?.();
-  expect(phone.scope.document.body.dataset.portraitFallback).toBe('true');
-  expect(phone.scope.document.body.style.values).toMatchObject({
-    '--portrait-width': '390px',
-    '--portrait-height': '844px',
-    '--portrait-rotation': '-90deg',
+  expect(phone.orientationLocks).toEqual([]);
+  expect(phone.scope.document.body.dataset.portraitFallback).toBeUndefined();
+  expect(phone.last().layout).toMatchObject({
+    width: 844,
+    height: 390,
+    screen: { width: 844, height: 390 },
   });
-  expect(phone.last().layout).toMatchObject({ width: 390, height: 844 });
-  phone.surfaceListeners.get('pointerdown')?.({
-    pointerId: 7,
-    pointerType: 'touch',
-    clientX: 100,
-    clientY: 200,
-    preventDefault() {},
-  });
-  expect(phone.last().contact).toMatchObject({ point: { x: 190, y: 100 } });
-});
-
-test('portrait fallback maps the opposite landscape rotation back to page coordinates', async () => {
-  const phone = openPhone(800, 0, 0, false, true, false, 'none');
-  phone.scope.innerWidth = 844;
-  phone.scope.innerHeight = 390;
-  phone.scope.window.screen.width = 844;
-  phone.scope.window.screen.height = 390;
-  phone.scope.window.screen.orientation.type = 'landscape-secondary';
-  phone.scope.window.screen.orientation.angle = 270;
-  await phone.elements.get('marker-fullscreen')?.onclick?.();
-  expect(phone.scope.document.body.style.values).toMatchObject({
-    '--portrait-width': '390px',
-    '--portrait-height': '844px',
-    '--portrait-rotation': '90deg',
-  });
-  phone.surfaceListeners.get('pointerdown')?.({
-    pointerId: 8,
-    pointerType: 'touch',
-    clientX: 100,
-    clientY: 200,
-    preventDefault() {},
-  });
-  expect(phone.last().contact).toMatchObject({ point: { x: 200, y: 744 } });
 });
 
 test('reports actual missing-inset evidence without changing geometry revisions', () => {

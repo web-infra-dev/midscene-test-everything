@@ -8,7 +8,6 @@ import {
 } from '@midscene/arm-kit/internal/calibration/phone/page';
 import { CalibrationPhoneSession } from '@midscene/arm-kit/internal/calibration/phone/session';
 import {
-  detectCalibrationMarkers,
   recognizeScreenMarkers,
   screenBoundsProblem,
 } from '@midscene/arm-kit/internal/camera/calibration-markers';
@@ -125,11 +124,6 @@ export class MarkerPreview {
           check();
           return camera.rawFrame();
         }, layout);
-        check();
-        await detectCalibrationMarkers(
-          Buffer.from(result.jpeg, 'base64'),
-          layout.markers,
-        );
         check();
         this.mappedPageKey = this.status().pageKey;
         return {

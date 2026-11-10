@@ -267,48 +267,7 @@ export function mountCalibrationPhonePage(
       window.screen.orientation?.type,
       visualViewport?.scale,
       visualViewport?.offsetTop,
-      document.body.dataset.portraitFallback,
     ]);
-  const portraitFallback = () =>
-    document.body.dataset.portraitFallback === 'true';
-  const logicalViewport = () =>
-    portraitFallback()
-      ? {
-          width: Math.min(innerWidth, innerHeight),
-          height: Math.max(innerWidth, innerHeight),
-        }
-      : { width: innerWidth, height: innerHeight };
-  const orientationAngle = () => {
-    const value = window.screen.orientation?.angle;
-    if (Number.isFinite(value)) return Number(value);
-    const legacy = (window as Window & { orientation?: number }).orientation;
-    return Number.isFinite(legacy) ? Number(legacy) : 0;
-  };
-  function setPortraitFallback(active: boolean) {
-    if (document.body.dataset.portraitFallback === String(active)) return;
-    document.body.dataset.portraitFallback = String(active);
-    if (!active) {
-      document.body.style.setProperty('--portrait-width', '');
-      document.body.style.setProperty('--portrait-height', '');
-      document.body.style.setProperty('--portrait-rotation', '');
-      return;
-    }
-    const { width, height } = logicalViewport();
-    const angle = ((orientationAngle() % 360) + 360) % 360;
-    const rotation = angle === 270 ? 90 : angle === 180 ? 180 : -90;
-    document.body.style.setProperty('--portrait-width', `${width}px`);
-    document.body.style.setProperty('--portrait-height', `${height}px`);
-    document.body.style.setProperty('--portrait-rotation', `${rotation}deg`);
-  }
-  function pagePoint(clientX: number, clientY: number) {
-    if (!portraitFallback()) return { x: clientX, y: clientY };
-    const { width, height } = logicalViewport();
-    const angle = ((orientationAngle() % 360) + 360) % 360;
-    if (angle === 90) return { x: width - clientY, y: clientX };
-    if (angle === 270) return { x: clientY, y: height - clientX };
-    if (angle === 180) return { x: width - clientX, y: height - clientY };
-    return { x: clientX, y: clientY };
-  }
   let safeArea:
     | ({ key: string } & NonNullable<
         NonNullable<CalibrationPageLayout['insetDiagnostics']>['safeArea']
@@ -368,7 +327,6 @@ export function mountCalibrationPhonePage(
       (event) => {
         // Do not revise the accepted mapping from automated calibration touches.
         if (state && state.view !== 'markers') return;
-        if (portraitFallback()) return;
         const point =
           'changedTouches' in event ? event.changedTouches[0] : event;
         if (!point) return;
@@ -387,48 +345,33 @@ export function mountCalibrationPhonePage(
   }
 
   function layout(): CalibrationPageLayout {
-    const viewport = logicalViewport();
     const markers = Array.from(
       document.querySelectorAll<SVGElement>('.marker'),
     ).map((el) => {
       const r = el.getBoundingClientRect();
-      const point = pagePoint(r.x + r.width / 2, r.y + r.height / 2);
       return {
-        x: point.x,
-        y: point.y,
+        x: r.x + r.width / 2,
+        y: r.y + r.height / 2,
         size: r.width,
         code: Number(el.dataset.code),
         purpose: el.dataset.purpose as 'fit' | 'check',
       };
     });
     const display = window.screen;
-    const forced = portraitFallback();
-    const landscape =
-      !forced && display.orientation?.type.startsWith('landscape');
-    const dimensions = forced
-      ? [
-          Math.min(display.width, display.height),
-          Math.max(display.width, display.height),
-        ]
-      : [display.width, display.height];
+    // The viewport is the authoritative orientation. iOS standalone pages can
+    // keep a stale `screen.orientation` value after launch, which must not swap
+    // the reported physical screen and fail the bounds check.
+    const portrait = innerHeight >= innerWidth;
+    const dimensions = [display.width, display.height];
     const screen = {
-      ...(landscape === undefined
-        ? { width: display.width, height: display.height }
-        : {
-            width: landscape
-              ? Math.max(...dimensions)
-              : Math.min(...dimensions),
-            height: landscape
-              ? Math.min(...dimensions)
-              : Math.max(...dimensions),
-          }),
+      width: portrait ? Math.min(...dimensions) : Math.max(...dimensions),
+      height: portrait ? Math.max(...dimensions) : Math.min(...dimensions),
       devicePixelRatio: window.devicePixelRatio,
     };
-    const gap = Math.max(0, screen.height - viewport.height);
-    const topInset = forced ? 0 : (iosTopInset(gap) ?? gap);
+    const topInset = iosTopInset(screen.height - innerHeight);
     const value = {
-      width: viewport.width,
-      height: viewport.height,
+      width: innerWidth,
+      height: innerHeight,
       screen,
       markers,
       topInset,
@@ -827,7 +770,10 @@ export function mountCalibrationPhonePage(
   };
   const fullscreenReady = () =>
     displayMode() === (platform === 'ios' ? 'standalone' : 'fullscreen');
-  const legacyOrientationScreen = window.screen as Screen & {
+  const orientationScreen = window.screen as Screen & {
+    orientation?: ScreenOrientation & {
+      lock?: (orientation: 'portrait-primary' | 'portrait') => Promise<void>;
+    };
     lockOrientation?: (
       orientation: 'portrait-primary' | 'portrait',
     ) => boolean | string;
@@ -838,90 +784,37 @@ export function mountCalibrationPhonePage(
       orientation: 'portrait-primary' | 'portrait',
     ) => boolean | string;
   };
-  async function lockPortrait() {
-    const orientation = window.screen.orientation as ScreenOrientation & {
-      lock?: (orientation: 'portrait-primary' | 'portrait') => Promise<void>;
-    };
+  /**
+   * Keep the orientation the operator already had. Some Android browsers turn
+   * the page landscape when it enters fullscreen; asking for portrait only in
+   * that case preserves the starting view without forcing a landscape phone to
+   * rotate. A browser that cannot lock simply keeps its own orientation, so the
+   * page must lay out for the viewport it actually gets.
+   */
+  async function preserveStartingOrientation(startedPortrait: boolean) {
+    if (!startedPortrait || platform === 'ios') return;
     for (const value of ['portrait-primary', 'portrait'] as const) {
-      if (orientation.lock) {
+      if (orientationScreen.orientation?.lock) {
         try {
-          await orientation.lock(value);
-          return true;
+          await orientationScreen.orientation.lock(value);
+          return;
         } catch {
           // Try the next alias or a vendor-specific API.
         }
       }
       for (const method of [
-        legacyOrientationScreen.lockOrientation,
-        legacyOrientationScreen.mozLockOrientation,
-        legacyOrientationScreen.webkitLockOrientation,
+        orientationScreen.lockOrientation,
+        orientationScreen.mozLockOrientation,
+        orientationScreen.webkitLockOrientation,
       ]) {
         if (!method) continue;
         try {
-          if (method.call(legacyOrientationScreen, value) !== false)
-            return true;
+          if (method.call(orientationScreen, value) !== false) return;
         } catch {
           // Another legacy implementation may still be available.
         }
       }
     }
-    return false;
-  }
-  function verifyPortraitLock(locked: boolean) {
-    if (!fullscreenReady() || platform === 'ios') {
-      setPortraitFallback(false);
-      return;
-    }
-    const landscape =
-      window.screen.orientation?.type.startsWith('landscape') ?? false;
-    if (!locked) {
-      setPortraitFallback(landscape);
-      return;
-    }
-    if (!landscape) {
-      setPortraitFallback(false);
-      return;
-    }
-    setTimeout(() => {
-      if (!fullscreenReady()) return;
-      setPortraitFallback(
-        window.screen.orientation?.type.startsWith('landscape') ?? false,
-      );
-      send();
-    }, 250);
-  }
-  async function lockPortraitAfterFullscreen() {
-    if (nativeFullscreen() === root) {
-      const locked = await lockPortrait();
-      verifyPortraitLock(locked);
-      return locked;
-    }
-    await new Promise<void>((resolve) => {
-      const pending = {
-        timer: undefined as ReturnType<typeof setTimeout> | undefined,
-      };
-      const finish = () => {
-        document.removeEventListener('fullscreenchange', finish);
-        document.removeEventListener('webkitfullscreenchange', finish);
-        if (pending.timer) clearTimeout(pending.timer);
-        resolve();
-      };
-      document.addEventListener('fullscreenchange', finish);
-      document.addEventListener('webkitfullscreenchange', finish);
-      pending.timer = setTimeout(finish, 500);
-    });
-    const locked = await lockPortrait();
-    verifyPortraitLock(locked);
-    if (!locked) setTimeout(() => void enforcePortrait(), 250);
-    return locked;
-  }
-  function enforcePortrait() {
-    if (platform === 'ios' || !fullscreenReady()) return;
-    if (!window.screen.orientation?.type.startsWith('landscape')) {
-      setPortraitFallback(false);
-      return;
-    }
-    void lockPortrait().then(verifyPortraitLock);
   }
   let switching = false;
   let displayFinished = false;
@@ -947,33 +840,32 @@ export function mountCalibrationPhonePage(
             : 'Use the browser menu to enter full screen and continue calibration.';
   }
   async function enterFullscreen(fromGesture = false) {
-    if (fullscreenReady()) {
-      enforcePortrait();
-      return;
-    }
+    if (fullscreenReady()) return;
     if (
       !fullscreenButton ||
       switching ||
       displayFinished ||
       document.hidden ||
       platform === 'ios' ||
+      (platform === 'android' && !fromGesture) ||
       (platform === 'harmonyos' && !fromGesture) ||
       (!fromGesture && state?.view !== 'markers') ||
       !enter
     )
       return;
+    const startedPortrait = innerHeight >= innerWidth;
     switching = true;
     awake.detach();
     try {
       await enter.call(root, { navigationUI: 'hide' });
-      await lockPortraitAfterFullscreen();
-      await new Promise<void>((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-      );
+      await preserveStartingOrientation(startedPortrait);
     } catch {
       // Browsers requiring transient activation can retry from the phone button.
     } finally {
       switching = false;
+      // Re-attach the wake video only after the fullscreen transition settles.
+      // Resuming inside it makes some Android browsers hand the screen to the
+      // media element, which opens their player surface instead of the page.
       setTimeout(() => {
         if (!displayFinished) void awake.resume();
       }, 1000);
@@ -989,8 +881,6 @@ export function mountCalibrationPhonePage(
       window
         .matchMedia?.(`(display-mode: ${mode})`)
         .addEventListener?.('change', send);
-    window.addEventListener('orientationchange', enforcePortrait);
-    window.screen.orientation?.addEventListener?.('change', enforcePortrait);
   }
   element('wake-gesture').textContent = zh
     ? '浏览器已阻止保持常亮'
@@ -1251,7 +1141,7 @@ export function mountCalibrationPhonePage(
             ? e.timeStamp
             : undefined;
         const logical = point
-          ? pagePoint(point.clientX, point.clientY)
+          ? { x: point.clientX, y: point.clientY }
           : undefined;
         const entry = trace(
           kind,
@@ -1298,7 +1188,7 @@ export function mountCalibrationPhonePage(
   }
   surface.addEventListener('contextmenu', (e) => e.preventDefault());
   surface.addEventListener('pointerdown', (e) => {
-    const point = pagePoint(e.clientX, e.clientY);
+    const point = { x: e.clientX, y: e.clientY };
     trace('pointerdown', e.pointerType, point, { source: 'surface' });
     e.preventDefault();
     pointers.set(e.pointerId, {
@@ -1334,7 +1224,7 @@ export function mountCalibrationPhonePage(
   });
   surface.addEventListener('pointermove', (e) => {
     const pointer = pointers.get(e.pointerId);
-    const point = pagePoint(e.clientX, e.clientY);
+    const point = { x: e.clientX, y: e.clientY };
     if (pointer) pointer.point = point;
     if (!contact || activePointer !== e.pointerId) return;
     e.preventDefault();
@@ -1378,7 +1268,7 @@ export function mountCalibrationPhonePage(
     if (!remaining) ambiguousPointers = false;
   };
   surface.addEventListener('pointerup', (e) => {
-    const point = pagePoint(e.clientX, e.clientY);
+    const point = { x: e.clientX, y: e.clientY };
     trace('pointerup', e.pointerType, point, { source: 'surface' });
     pointers.delete(e.pointerId);
     if (activePointer !== e.pointerId) {
@@ -1432,7 +1322,7 @@ export function mountCalibrationPhonePage(
   surface.addEventListener('pointercancel', (e) => {
     trace('pointercancel', e.pointerType, undefined, { source: 'surface' });
     if (activePointer === e.pointerId)
-      showMappingTouch(pagePoint(e.clientX, e.clientY), 'cancel');
+      showMappingTouch({ x: e.clientX, y: e.clientY }, 'cancel');
     cancelContact(e);
   });
   surface.addEventListener('lostpointercapture', (e) => {

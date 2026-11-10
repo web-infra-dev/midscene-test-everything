@@ -5,7 +5,13 @@ import {
 import type { CameraCorrection } from '@midscene/arm-kit-shared/contracts';
 import { Button } from 'antd';
 import { Maximize, Minimize } from 'lucide-react';
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import {
+  type CSSProperties,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { useLanguage } from '../i18n';
 
 /** Keep the current stream attached while the operator inspects it full screen. */
@@ -14,12 +20,14 @@ export function CameraStagePreview({
   available = true,
   outline,
   outlines,
+  frameSize,
 }: {
   children: ReactNode;
   available?: boolean;
   outline?: CameraCorrection;
   /** Every screen of the camera, drawn at once on the raw view. */
   outlines?: readonly ScreenOutlineEntry[];
+  frameSize?: { width: number; height: number };
 }) {
   const frame = useRef<HTMLDivElement>(null);
   const [native, setNative] = useState(false);
@@ -60,22 +68,25 @@ export function CameraStagePreview({
       }
     } else setExpanded(true);
   };
+  const stageOutlines = outlines?.length
+    ? outlines
+    : outline
+      ? [{ id: 'active', name: '', correction: outline, active: true }]
+      : [];
+  const ratio = frameSize ? frameSize.width / frameSize.height : undefined;
+  const fittedStyle = ratio
+    ? ({
+        '--rv-preview-aspect': String(ratio),
+      } as CSSProperties)
+    : undefined;
   return (
     <div
       ref={frame}
-      className={`camera-stage-preview${expanded ? ' is-expanded' : ''}`}
+      className={`camera-stage-preview${expanded ? ' is-expanded' : ''}${ratio ? ' is-framed' : ''}`}
+      style={fittedStyle}
     >
       {children}
-      {outlines?.length
-        ? available && <ScreenOutlines outlines={outlines} />
-        : outline &&
-          available && (
-            <ScreenOutlines
-              outlines={[
-                { id: 'active', name: '', correction: outline, active: true },
-              ]}
-            />
-          )}
+      {available && !frameSize && <ScreenOutlines outlines={stageOutlines} />}
       {(available || full) && (
         <Button
           className="camera-fullscreen"

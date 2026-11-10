@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import type { IncomingMessage } from 'node:http';
 import { createServer } from 'node:http';
@@ -24,6 +24,8 @@ import {
 } from '@midscene/arm-kit/internal/storage/layout';
 import { PlaygroundArmControls } from './arm-controls.js';
 import {
+  type CameraPreviewView,
+  clearStandaloneCorrection,
   saveStandaloneCorrection,
   streamCameraPreview,
   streamStandalonePreview,
@@ -123,6 +125,8 @@ export async function startPlaygroundHost({
   developmentOrigins = [],
 }: HostOptions) {
   const markerPreviews = new Map<string, MarkerPreview>();
+  /** Camera-only workspace leases, keyed by lease token -> camera id. */
+  const cameraLeases = new Map<string, string>();
   const wifiInterfaces = await discoverWifiInterfaces();
   const phoneLinks = (token: string) =>
     phoneAddresses({ wifiInterfaces, controllerHost: host }).map(
@@ -708,7 +712,7 @@ export async function startPlaygroundHost({
           const status = await devices.startCalibration(id);
           // A camera-only page can join the calibrated Device without a second scan.
           const preview = [...markerPreviews.values()].find(
-            (p) => p.cameraId === id,
+            (p) => p.cameraId === id && !p.screenId,
           );
           if (preview) {
             const session = devices.entries.get(id)?.calibration;
@@ -748,6 +752,10 @@ export async function startPlaygroundHost({
           }
         }
         if (!token && id && req.method === 'POST') {
+          if (url.searchParams.has('screen'))
+            return send(400, {
+              error: 'Only camera-level markers are supported',
+            });
           if (
             !(await listCameras({ includeBuiltIn: !devices })).some(
               (camera) => camera.id === id,
@@ -812,16 +820,31 @@ export async function startPlaygroundHost({
           refresh: url.searchParams.get('refresh') === 'true',
           includeBuiltIn: !devices,
         });
+        const entries = await Promise.all(
+          cameras.map(async (camera) => {
+            const entry = devices?.entries.get(camera.id);
+            // Camera-only mode has no Device, so read the same persisted
+            // correction the Device will restore once the arm is connected.
+            const stored = entry
+              ? undefined
+              : await cameraManager.persistedPerspective(camera.id);
+            const correction =
+              entry?.camera.getCorrection() ?? stored?.correction;
+            return {
+              ...camera,
+              hasCorrection: Boolean(correction),
+              correction,
+              perspectiveTarget: entry
+                ? entry.camera.getPerspectiveTarget()
+                : stored?.target,
+              error: devices?.cameraErrors.get(camera.id),
+              stream: entry?.camera.stream.getInfo(),
+            };
+          }),
+        );
         return send(200, {
           error: devices?.discoveryError,
-          cameras: cameras.map((camera) => ({
-            ...camera,
-            hasCorrection: Boolean(
-              devices?.entries.get(camera.id)?.camera.getCorrection(),
-            ),
-            error: devices?.cameraErrors.get(camera.id),
-            stream: devices?.entries.get(camera.id)?.camera.stream.getInfo(),
-          })),
+          cameras: entries,
         });
       }
       if (url.pathname === '/api/cameras/start' && req.method === 'POST') {
@@ -834,6 +857,53 @@ export async function startPlaygroundHost({
         const stream = session.stream;
         return send(200, { stream: stream.getInfo() });
       }
+      if (url.pathname === '/api/cameras/lease') {
+        if (req.method === 'POST') {
+          if (devices)
+            return send(409, {
+              error: 'The connected arm owns the camera lease',
+            });
+          const input = await readBody(req);
+          if (typeof input.id !== 'string')
+            return send(400, { error: 'Camera id is required' });
+          const lease = randomUUID();
+          await cameraManager.acquire(input.id, `lease:${lease}`);
+          cameraLeases.set(lease, input.id);
+          return send(200, { lease });
+        }
+        if (req.method === 'DELETE') {
+          const lease = url.searchParams.get('lease');
+          const id = lease ? cameraLeases.get(lease) : undefined;
+          if (lease && id) {
+            cameraLeases.delete(lease);
+            await cameraManager.release(id, `lease:${lease}`);
+          }
+          return send(200, { ok: true });
+        }
+        return send(405, { error: 'Method not allowed' });
+      }
+      if (
+        url.pathname === '/api/cameras/correction' &&
+        req.method === 'DELETE'
+      ) {
+        if (devices)
+          return send(409, {
+            error: 'Clear the correction through the connected device',
+          });
+        const id = url.searchParams.get('id');
+        if (!id) return send(400, { error: 'Camera id is required' });
+        if (url.searchParams.has('screen') || url.searchParams.has('all'))
+          return send(400, {
+            error: 'Only camera-level correction is supported',
+          });
+        for (const [token, preview] of markerPreviews) {
+          if (preview.cameraId !== id) continue;
+          preview.close();
+          markerPreviews.delete(token);
+        }
+        await clearStandaloneCorrection(cameraManager, id);
+        return send(200, { ok: true });
+      }
       if (url.pathname === '/api/cameras/correction' && req.method === 'POST') {
         if (devices)
           return send(409, {
@@ -842,6 +912,10 @@ export async function startPlaygroundHost({
         const input = await readBody(req, 65536);
         if (typeof input.id !== 'string' || !input.correction)
           return send(400, { error: 'Camera id and correction are required' });
+        if (input.screen !== undefined)
+          return send(400, {
+            error: 'Only camera-level correction is supported',
+          });
         await saveStandaloneCorrection(
           cameraManager,
           input.id,
@@ -858,17 +932,22 @@ export async function startPlaygroundHost({
       }
       if (url.pathname === '/api/cameras/preview' && req.method === 'GET') {
         const id = url.searchParams.get('id') ?? '';
-        if (!devices && id && url.searchParams.get('view') === 'raw') {
+        const view = (url.searchParams.get('view') ??
+          'raw') as CameraPreviewView;
+        if (view !== 'raw' && view !== 'corrected')
+          return send(400, { error: 'Unknown camera view' });
+        if (!devices && id) {
+          if (url.searchParams.has('screen'))
+            return send(400, {
+              error: 'Only camera-level preview is supported',
+            });
           if (req.headers['sec-fetch-site'] === 'cross-site')
             return send(403, { error: 'Open camera previews in Playground' });
-          await streamStandalonePreview(res, cameraManager, id);
+          await streamStandalonePreview(res, cameraManager, id, view);
           return;
         }
         const entry = devices?.entries.get(id);
         if (!entry) return send(404, { error: 'Camera is not running' });
-        const view = url.searchParams.get('view');
-        if (view && !['raw', 'corrected'].includes(view))
-          return send(400, { error: 'Unknown camera view' });
         await streamCameraPreview(res, entry, view === 'corrected');
         return;
       }
@@ -977,6 +1056,7 @@ export async function startPlaygroundHost({
         await disconnectArm();
         for (const preview of markerPreviews.values()) preview.close();
         markerPreviews.clear();
+        cameraLeases.clear();
         await cameraManager.close();
         await drained;
       })();

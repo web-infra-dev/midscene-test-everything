@@ -4,6 +4,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { type CameraEntry, useCameras } from '../src/ui/cameras';
 import { CameraRail } from '../src/ui/components/CameraRail';
+import { CameraStagePreview } from '../src/ui/components/CameraStagePreview';
 
 const globals = globalThis as typeof globalThis & { React?: typeof React };
 const previousReact = globals.React;
@@ -24,11 +25,11 @@ const camera: CameraEntry = {
 };
 
 test('thumbnail uses the running camera preview and stops showing it when stopped', () => {
-  const render = (entry: CameraEntry) =>
+  const render = (entry: CameraEntry, selectedId = 'other') =>
     renderToStaticMarkup(
       React.createElement(CameraRail, {
         entries: [entry],
-        selectedId: entry.id,
+        selectedId,
         onSelect: () => {},
       }),
     );
@@ -39,6 +40,11 @@ test('thumbnail uses the running camera preview and stops showing it when stoppe
   );
   assert.ok(running.includes('运行中'));
   assert.ok(!running.includes('未启动'));
+  // The stage owns the selected camera's stream; the rail must not open a
+  // second one.
+  const selected = render(camera, camera.id);
+  assert.ok(!selected.includes('/api/cameras/preview'));
+  assert.ok(selected.includes('运行中'));
   const stopped = render({ ...camera, stream: undefined });
   assert.ok(!stopped.includes('<img'));
   assert.ok(stopped.includes('未启动'));
@@ -65,4 +71,97 @@ test('a failed list refresh preserves the selected stream and reports the error'
   assert.equal(useCameras.getState().selectedId, null);
   assert.deepEqual(useCameras.getState().cameras, []);
   assert.equal(useCameras.getState().error, undefined);
+});
+
+test('preserves the rotated screen corner order and label', () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      CameraStagePreview,
+      {
+        outlines: [
+          {
+            id: 'rotated',
+            name: 'Screen 1',
+            correction: {
+              sourceWidth: 1000,
+              sourceHeight: 800,
+              rotation: 0,
+              points: {
+                topLeft: { x: 700, y: 100 },
+                topRight: { x: 700, y: 400 },
+                bottomRight: { x: 300, y: 400 },
+                bottomLeft: { x: 300, y: 100 },
+              },
+            },
+          },
+        ],
+      },
+      React.createElement('img', { src: 'preview.jpg', alt: '' }),
+    ),
+  );
+  assert.ok(markup.includes('points="700,100 700,400 300,400 300,100"'));
+  assert.ok(markup.includes('aria-label="Screen 1"'));
+});
+
+test('a raw preview labels every calibrated screen outline', () => {
+  const correction = {
+    sourceWidth: 1000,
+    sourceHeight: 800,
+    rotation: 0 as const,
+    points: {
+      topLeft: { x: 100, y: 100 },
+      topRight: { x: 400, y: 100 },
+      bottomRight: { x: 400, y: 500 },
+      bottomLeft: { x: 100, y: 500 },
+    },
+  };
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      CameraStagePreview,
+      {
+        outlines: [
+          {
+            id: 'base',
+            name: 'Screen 1',
+            correction,
+            active: true,
+          },
+          {
+            id: 'screen-2',
+            name: 'Screen 2',
+            correction: {
+              ...correction,
+              points: Object.fromEntries(
+                Object.entries(correction.points).map(([key, point]) => [
+                  key,
+                  { x: point.x + 400, y: point.y },
+                ]),
+              ) as typeof correction.points,
+            },
+          },
+        ],
+      },
+      React.createElement('img', { src: 'preview.jpg', alt: '' }),
+    ),
+  );
+  assert.ok(markup.includes('Screen 1'));
+  assert.ok(markup.includes('Screen 2'));
+  assert.equal((markup.match(/<polygon/g) ?? []).length, 2);
+});
+
+test('a corrected preview is framed by the saved target instead of the camera frame', () => {
+  const render = (frameSize?: { width: number; height: number }) =>
+    renderToStaticMarkup(
+      React.createElement(
+        CameraStagePreview,
+        { frameSize },
+        React.createElement('img', { src: 'preview.jpg', alt: '' }),
+      ),
+    );
+  const corrected = render({ width: 1080, height: 2400 });
+  assert.ok(corrected.includes('camera-stage-preview is-framed'));
+  assert.ok(corrected.includes('--rv-preview-aspect:0.45'));
+  const raw = render();
+  assert.ok(!raw.includes('is-framed'));
+  assert.ok(!raw.includes('--rv-preview-aspect'));
 });

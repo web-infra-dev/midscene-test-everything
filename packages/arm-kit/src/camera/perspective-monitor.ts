@@ -49,10 +49,13 @@ export class PerspectiveMonitor {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
   }
-  reset() {
+  forget() {
     this.revision++;
     this.evidence = undefined;
     this.tracker = new PerspectiveValidityTracker();
+  }
+  reset() {
+    this.forget();
     return this.write(async () => {
       await rm(this.source.file(), { force: true });
     });
