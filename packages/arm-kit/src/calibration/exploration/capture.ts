@@ -316,11 +316,7 @@ export class AutomaticCapture {
           this.index = this.localPoints.length;
         }
         this.contactSeen = Boolean(progress.touching);
-        const kind = progress.message?.split(' · ')[1];
-        this.operation =
-          kind === 'release' || kind === 'refine' || kind === 'press'
-            ? kind
-            : 'search';
+        if (progress.operation) this.operation = progress.operation;
         this.captured = false;
         this.changed();
       },
@@ -334,6 +330,8 @@ export class AutomaticCapture {
         session: async () => page(),
         targets: async () => ({ mappingVersion, targets }),
         setSample: async (_id, id, purpose, settleMs) => {
+          if (purpose !== 'preflight')
+            this.operation = purpose === 'search-limit' ? 'search' : purpose;
           snapshot = undefined;
           sampleId = id;
           const observation = new StationaryPhoneObservation(

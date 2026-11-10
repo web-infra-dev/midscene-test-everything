@@ -2,12 +2,74 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { expect, it } from '@rstest/core';
+import { expect, it, rstest } from '@rstest/core';
+import { runCalibrationPage } from '../src/calibration-server/standalone.js';
+import { CalibrationWorkflow } from '../src/calibration/workflow.js';
 import type { CameraSession } from '../src/camera/session.js';
 import { CameraSessionManager } from '../src/camera/session.js';
 import { ArmController } from '../src/controller.js';
 import { RobotArmDevice } from '../src/device.js';
 import { fixture } from './fixtures.js';
+
+it('returns the saved result even when a review heartbeat follows Finish', async () => {
+  const f = await fixture();
+  await f.runtime.shutdown();
+  const arm = new ArmController({ adapter: f.adapter, profileStore: f.store });
+  await arm.connect();
+  const abort = new AbortController();
+  let listening!: (url: string) => void;
+  const ready = new Promise<string>((resolve) => {
+    listening = resolve;
+  });
+  await writeFile(path.join(f.directory, 'index.html'), '<html></html>');
+  const work = runCalibrationPage({
+    arm,
+    camera: {
+      camera: { id: 'cam' },
+      getCorrection: () => undefined,
+    } as unknown as CameraSession,
+    deviceId: 'cam',
+    phoneHost: '127.0.0.1',
+    open: false,
+    staticDirectory: f.directory,
+    signal: AbortSignal.any([abort.signal, AbortSignal.timeout(5000)]),
+    onListening: listening,
+  });
+  const status = rstest.spyOn(CalibrationWorkflow.prototype, 'status');
+  try {
+    const url = await Promise.race([
+      ready,
+      work.then(() => {
+        throw new Error('Page closed before listening');
+      }),
+    ]);
+    const post = (path: string) =>
+      fetch(new URL(path, url), { method: 'POST' });
+    expect((await post('_calibration/page?review')).status).toBe(204);
+    expect((await post('_calibration/finish')).status).toBe(409);
+    status.mockReturnValue({
+      id: 'saved-run',
+      stage: 'completed',
+      result: f.calibration,
+      phoneConnected: false,
+      samples: 0,
+      points: [],
+      anchors: [],
+      verification: [],
+    });
+    expect((await post('_calibration/finish')).status).toBe(204);
+    // The server may have already returned the result by the time the heartbeat arrives.
+    await post('_calibration/page?review').catch(() => undefined);
+    await expect(work).resolves.toEqual(f.calibration);
+    expect(f.adapter.movements).toHaveLength(0);
+  } finally {
+    abort.abort();
+    await work.catch(() => undefined);
+    status.mockRestore();
+    await arm.close();
+    await f.cleanup();
+  }
+});
 
 it('expires abandoned standalone pages, closes the server and releases Device ownership on destroy', async () => {
   const f = await fixture();

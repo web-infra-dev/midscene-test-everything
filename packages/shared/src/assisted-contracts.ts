@@ -272,6 +272,8 @@ export interface CalibrationPageReply {
   insetMarkers?: boolean;
   markerRequest?: string;
   boundaryGuide?: { group: 'hover' | 'contact'; corners: WebPoint[] };
+  /** Distinguishes a pending or failed check on the phone's review screen. */
+  reviewStage?: 'boundary-review' | 'verification-failed';
   imageTrial?: boolean;
   view:
     | 'markers'
@@ -403,6 +405,8 @@ export interface AssistedCalibrationState {
   explorationMode?: AutomaticExplorationMode;
   /** Collection failed before boundary verification. */
   collectionFailed?: boolean;
+  /** Stage at which this attempt was interrupted. */
+  interruptedFrom?: AssistedCalibrationState['stage'];
   awaitingSocketRecovery?: boolean;
   anchors: WebPoint[];
   points: CapturedCalibrationPoint[];

@@ -433,6 +433,11 @@ export class CalibrationWorkflow {
       options.deviceId,
     );
   }
+  private displayStage(s: SessionState) {
+    return s.stage === 'safety' && s.calibration?.auto?.avoidingCamera
+      ? 'avoiding-camera'
+      : s.stage;
+  }
   status(): AssistedCalibrationState | null {
     if (!this.state) return null;
     const s = this.state;
@@ -441,9 +446,11 @@ export class CalibrationWorkflow {
       s.calibration = this.runtime.getSession(s.calibration.id);
       if (
         ['interrupted', 'cancelled'].includes(s.calibration.status ?? '') &&
-        !['completed', 'cancelled'].includes(s.stage)
+        !['completed', 'cancelled', 'interrupted'].includes(s.stage)
       ) {
         if (s.autoRepair) s.autoRepair.active = false;
+        s.interruptedFrom = this.displayStage(s);
+        s.collectionFailed = s.stage === 'collecting';
         s.stage = 'interrupted';
         s.error ??=
           'Calibration was interrupted. Restart calibration here when ready.';
@@ -456,7 +463,7 @@ export class CalibrationWorkflow {
         anchors: [],
         points: [],
       }),
-      stage: s.calibration?.auto?.avoidingCamera ? 'avoiding-camera' : s.stage,
+      stage: this.displayStage(s),
       awaitingSocketRecovery:
         this.socketRecovery?.session === s &&
         this.socketRecovery.stopRevision === this.runtime.stopRevision &&
@@ -645,7 +652,11 @@ export class CalibrationWorkflow {
         : undefined;
     const imageToWeb = progress?.guide && invertMapping(s.mapping!.webToImage);
     const measurements = this.measurements?.snapshot();
+    const stage = s.stage;
+    const needsReview =
+      stage === 'boundary-review' || stage === 'verification-failed';
     return {
+      reviewStage: needsReview ? stage : undefined,
       boundaryGuide:
         progress?.guide && imageToWeb
           ? {
@@ -658,25 +669,26 @@ export class CalibrationWorkflow {
               ),
             }
           : undefined,
-      view:
-        s.stage === 'positioning-boundary'
+      view: needsReview
+        ? 'review'
+        : stage === 'positioning-boundary'
           ? 'positioning'
-          : s.stage === 'avoiding-camera'
+          : stage === 'avoiding-camera'
             ? 'safety'
-            : s.stage === 'positioning-safe'
+            : stage === 'positioning-safe'
               ? 'return-ready'
-              : s.stage === 'verification-failed' ||
-                  s.stage === 'boundary-review'
-                ? 'review'
-                : s.stage === 'collecting' || s.stage === 'reprobing'
-                  ? 'collect'
-                  : s.stage === 'verifying'
-                    ? 'verify'
-                    : s.stage,
+              : stage === 'collecting' || stage === 'reprobing'
+                ? 'collect'
+                : stage === 'verifying'
+                  ? 'verify'
+                  : stage,
       imageTrial: Boolean(s.imageTrial && s.stage === 'verifying'),
-      capture: ['collecting', 'reprobing', 'interrupted'].includes(s.stage)
-        ? measurements?.capture
-        : undefined,
+      capture:
+        s.stage === 'collecting' ||
+        s.stage === 'reprobing' ||
+        (s.stage === 'interrupted' && s.collectionFailed)
+          ? measurements?.capture
+          : undefined,
       automaticPhase: measurements?.automaticPhase,
       error: s.error,
       anchors: measurements?.anchors ?? [],
@@ -823,7 +835,10 @@ export class CalibrationWorkflow {
     const s = this.state!;
     const owned = this.ownsOperation();
     if (s.autoRepair) s.autoRepair.active = false;
-    s.collectionFailed = s.stage === 'collecting';
+    if (s.stage !== 'interrupted') {
+      s.interruptedFrom = this.displayStage(s);
+      s.collectionFailed = s.stage === 'collecting';
+    }
     const socketOnly =
       s.collectionFailed &&
       this.batchAttempt !== s.id &&
@@ -1150,7 +1165,7 @@ export class CalibrationWorkflow {
           ? s.referencePosition
           : undefined;
         const safePosition = sameGeometry ? s.safePosition : undefined;
-        await this.cancel();
+        await this.stopPendingWork();
         this.assertAttempt(revision);
         const teachingId = sameGeometry ? s.teachingId : undefined;
         const cameraBoundaryPosition = sameGeometry
@@ -2125,15 +2140,17 @@ export class CalibrationWorkflow {
   }
   private async cancel() {
     const s = this.state!;
-    const active = this.ownsOperation();
     if (s.autoRepair) s.autoRepair.active = false;
     s.stage = 'cancelled';
-    this.changed();
     s.target = undefined;
-    if (active) await this.runtime.stop();
+    this.changed();
+    await this.stopPendingWork();
+    if (!s.result) s.stage = 'cancelled';
+  }
+  private async stopPendingWork() {
+    if (this.ownsOperation()) await this.runtime.stop();
     await this.capture;
     await this.verification;
-    if (!s.result) s.stage = 'cancelled';
   }
   setBatchReference(pose: CartesianPose) {
     const state = this.require();

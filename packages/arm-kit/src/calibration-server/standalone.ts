@@ -56,6 +56,7 @@ export async function runCalibrationPage(
   const token = randomUUID();
   let port = 0;
   let reviewResult = false;
+  let finishedResult: CalibrationProfile | undefined;
   const wifiInterfaces = options.phoneHost
     ? []
     : await discoverWifiInterfaces();
@@ -97,9 +98,10 @@ export async function runCalibrationPage(
         return fail(403, 'Origin not allowed');
       if (url.pathname === '/_calibration/finish') {
         if (req.method !== 'POST') return fail(405, 'Method not allowed');
-        if (host.service.status()?.stage !== 'completed')
+        const state = host.service.status();
+        if (state?.stage !== 'completed' || !state.result)
           return fail(409, 'Complete calibration before finishing');
-        reviewResult = false;
+        finishedResult = state.result;
         res.writeHead(204);
         res.end();
         return;
@@ -193,6 +195,7 @@ export async function runCalibrationPage(
       const abort = () =>
         finish(options.signal?.reason ?? new Error('Calibration cancelled'));
       const timer = setInterval(() => {
+        if (finishedResult) return finish(undefined, finishedResult);
         const state = host.service.status();
         if (
           state?.stage === 'completed' &&

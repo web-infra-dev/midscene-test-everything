@@ -637,6 +637,7 @@ export async function runAutoExploration(
 
   setPhase(host, session, {
     phase: 'probe',
+    operation: 'travel',
     index: 1,
     total: 3,
     message: 'Measuring touch direction',
@@ -716,15 +717,16 @@ export async function runAutoExploration(
   const grid: GridTouch[] = [];
   for (let index = 0; index < gridTargets.length; index++) {
     const target = gridTargets[index];
+    let usedSlide = fast && options.collection === 'slide' && grid.length > 0;
     setPhase(host, session, {
       phase: 'grid',
+      operation: usedSlide ? 'slide' : 'travel',
       index: index + 1,
       total: gridTargets.length,
       message: `Sampling ${index + 1}/${gridTargets.length}`,
     });
     const robot = affinePoint(initialFrame.inverse, target.screen);
     try {
-      let usedSlide = fast && options.collection === 'slide' && grid.length > 0;
       let touch: TouchPoint | undefined;
       if (usedSlide) {
         try {

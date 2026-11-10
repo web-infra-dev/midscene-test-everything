@@ -1158,6 +1158,11 @@ it('retains a larger holdout error for review and requires a verified parking po
     );
     const state = f.service.status()!;
     expect(state.explorationQuality?.holdoutMaxMm).toBeCloseTo(2);
+    expect(f.service.phoneView()).toMatchObject({
+      view: 'review',
+      reviewStage: 'boundary-review',
+      capture: undefined,
+    });
     expect(state.explorationQuality?.warnings).toContainEqual(
       expect.objectContaining({ label: 'Holdout maximum' }),
     );
@@ -1468,6 +1473,25 @@ it('cancels a pending outline check immediately and never starts its suspended c
   }
 });
 
+it('restarts within the same device lease without publishing a terminal cancellation', async () => {
+  const f = await setup();
+  const stages: string[] = [];
+  const unsubscribe = f.service.subscribe(() => {
+    const stage = f.service.status()?.stage;
+    if (stage) stages.push(stage);
+  });
+  try {
+    const next = await f.service.command(f.state.id, 'restart', true);
+    expect(next.id).not.toBe(f.state.id);
+    expect(stages).toContain('ready');
+    expect(stages).not.toContain('cancelled');
+    expect(f.adapter.movements).toHaveLength(0);
+  } finally {
+    unsubscribe();
+    await f.dispose();
+  }
+});
+
 it.each(['disconnect', 'layout', 'stop'] as const)(
   'does not start motion if %s occurs during outline verification',
   async (event) => {
@@ -1524,6 +1548,7 @@ it('interrupts active collection when a later outline check detects drift, befor
     await rstest.waitFor(() =>
       expect(f.service.status()).toMatchObject({
         stage: 'interrupted',
+        interruptedFrom: 'collecting',
         errorDetails: { code: 'CALIBRATION_MISMATCH' },
       }),
     );

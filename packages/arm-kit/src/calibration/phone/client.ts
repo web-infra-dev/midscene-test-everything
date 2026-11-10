@@ -102,8 +102,8 @@ export function mountCalibrationPhonePage(
       'Check the safe position on the computer and keep the work area clear.',
     ],
     returning: [
-      '正在回到安全位置，请保持工作区清空。',
-      'Returning to the safe position. Keep the workspace clear.',
+      '正在准备边界验证，请保持工作区清空。',
+      'Preparing boundary verification. Keep the workspace clear.',
     ],
     safe: [
       '正在自动检查悬停与接触边界，请保持工作区清空。',
@@ -112,6 +112,14 @@ export function mountCalibrationPhonePage(
     verify: [
       '正在验证点击，请勿触碰手机。',
       'Verifying touches. Do not touch the phone.',
+    ],
+    boundaryReview: [
+      '采集已结束，请在电脑端复核测量结果并确认是否开始边界验证。',
+      'Sampling complete. Review the measurements on the computer before starting boundary verification.',
+    ],
+    verificationFailed: [
+      '验证未通过，请在电脑端查看结果。',
+      'Verification failed. Review the results on your computer.',
     ],
     review: [
       '边界验证完成，请在电脑端查看结果。',
@@ -633,7 +641,12 @@ export function mountCalibrationPhonePage(
       returning: 'returning',
       safety: 'safe',
       verify: 'verify',
-      review: 'review',
+      review:
+        next.reviewStage === 'boundary-review'
+          ? 'boundaryReview'
+          : next.reviewStage === 'verification-failed'
+            ? 'verificationFailed'
+            : 'review',
       completed: 'done',
       interrupted: 'interrupted',
     } as const;

@@ -524,6 +524,27 @@ test('phone follows six-point sliding progress and preserves the failed endpoint
   });
 });
 
+test('phone distinguishes fit review, failed verification and verified results', () => {
+  const phone = openPhone(700, 47, 34);
+  const message = phone.elements.get('message');
+  phone.receive({
+    view: 'review',
+    reviewStage: 'boundary-review',
+    anchors: [],
+  });
+  expect(message?.textContent).toContain(
+    'before starting boundary verification',
+  );
+  phone.receive({
+    view: 'review',
+    reviewStage: 'verification-failed',
+    anchors: [],
+  });
+  expect(message?.textContent).toContain('Verification failed');
+  phone.receive({ view: 'review', anchors: [] });
+  expect(message?.textContent).toContain('Boundary verification complete');
+});
+
 test('shows local touch feedback after calibration stops without requiring a capture target', () => {
   const phone = openPhone(699, 0, 0);
   phone.receive({ view: 'interrupted', error: 'stopped' });
