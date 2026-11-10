@@ -23,7 +23,11 @@ import {
   unit,
 } from '../domain.js';
 import { invertMapping, project } from '../domain/homography.js';
-import { surfaceClearanceMm, surfaceOffsetMm } from './surface.js';
+import {
+  SAMPLED_SURFACE_LIMIT_MM,
+  surfaceClearanceMm,
+  surfaceOffsetMm,
+} from './surface.js';
 
 /** Validate each reference point before advancing the sampling task. */
 export function assertScreenPoint(
@@ -33,8 +37,9 @@ export function assertScreenPoint(
 ): void {
   const signedDistanceMm = dot(unit(plane.normal), point) - plane.offset;
   const distanceMm = Math.abs(signedDistanceMm);
-  const toleranceMm = 1;
-  if (distanceMm > toleranceMm)
+  // screenGeometry projects the reference onto the plane within the supported Z travel.
+  const toleranceMm = SAMPLED_SURFACE_LIMIT_MM;
+  if (!Number.isFinite(distanceMm) || distanceMm > toleranceMm)
     throw new RobotArmError(
       'POINT_OFF_PLANE',
       `${name} is ${distanceMm.toFixed(3)} mm from the fitted screen (maximum ${toleranceMm.toFixed(3)} mm). Recapture ${name} with the contact tip gently touching the screen.`,

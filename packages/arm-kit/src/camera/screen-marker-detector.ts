@@ -1,4 +1,5 @@
-// Screen-outline detector from midscene-oss/robot-vision. Independent page mapping uses all six markers.
+import { markerNoiseAllowancePx } from '@midscene/arm-kit-shared/marker-contracts';
+// Screen-outline detector from midscene-oss/robot-vision.
 import jsArUco from 'js-aruco2';
 import sharp from 'sharp';
 import { RobotVisionError } from './errors.js';
@@ -23,9 +24,6 @@ interface MarkerCalibrationLayout {
   markers: MarkerCalibrationMarker[];
 }
 const MIN_MARKER_SIDE_PX = 12;
-const MIN_REPROJECTION_RMSE_PX = 2.5;
-const MAX_REPROJECTION_RMSE_PX = 4;
-const REPROJECTION_LIMIT_DIAGONAL_RATIO = 0.002;
 const MARKER_BLACK_SQUARE_RATIO = 0.8;
 interface DetectedArUcoMarker {
   id: number;
@@ -190,17 +188,6 @@ function markerCombinations(
   return combinations;
 }
 
-/** Per-frame marker fit gate; grows with capture resolution for lens distortion. */
-function reprojectionLimitPx(imageWidth: number, imageHeight: number): number {
-  return Math.max(
-    MIN_REPROJECTION_RMSE_PX,
-    Math.min(
-      MAX_REPROJECTION_RMSE_PX,
-      Math.hypot(imageWidth, imageHeight) * REPROJECTION_LIMIT_DIAGONAL_RATIO,
-    ),
-  );
-}
-
 export class MarkerCalibrationDetector {
   private readonly detector = new AR.Detector({
     dictionaryName: MARKER_CALIBRATION_DICTIONARY,
@@ -360,7 +347,7 @@ export class MarkerCalibrationDetector {
     }> = [];
     // Lens distortion and corner quantisation grow with capture resolution, so
     // the gate scales with the image diagonal instead of staying at a fixed 2 px.
-    const limitPx = reprojectionLimitPx(
+    const limitPx = markerNoiseAllowancePx(
       decoded.imageWidth,
       decoded.imageHeight,
     );
@@ -462,7 +449,13 @@ export class MarkerCalibrationDetector {
           )
         )
           continue;
-        if (fit.reprojectionRmsePx > limitPx) continue;
+        // A transform needs four agreeing markers. An extra noisy marker can
+        // raise the aggregate error without invalidating that correspondence.
+        if (
+          fit.residuals.filter((px) => px <= limitPx).length <
+          MARKER_CALIBRATION_MIN_VISIBLE_MARKERS
+        )
+          continue;
         candidates.push({
           points: fit.points,
           reprojectionRmsePx: fit.reprojectionRmsePx,
@@ -481,7 +474,7 @@ export class MarkerCalibrationDetector {
     if (!result)
       throw new RobotVisionError(
         'NO_SCREEN_DETECTED',
-        `Calibration markers do not form a consistent screen plane${Number.isFinite(bestRmse) ? `: best marker error ${bestRmse.toFixed(2)} px exceeds ${limitPx.toFixed(2)} px (${visibleMarkers.length} markers)` : ''}`,
+        `Calibration markers do not form a consistent screen plane (${visibleMarkers.length} visible; four agreeing markers required).`,
         undefined,
         {
           visibleMarkers: visibleMarkers.length,

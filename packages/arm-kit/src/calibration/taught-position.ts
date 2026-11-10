@@ -13,7 +13,7 @@ const BOUNDARY_READBACK_NOISE_MM = 0.001;
 
 export async function moveToTaughtPosition(
   host: Required<Pick<AutomaticCaptureHost, 'read' | 'preflight' | 'move'>>,
-  teaching: InstallationTeaching,
+  teaching: InstallationTeaching | undefined,
   tool: ToolProfile,
   target: CartesianPose,
   motion: Pick<ScreenMotionSettings, 'actionSpeed' | 'actionAcceleration'>,
@@ -25,11 +25,11 @@ export async function moveToTaughtPosition(
   const z = Math.max(
     from.z,
     to.z,
-    contactPoint(teaching.referencePose, tool.offsetMm).z,
+    teaching ? contactPoint(teaching.referencePose, tool.offsetMm).z : to.z,
     minimumTipZMm,
   );
-  const excess = cameraBoundaryExcessMm(from, teaching);
-  if (excess > 0 && excess <= BOUNDARY_READBACK_NOISE_MM) {
+  const excess = teaching ? cameraBoundaryExcessMm(from, teaching) : 0;
+  if (teaching && excess > 0 && excess <= BOUNDARY_READBACK_NOISE_MM) {
     const { normal } = teaching.cameraBoundary;
     from.x -= excess * normal.x;
     from.y -= excess * normal.y;

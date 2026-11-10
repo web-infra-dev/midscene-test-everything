@@ -21,6 +21,7 @@ import {
   stageOptions,
   validateContactPolicy,
 } from '../../screen-interaction/motion-policy.js';
+import { explorationQualityWarnings } from '../exploration/quality.js';
 import { phonePointMm, screenPoseMm } from '../geometry.js';
 import { runBoundaryVerification } from './boundary.js';
 import { avoidCamera } from './camera-avoidance.js';
@@ -91,9 +92,12 @@ export async function applyCalibrationCommand(
         );
       const fast =
         s.auto.fast &&
-        s.auto.evidence.gridRmsMm <= 0.5 &&
-        s.auto.evidence.validationMaxMm <= 0.75 &&
-        s.auto.evidence.coverage >= 0.6;
+        explorationQualityWarnings(
+          ctx.screen,
+          s.candidate.quality,
+          s.auto.evidence,
+          true,
+        ).length === 0;
       await runBoundaryVerification(this, s, ctx, 'hover', {
         allowUnacceptedHover: true,
         returnPose: s.auto.startPose,

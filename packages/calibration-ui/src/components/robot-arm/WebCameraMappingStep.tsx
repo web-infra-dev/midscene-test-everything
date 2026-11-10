@@ -1,4 +1,7 @@
-import type { CameraMappingAccuracy } from '@midscene/arm-kit-shared/assisted-contracts';
+import {
+  type CameraMappingAccuracy,
+  mappingQualityWarnings,
+} from '@midscene/arm-kit-shared/assisted-contracts';
 import { Button, Spin } from 'antd';
 import { type ReactNode, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -10,6 +13,7 @@ import type {
   AssistedMappingInput,
 } from '../../robot-arm-api';
 import type { CameraProfile } from '../../types';
+import { CalibrationQualityWarnings } from './CalibrationQualityWarnings';
 export function WebCameraMappingStep({
   controller,
   camera,
@@ -150,6 +154,11 @@ export function WebCameraMappingStep({
     ? Boolean(current && !current.error)
     : (savedResult?.verified ?? mapped);
   const accuracy = editing ? current?.accuracy : setup.mapping?.accuracy;
+  const measuredLayout = editing ? setup.layout : setup.mapping?.layout;
+  const warnings =
+    accuracy && measuredLayout
+      ? mappingQualityWarnings(accuracy, measuredLayout)
+      : [];
   const confirm = async () => {
     setError(undefined);
     try {
@@ -269,7 +278,7 @@ export function WebCameraMappingStep({
             </>
           ) : problem ? (
             <span className="is-warning">{calibrationErrorText(problem)}</span>
-          ) : verified ? (
+          ) : verified && warnings.length === 0 ? (
             <span className="is-success">
               ✓{' '}
               {t(
@@ -282,12 +291,13 @@ export function WebCameraMappingStep({
                   accuracy.validation.maxErrorCssPx.toFixed(2),
                 ])}`}
             </span>
-          ) : check || mappingBusy ? (
+          ) : !verified && (check || mappingBusy) ? (
             <>
               <Spin size="small" /> {t('Checking page markers…')}
             </>
           ) : null}
         </output>
+        <CalibrationQualityWarnings warnings={warnings} />
         {verified && (
           <span className="range-check-status">
             {t(

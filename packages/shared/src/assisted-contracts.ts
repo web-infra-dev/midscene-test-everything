@@ -1,3 +1,4 @@
+import type { CalibrationQualityReading } from './calibration-quality.js';
 import type {
   CalibrationProfile,
   CalibrationSession,
@@ -10,6 +11,7 @@ import type {
   Vector3,
   VisionBinding,
 } from './contracts.js';
+export * from './calibration-quality.js';
 
 export const CALIBRATION_CLICK_RADIUS_PX = 13;
 export const CALIBRATION_CLICK_COUNT = 15;
@@ -365,6 +367,7 @@ export interface AssistedCalibrationState {
     | 'avoiding-camera'
     | 'ready'
     | 'positioning-safe'
+    | 'boundary-review'
     | 'positioning'
     | 'collecting'
     | 'reference-required'
@@ -397,6 +400,7 @@ export interface AssistedCalibrationState {
   explorationMode?: AutomaticExplorationMode;
   /** Collection failed before boundary verification. */
   collectionFailed?: boolean;
+  awaitingSocketRecovery?: boolean;
   anchors: WebPoint[];
   points: CapturedCalibrationPoint[];
   /** Diagnostic 3D residuals, never a substitute for click verification. */
@@ -405,6 +409,8 @@ export interface AssistedCalibrationState {
     gridRmsMm: number;
     holdoutMaxMm: number;
     coverage: number;
+    shortSideMm?: number;
+    warnings?: CalibrationQualityReading[];
   };
   error?: string;
   errorDetails?: {
@@ -501,6 +507,7 @@ export type AssistedCalibrationAction =
   | 'start-automatic'
   | 'start-fast'
   | 'start-slide'
+  | 'verify-boundary'
   | 'retry-standard'
   | 'stop-capture'
   | 'cancel'
@@ -514,6 +521,7 @@ export interface AssistedCalibrationRecording {
   deviceId?: string;
   /** Persisted geometry to preserve the exact plane and compensation on resume. */
   calibrationProfileId?: string;
+  explorationMode?: AutomaticExplorationMode;
   points: CapturedCalibrationPoint[];
   input: AssistedCalibrationInput;
   mapping: WebCalibrationMapping;
@@ -565,6 +573,7 @@ export interface CalibrationBatchState {
       | 'awaiting-phone'
       | 'awaiting-placement'
       | 'exploring'
+      | 'awaiting-boundary-review'
       | 'awaiting-acceptance'
       | 'completed'
       | 'failed'

@@ -1,4 +1,5 @@
 import { setTimeout as delay } from 'node:timers/promises';
+import { markerNoiseAllowancePx } from '@midscene/arm-kit-shared/marker-contracts';
 import aruco from 'js-aruco2';
 import sharp from 'sharp';
 import type { CalibrationPageLayout } from '../assisted-contracts.js';
@@ -13,12 +14,18 @@ import {
   quadMedian,
   quadToArray,
 } from './vision-geometry.js';
-import type { ScreenQuad } from './vision-types.js';
 
 const dictionaryName = 'ARUCO_MIP_36h12';
 const dictionary = new aruco.AR.Dictionary(dictionaryName);
 export const markerSvg = (id: number) => dictionary.generateSVG(id);
 type Markers = CalibrationPageLayout['markers'];
+
+export function hasMappingMarkerCoverage(fit: number, check: number) {
+  return (
+    (fit === 4 && (check === 1 || check === 2)) || (fit === 3 && check === 2)
+  );
+}
+
 export async function detectCalibrationMarkers(jpeg: Buffer, markers: Markers) {
   const detector = new aruco.AR.Detector({
     dictionaryName,
@@ -33,11 +40,13 @@ export async function detectCalibrationMarkers(jpeg: Buffer, markers: Markers) {
       .ensureAlpha()
       .raw()
       .toBuffer({ resolveWithObject: true });
-    const found = detector.detect({
+    return detector.detect({
       data,
       width: info.width,
       height: info.height,
     });
+  }
+  function uniqueContours(found: Awaited<ReturnType<typeof decode>>) {
     // A sharp, front-facing border can decode twice, from its outer and inner contours.
     // Use the outside corners for fitting and keep spatially distinct copies ambiguous.
     const diagonal = (m: (typeof found)[number]) =>
@@ -58,19 +67,20 @@ export async function detectCalibrationMarkers(jpeg: Buffer, markers: Markers) {
     }
     return unique;
   }
-  let observed = await decode(false);
+  let observed = uniqueContours(await decode(false));
   const counts = markers.map(
     ({ code }) => observed.filter((m) => m.id === code).length,
   );
   // Enhance only an incomplete read. A duplicate ID is already ambiguous.
   if (counts.includes(0) && counts.every((count) => count <= 1))
-    observed = await decode(true);
-  const pairs = markers.map((m) => {
+    observed = uniqueContours([...observed, ...(await decode(true))]);
+  const pairs = markers.flatMap((m) => {
     const matches = observed.filter((o) => o.id === m.code);
-    if (matches.length !== 1)
+    if (!matches.length) return [];
+    if (matches.length > 1)
       throw new RobotVisionError(
         'NO_SCREEN_DETECTED',
-        `Calibration marker ${m.code} could not be decoded uniquely (${matches.length} matches). Keep all calibration markers visible and in focus.`,
+        `Calibration marker ${m.code} could not be decoded uniquely (${matches.length} matches).`,
       );
     // The generated SVG has a one-cell quiet zone around its 8 × 8 black square.
     const r = m.size * 0.4;
@@ -80,9 +90,14 @@ export async function detectCalibrationMarkers(jpeg: Buffer, markers: Markers) {
       [r, r],
       [-r, r],
     ].map(([dx, dy]) => ({ x: m.x + dx, y: m.y + dy }));
-    return { m, page, image: matches[0].corners };
+    return [{ m, page, image: matches[0].corners }];
   });
   const fit = pairs.filter((p) => p.m.purpose === 'fit');
+  if (!hasMappingMarkerCoverage(fit.length, pairs.length - fit.length))
+    throw new RobotVisionError(
+      'NO_SCREEN_DETECTED',
+      'Keep at least five of the six calibration markers visible and in focus.',
+    );
   const webToImage = computeHomography(
     fit.flatMap((p) => p.page),
     fit.flatMap((p) => p.image),
@@ -103,10 +118,10 @@ export async function detectCalibrationMarkers(jpeg: Buffer, markers: Markers) {
       .map((p) => p.errorCssPx);
     const mean = errors.reduce((a, b) => a + b, 0) / errors.length;
     const max = Math.max(...errors);
-    if (!errors.length || !Number.isFinite(mean) || mean > 2 || max > 3)
+    if (!Number.isFinite(mean) || !Number.isFinite(max))
       throw new RobotVisionError(
         'CALIBRATION_MISMATCH',
-        `${purpose === 'fit' ? 'Fit' : 'Independent check'} error: mean ${mean.toFixed(2)}, maximum ${max.toFixed(2)} CSS px (limits: mean 2, maximum 3).`,
+        'Page markers did not produce finite corner measurements.',
       );
     return { count: errors.length, meanErrorCssPx: mean, maxErrorCssPx: max };
   }
@@ -198,14 +213,10 @@ export async function recognizeScreenMarkers(
     })),
   };
   const detector = shared?.detector ?? new MarkerCalibrationDetector();
-  const quads: ScreenQuad[] = [];
-  let reference: Awaited<ReturnType<typeof detector.detectFrame>> | undefined;
-  let best:
-    | {
-        detection: Awaited<ReturnType<typeof detector.detectFrame>>;
-        frame: Buffer;
-      }
-    | undefined;
+  const frames: Array<{
+    detection: Awaited<ReturnType<typeof detector.detectFrame>>;
+    frame: Buffer;
+  }> = [];
   let lastFailure: unknown;
   const frameCount = 8;
   for (let i = 0; i < frameCount; i++) {
@@ -216,6 +227,7 @@ export async function recognizeScreenMarkers(
       const detection = decoded
         ? detector.detectDecodedFrame(decoded, target)
         : await detector.detectFrame(jpeg, target);
+      const reference = frames[0]?.detection;
       if (
         reference &&
         (reference.imageWidth !== detection.imageWidth ||
@@ -225,15 +237,7 @@ export async function recognizeScreenMarkers(
           'CALIBRATION_MISMATCH',
           'Camera dimensions changed during detection',
         );
-      quads.push(detection.points);
-      reference = detection;
-      if (
-        !best ||
-        detection.markerIds.length > best.detection.markerIds.length ||
-        (detection.markerIds.length === best.detection.markerIds.length &&
-          detection.reprojectionRmsePx < best.detection.reprojectionRmsePx)
-      )
-        best = { detection, frame: jpeg };
+      frames.push({ detection, frame: jpeg });
     } catch (error) {
       if (
         !(error instanceof RobotVisionError) ||
@@ -243,29 +247,40 @@ export async function recognizeScreenMarkers(
       lastFailure = error;
     }
   }
-  if (!reference || !best || quads.length < 4)
+  if (frames.length < frameCount / 2)
     throw new UnstableMarkerCapture(
       'NO_SCREEN_DETECTED',
-      `Only ${quads.length} of 8 frames passed. ${lastFailure instanceof Error ? lastFailure.message : ''}`,
+      `Only ${frames.length} of ${frameCount} frames passed. ${lastFailure instanceof Error ? lastFailure.message : ''}`,
     );
-  const points = quadMedian(quads);
-  const jitterPx = Math.max(
-    ...quads.flatMap((q) =>
-      quadToArray(q).map((p, i) => pointDistance(p, quadToArray(points)[i])),
+  const points = quadMedian(frames.map(({ detection }) => detection.points));
+  const corners = quadToArray(points);
+  const deviations = frames.map(({ detection }) =>
+    Math.max(
+      ...quadToArray(detection.points).map((p, i) =>
+        pointDistance(p, corners[i]),
+      ),
     ),
   );
-  if (
-    !shared &&
-    jitterPx >
-      Math.max(
-        3,
-        Math.hypot(reference.imageWidth, reference.imageHeight) * 0.002,
-      )
-  )
+  const jitterPx = Math.max(...deviations);
+  const allowance = markerNoiseAllowancePx(
+    frames[0].detection.imageWidth,
+    frames[0].detection.imageHeight,
+  );
+  const stable = frames.filter((_, i) => deviations[i] <= allowance);
+  if (!shared && stable.length < frameCount / 2)
     throw new UnstableMarkerCapture(
       'CALIBRATION_MISMATCH',
       'Screen moved between frames. Keep the phone and camera fixed.',
     );
+  const best = (stable.length ? stable : frames).reduce((best, next) => {
+    const markerGain =
+      next.detection.markerIds.length - best.detection.markerIds.length;
+    return markerGain > 0 ||
+      (markerGain === 0 &&
+        next.detection.reprojectionRmsePx < best.detection.reprojectionRmsePx)
+      ? next
+      : best;
+  });
   return {
     correction: {
       points,
@@ -275,7 +290,7 @@ export async function recognizeScreenMarkers(
     },
     jpeg: best.frame.toString('base64'),
     markerIds: best.detection.markerIds,
-    validFrames: quads.length,
+    validFrames: frames.length,
     frameCount,
     jitterPx,
     errorPx: best.detection.reprojectionRmsePx,

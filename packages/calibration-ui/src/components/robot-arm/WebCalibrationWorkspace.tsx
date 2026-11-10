@@ -1,12 +1,14 @@
 import { Button, Checkbox, Radio, Typography } from 'antd';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { CalibrationRequestError } from '../../client';
 import type { AssistedCalibrationController } from '../../hooks/useAssistedCalibration';
 import { calibrationErrorText, t, useCalibrationLanguage } from '../../i18n';
 import {
   type CalibrationProfile,
   calibrationAccepted,
 } from '../../robot-arm-api';
+import { ExplorationQualitySummary } from './CalibrationQualityWarnings';
 import { ExplorationProgress } from './ExplorationProgress';
 import { SetupNotice } from './SetupNotice';
 
@@ -15,6 +17,7 @@ export function WebCalibrationWorkspace({
   result,
   readyToCapture = true,
   readyToStart = true,
+  cameraCheckRequired = false,
   prepareFromTeaching = false,
   showSessionCancel = true,
   footer,
@@ -34,6 +37,7 @@ export function WebCalibrationWorkspace({
   readyToCapture?: boolean;
   readyToVerify?: boolean;
   readyToStart?: boolean;
+  cameraCheckRequired?: boolean;
   prepareFromTeaching?: boolean;
   showSessionCancel?: boolean;
   footer: HTMLElement | null;
@@ -57,6 +61,7 @@ export function WebCalibrationWorkspace({
   const stage = s?.stage;
   const offerStandardRetry =
     stage === 'interrupted' &&
+    !s?.awaitingSocketRecovery &&
     s?.collectionFailed &&
     s.explorationMode === 'slide';
   const completed =
@@ -66,6 +71,31 @@ export function WebCalibrationWorkspace({
     stage === 'safety' ||
     stage === 'returning' ||
     stage === 'avoiding-camera';
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const checkBeforeStart =
+    (s || setup.prepared) &&
+    (cameraCheckRequired || (!setup.mapping && !s?.mapping)) &&
+    onCheckCamera;
+  const start = (work: () => Promise<unknown>) => {
+    if (checkBeforeStart) {
+      checkBeforeStart();
+      return;
+    }
+    void work().catch((cause) => {
+      if (
+        mounted.current &&
+        cause instanceof CalibrationRequestError &&
+        cause.requiresCameraCheck
+      )
+        onCheckCamera?.();
+    });
+  };
   const command = (
     action: Parameters<typeof controller.command>[0],
     confirm = false,
@@ -99,7 +129,7 @@ export function WebCalibrationWorkspace({
     )
       return;
     prepared.current = true;
-    void controller.create().catch(() => undefined);
+    start(controller.create);
   }, [
     prepareFromTeaching,
     s,
@@ -132,7 +162,9 @@ export function WebCalibrationWorkspace({
             stage === 'positioning-safe' ||
             stage === 'avoiding-camera'
           ? 3
-          : stage === 'safety' || stage === 'returning'
+          : stage === 'safety' ||
+              stage === 'returning' ||
+              stage === 'boundary-review'
             ? 2
             : stage === 'collecting' ||
                 (stage === 'ready' &&
@@ -179,9 +211,7 @@ export function WebCalibrationWorkspace({
     <>
       <Button
         disabled={busy || !readyToStart}
-        onClick={
-          onRestart ?? (() => void controller.create().catch(() => undefined))
-        }
+        onClick={onRestart ?? (() => start(controller.create))}
       >
         {t('Restart Calibration')}
       </Button>
@@ -192,8 +222,10 @@ export function WebCalibrationWorkspace({
   ) : !s ? (
     <Button
       type="primary"
-      disabled={busy || !setup.mapping || !readyToStart}
-      onClick={() => void controller.create().catch(() => undefined)}
+      disabled={
+        busy || (!checkBeforeStart && (!setup.mapping || !readyToStart))
+      }
+      onClick={() => start(controller.create)}
     >
       {t('Start automatic calibration')}
     </Button>
@@ -233,13 +265,34 @@ export function WebCalibrationWorkspace({
     <Button
       type="primary"
       loading={busy}
-      disabled={!confirmed || !s.phoneConnected || !readyToCapture}
+      disabled={
+        !checkBeforeStart &&
+        (!confirmed || !s.phoneConnected || !readyToCapture)
+      }
       onClick={() =>
-        command(mode === 'slide' ? 'start-slide' : 'start-automatic', true)
+        start(() =>
+          controller.command(
+            mode === 'slide' ? 'start-slide' : 'start-automatic',
+            true,
+          ),
+        )
       }
     >
       {t('Start automatic calibration')}
     </Button>
+  ) : stage === 'boundary-review' ? (
+    <>
+      <Button disabled={busy} onClick={() => command('restart', true)}>
+        {t('Restart Calibration')}
+      </Button>
+      <Button
+        type="primary"
+        disabled={busy || !readyToCapture || !s.phoneConnected}
+        onClick={() => command('verify-boundary', true)}
+      >
+        {t('Continue to boundary verification')}
+      </Button>
+    </>
   ) : stage === 'return-ready' ? (
     <Button
       type="primary"
@@ -276,7 +329,7 @@ export function WebCalibrationWorkspace({
       disabled={busy || !readyToStart || !readyToCapture || !s.phoneConnected}
       onClick={() => {
         setMode('standard');
-        command('retry-standard', true);
+        start(() => controller.command('retry-standard', true));
       }}
     >
       {t('Confirm retry')}
@@ -285,7 +338,7 @@ export function WebCalibrationWorkspace({
     <Button
       type="primary"
       disabled={busy || !readyToStart}
-      onClick={() => command('restart', true)}
+      onClick={() => start(() => controller.command('restart', true))}
     >
       {t('Restart Calibration')}
     </Button>
@@ -495,18 +548,7 @@ export function WebCalibrationWorkspace({
                   )}
                 </Typography.Paragraph>
               )}
-              {quality && (
-                <Typography.Paragraph>
-                  {t(
-                    'Grid RMS {0} mm · Holdout maximum {1} mm · Coverage {2}%',
-                    [
-                      quality.gridRmsMm.toFixed(2),
-                      quality.holdoutMaxMm.toFixed(2),
-                      Math.round(quality.coverage * 100),
-                    ],
-                  )}
-                </Typography.Paragraph>
-              )}
+              <ExplorationQualitySummary quality={quality} />
               {stage === 'review' && (
                 <Checkbox
                   checked={saveConfirmed}

@@ -84,12 +84,12 @@ export class PhoneSocketServer {
         }
       });
       socket.on('error', () => socket.terminate());
-      socket.on('close', () => {
+      socket.on('close', (code) => {
         clearTimeout(expire);
         unsubscribe?.();
         if (this.active === socket) {
           this.active = undefined;
-          this.service.disconnectPhone();
+          this.service.disconnectPhone(code === 1005 || code === 1006);
         }
       });
     });

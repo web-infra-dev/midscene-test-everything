@@ -134,8 +134,8 @@ class ScreenPage {
         if (this.host) this.host.service.phoneHeartbeat();
         else this.home.lastSeen = Date.now();
       },
-      disconnectPhone: () => {
-        if (this.host) this.host.service.disconnectPhone();
+      disconnectPhone: (transportLost) => {
+        if (this.host) this.host.service.disconnectPhone(transportLost);
         else this.home.lastSeen = 0;
       },
       phoneView: () => this.view(),
@@ -157,7 +157,7 @@ class ScreenPage {
   ) {
     const previous = this.host;
     if (previous !== host) {
-      previous?.service.disconnectPhone();
+      previous?.service.disconnectPhone(false);
       this.last = undefined;
       this.home.lastSeen = 0;
       this.phoneSocket.renew();
@@ -1114,6 +1114,10 @@ export class ScreenCalibration {
         session.applied.delete(id);
         target.state = 'detecting';
         target.error = undefined;
+        target.result = undefined;
+        delete session.frames[id];
+        session.corrections.delete(id);
+        session.observations.delete(id);
         try {
           const host = await this.devices.ensureHost(id);
           const request = session.requests.get(id);
@@ -1334,7 +1338,10 @@ export class ScreenCalibration {
         () => assertObservation(target.id),
       );
       session.applied.set(target.id, mappingError);
-      host.service.finishMarkerDisplay(session.requests.get(target.id)!, true);
+      host.service.finishMarkerDisplay(
+        session.requests.get(target.id)!,
+        mappingError === undefined,
+      );
       const page = [...this.pages.values()].find(
         (p) => p.saved.targetId === target.id,
       );

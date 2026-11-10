@@ -15,7 +15,7 @@ it('streams the initial snapshot, page handoff and disconnect over the real tran
   const arm = new ArmController({ adapter: f.adapter, profileStore: f.store });
   const host = new CalibrationHost({
     arm,
-    camera: {} as CameraSession,
+    camera: { getPerspectiveValidity: () => undefined } as CameraSession,
     deviceId: 'cam',
   });
   const server = createServer((req, res) => void host.handle(req, res));
@@ -63,6 +63,13 @@ it('streams the initial snapshot, page handoff and disconnect over the real tran
         new TextDecoder().decode(value).trim().slice('data: '.length),
       );
     };
+    const paused = await fetch(
+      `http://${address}/api/calibration/camera/validity`,
+    );
+    expect(paused.status).toBe(200);
+    expect(await paused.json()).toEqual({
+      skipped: 'reference-page-unavailable',
+    });
     const reader = await events();
     expect((await snapshot(reader)).phone.state).toBe('waiting');
     const first = await open();

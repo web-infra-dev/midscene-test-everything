@@ -1,3 +1,4 @@
+import { CALIBRATION_RELATIVE_SLACK } from '../../assisted-contracts.js';
 // Source: midscene-private dev 710f60809eac3dbe824f91a5cf8b3b0e72386282.
 import {
   type CalibrationProfile,
@@ -16,10 +17,10 @@ import {
   sub,
   unit,
 } from '../../domain.js';
-import { surfaceOffsetMm } from '../surface.js';
+import { SAMPLED_SURFACE_LIMIT_MM, surfaceOffsetMm } from '../surface.js';
 export { screenGeometry } from '../geometry.js';
 type Matrix = number[][];
-export const SURFACE_COMPENSATION_LIMIT_MM = 2;
+export const SURFACE_COMPENSATION_LIMIT_MM = SAMPLED_SURFACE_LIMIT_MM;
 
 /** Applies to measured surface heights, not to commanded press travel. */
 export function assertSurfaceDeviationMm(value: number): void {
@@ -134,13 +135,15 @@ export function fitContactPlane(
   unit(preferred);
   for (let i = 0; i < points.length; i++)
     for (let j = 0; j < i; j++)
-      if (distance(points[i], points[j]) < 1)
+      if (distance(points[i], points[j]) < 1e-6)
         throw new RobotArmError(
           'DUPLICATE_SAMPLE',
-          'Contact samples must be at least 1mm apart',
+          'Collect distinct contact samples',
         );
   let best: Vector3[] = [];
   let attempts = 0;
+  const inlierThresholdMm =
+    SAMPLED_SURFACE_LIMIT_MM * 0.25 * (1 + CALIBRATION_RELATIVE_SLACK);
   for (let i = 0; i < points.length - 2; i++)
     for (let j = i + 1; j < points.length - 1; j++)
       for (let k = j + 1; k < points.length; k++) {
@@ -149,18 +152,20 @@ export function fitContactPlane(
         if (dot(c, c) < 1e-8) continue;
         const n = unit(c);
         const o = dot(n, points[i]);
-        const inliers = points.filter((p) => Math.abs(dot(n, p) - o) <= 0.5);
+        const inliers = points.filter(
+          (p) => Math.abs(dot(n, p) - o) <= inlierThresholdMm,
+        );
         if (inliers.length > best.length) best = inliers;
       }
-  if (best.length < 5 || best.length / points.length < 0.8)
+  if (best.length < 3)
     throw new RobotArmError(
       'CALIBRATION_QUALITY',
-      `Insufficient plane inliers: ${best.length}/${points.length} within 0.5 mm; ${Math.max(5, Math.ceil(points.length * 0.8))} required`,
+      'Touch samples do not define a non-collinear contact plane',
       400,
       {
         sampleCount: points.length,
         inliers: best.length,
-        inlierThresholdMm: 0.5,
+        inlierThresholdMm,
         zRangeMm:
           Math.max(...points.map((point) => point.z)) -
           Math.min(...points.map((point) => point.z)),
@@ -197,21 +202,16 @@ export function fitContactPlane(
     minorSpanMm: spans[0],
     majorSpanMm: spans[1],
   };
-  if (
-    rmseMm > 0.5 ||
-    spans[0] <
-      (screen.physicalWidthMm && screen.physicalHeightMm
-        ? Math.min(screen.physicalWidthMm, screen.physicalHeightMm) * 0.25
-        : 5) ||
-    spans[1] <
-      (screen.physicalWidthMm && screen.physicalHeightMm
-        ? Math.max(screen.physicalWidthMm, screen.physicalHeightMm) * 0.25
-        : 5) ||
-    spans[1] / spans[0] > 10
-  )
+  const scaleMm = Math.max(
+    spans[1],
+    screen.physicalWidthMm ?? 0,
+    screen.physicalHeightMm ?? 0,
+    1,
+  );
+  if (!Number.isFinite(rmseMm) || !(spans[0] > scaleMm * 1e-8))
     throw new RobotArmError(
       'CALIBRATION_QUALITY',
-      'Poor fit or insufficient two-dimensional screen coverage',
+      'Touch samples do not span a two-dimensional plane',
       400,
       { quality },
     );

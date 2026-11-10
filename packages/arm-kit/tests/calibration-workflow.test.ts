@@ -6,6 +6,7 @@ import { createCalibrationClient } from '../../calibration-ui/src/client.js';
 import {
   calibrationCaptureTargets,
   calibrationPageMarkers,
+  mappingQualityWarnings,
 } from '../src/assisted-contracts.js';
 import type {
   CalibrationPageLayout,
@@ -419,7 +420,8 @@ describe('phone-assisted calibration coordinator', () => {
     try {
       const run = rstest
         .spyOn(AutomaticCapture.prototype, 'run')
-        .mockImplementationOnce(async function (this: AutomaticCapture) {
+        .mockImplementationOnce(async function (this: AutomaticCapture, host) {
+          await host.move(pose(25, 30, 30));
           this.points.push({
             point: { x: 75, y: 100 },
             positionMm: { x: 25, y: 30, z: 30 },
@@ -428,10 +430,11 @@ describe('phone-assisted calibration coordinator', () => {
             tipSpreadMm: 0,
             touchSpreadPx: 0,
           });
-          throw new Error('Lost sliding contact');
+          throw new RobotArmError('TOUCH_CONTACT_LOST', 'Lost sliding contact');
         })
         .mockRejectedValue(new Error('Point probe failed'));
       const reference = await f.recordReference();
+      f.service.setBatchTravelHeight(120);
       await f.service.command(f.state.id, 'start-slide', true);
       await rstest.waitFor(() =>
         expect(f.service.status()).toMatchObject({
@@ -441,6 +444,13 @@ describe('phone-assisted calibration coordinator', () => {
           samples: 1,
         }),
       );
+      expect(f.adapter.movements).toEqual([
+        pose(25, 30, 30),
+        pose(25, 30, 120),
+        pose(100, -50, 120),
+        reference.referencePosition,
+      ]);
+      expect(f.service.status()?.error).toBe('Lost sliding contact');
       await expect(
         f.service.command(f.state.id, 'retry-standard'),
       ).rejects.toMatchObject({ code: 'CONFIRMATION_REQUIRED' });
@@ -467,6 +477,132 @@ describe('phone-assisted calibration coordinator', () => {
       await f.dispose();
     }
   });
+  it.each(['stop', 'unreachable'] as const)(
+    'leaves the failed probe stationary when its reference return is blocked (%s)',
+    async (reason) => {
+      const f = await setup();
+      try {
+        const contact = pose(25, 30, 30);
+        rstest
+          .spyOn(AutomaticCapture.prototype, 'run')
+          .mockImplementation(async (host) => {
+            await host.move(contact);
+            if (reason === 'stop') {
+              f.assertPerspectiveCurrent.mockImplementationOnce(() =>
+                f.runtime.stop(),
+              );
+            }
+            throw new RobotArmError('TOUCH_NOT_FOUND', 'Missing touch');
+          });
+        await f.recordReference();
+        if (reason === 'unreachable') f.service.setBatchTravelHeight(10000);
+        await f.service.command(f.state.id, 'start-fast', true);
+        await rstest.waitFor(() =>
+          expect(f.service.status()?.stage).toBe('interrupted'),
+        );
+        expect(f.adapter.movements).toEqual([contact]);
+        if (reason === 'unreachable')
+          expect(f.service.status()?.error).toContain(
+            'Missing touch. Return to the calibration reference failed',
+          );
+      } finally {
+        await f.dispose();
+      }
+    },
+  );
+  it.each([
+    'phone',
+    'controller',
+    'manual-stop',
+    'emergency-stop',
+    'changed-screen',
+    'fault',
+    'stop-during-check',
+  ] as const)(
+    'only returns a socket-interrupted collection to preparation after a checked reconnect (%s)',
+    async (reason) => {
+      const f = await setup();
+      try {
+        const run = rstest
+          .spyOn(AutomaticCapture.prototype, 'run')
+          .mockImplementation(async function (this: AutomaticCapture, host) {
+            this.points.push({
+              point: { x: 40, y: 60 },
+              positionMm: { x: 10, y: 20, z: 30 },
+              purpose: 'fit',
+              readings: 1,
+              tipSpreadMm: 0,
+              touchSpreadPx: 0,
+            });
+            if (reason === 'controller') {
+              await f.adapter.disconnect();
+              throw new RobotArmError('DISCONNECTED', 'Test channel lost', 503);
+            }
+            await new Promise<void>((resolve) =>
+              host.signal.addEventListener('abort', () => resolve(), {
+                once: true,
+              }),
+            );
+            host.check();
+          });
+        const ready = await f.recordReference();
+        await f.service.command(ready.id, 'start-slide', true);
+        await rstest.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+        if (reason !== 'controller') f.service.disconnectPhone();
+        await rstest.waitFor(() =>
+          expect(f.service.status()?.stage).toBe('interrupted'),
+        );
+        expect((await f.runtime.state()).recoveryReason).toBe(
+          'socket-disconnect',
+        );
+        if (reason === 'manual-stop') await f.runtime.stop();
+        if (reason === 'emergency-stop') await f.runtime.emergencyStop();
+        if (reason === 'changed-screen') f.resize();
+        if (reason === 'fault') await f.adapter.faultForTesting();
+        if (reason === 'stop-during-check') {
+          // Interleave an operator stop with the asynchronous mapping check.
+          f.assertPerspectiveCurrent.mockImplementationOnce(async () => {
+            await f.runtime.stop();
+          });
+        }
+        await f.send();
+        if (reason === 'controller' || reason === 'phone') {
+          await rstest.waitFor(() => {
+            f.service.phoneHeartbeat();
+            expect(f.service.status()?.stage).toBe('ready');
+          });
+          const next = f.service.status()!;
+          expect(next.id).not.toBe(ready.id);
+          expect(next).toMatchObject({
+            points: [],
+            samples: 0,
+            referencePosition: ready.referencePosition,
+            mapping: ready.mapping,
+          });
+          expect((await f.runtime.state()).recoveryRequired).toBe(false);
+        } else {
+          await rstest.waitFor(() => {
+            f.service.phoneHeartbeat();
+            expect(f.service.status()).toMatchObject({
+              id: ready.id,
+              stage: 'interrupted',
+              awaitingSocketRecovery: false,
+            });
+          });
+          const state = await f.runtime.state();
+          expect(state.recoveryRequired).toBe(true);
+          if (reason !== 'changed-screen')
+            expect(state.recoveryReason).toBe(
+              reason === 'stop-during-check' ? 'manual-stop' : reason,
+            );
+        }
+        expect(run).toHaveBeenCalledTimes(1);
+        expect(f.adapter.movements).toHaveLength(0);
+      } finally {
+        await f.dispose();
+      }
+    },
+  );
   it('restarts with both recorded positions, without redetecting the camera or moving', async () => {
     const f = await setup();
     try {
@@ -594,6 +730,41 @@ describe('phone-assisted calibration coordinator', () => {
       const updated = await f.service.mapSetup();
       expect(updated.mapping?.vision.fingerprint).toBe('changed');
       expect(f.detectMarkers).toHaveBeenCalledTimes(before + 2);
+    } finally {
+      await f.dispose();
+    }
+  });
+  it('reuses a confirmed mapping in touch preview and waits for newly painted markers when a fresh mapping is needed', async () => {
+    const f = await setup();
+    try {
+      f.service.finishMarkerDisplay(f.service.requestMarkerDisplay(), true);
+      await f.send({ view: 'touch-preview', markersPainted: false });
+      const confirmed = await f.service.mapSetup();
+      expect(confirmed.mapping).toBeDefined();
+      expect(f.service.phoneView().view).toBe('touch-preview');
+      expect(f.detectMarkers).toHaveBeenCalledTimes(1);
+
+      f.changeCamera();
+      const remapping = f.service.mapSetup();
+      await rstest.waitFor(() =>
+        expect(f.service.phoneView().markerRequest).toBeDefined(),
+      );
+      const request = f.service.phoneView().markerRequest!;
+      await f.send({
+        view: 'markers',
+        markersPainted: true,
+        markerRequest: 'old',
+      });
+      expect(f.detectMarkers).toHaveBeenCalledTimes(1);
+      await f.send({
+        view: 'markers',
+        markersPainted: true,
+        markerRequest: request,
+      });
+      expect((await remapping).mapping?.vision.fingerprint).toBe('changed');
+      expect(f.service.phoneView().view).toBe('touch-preview');
+      expect(f.detectMarkers).toHaveBeenCalledTimes(2);
+      expect(f.adapter.movements).toHaveLength(0);
     } finally {
       await f.dispose();
     }
@@ -795,7 +966,44 @@ it('stops collection when phone acknowledgements time out', async () => {
   }
 }, 15000);
 
-it.each(['missing', 'failed'])(
+it.each([
+  [3, 2, true],
+  [4, 1, true],
+  [3, 1, false],
+  [4, 0, false],
+  [5, 1, false],
+])(
+  'confirms camera mapping with %i fit and %i check markers: %s',
+  async (fit, check, accepted) => {
+    const f = await setup();
+    try {
+      f.changeCamera();
+      const mapping = f.beforeTask.setup.mapping!;
+      const accuracy = {
+        ...mapping.accuracy!,
+        fit: { ...mapping.accuracy!.fit, count: fit },
+        validation: { ...mapping.accuracy!.validation, count: check },
+      };
+      f.detectMarkers.mockReturnValueOnce(
+        Response.json({ ...mapping, accuracy }),
+      );
+      if (accepted) {
+        expect((await f.service.mapSetup()).mapping?.accuracy).toEqual(
+          accuracy,
+        );
+      } else {
+        await expect(f.service.mapSetup()).rejects.toMatchObject({
+          code: 'INVALID_MAPPING',
+        });
+        expect(f.service.setup().mapping).toBeUndefined();
+      }
+    } finally {
+      await f.dispose();
+    }
+  },
+);
+
+it.each(['missing', 'invalid'])(
   'refuses %s independent camera accuracy evidence',
   async (kind) => {
     const f = await setup();
@@ -810,7 +1018,11 @@ it.each(['missing', 'failed'])(
               ? undefined
               : {
                   fit: { count: 4, meanErrorCssPx: 0.1, maxErrorCssPx: 0.2 },
-                  validation: { count: 2, meanErrorCssPx: 1, maxErrorCssPx: 6 },
+                  validation: {
+                    count: 2,
+                    meanErrorCssPx: 1,
+                    maxErrorCssPx: -6,
+                  },
                   points: [],
                 },
         }),
@@ -826,8 +1038,32 @@ it.each(['missing', 'failed'])(
   },
 );
 
-it('keeps a candidate parking pose separate from the start; a bad holdout blocks adoption', async () => {
+it('keeps a measured camera mapping with independent error available for review', async () => {
   const f = await setup();
+  try {
+    f.changeCamera();
+    const previous = f.beforeTask.setup.mapping!;
+    const accuracy = {
+      ...previous.accuracy,
+      validation: { count: 2, meanErrorCssPx: 3.1, maxErrorCssPx: 6 },
+    };
+    f.detectMarkers.mockReturnValueOnce(
+      Response.json({ ...previous, accuracy }),
+    );
+    const mapping = (await f.service.mapSetup()).mapping!;
+    expect(mapping.accuracy).toEqual(accuracy);
+    expect(
+      mappingQualityWarnings(mapping.accuracy, mapping.layout),
+    ).toHaveLength(1);
+    expect(f.adapter.movements).toHaveLength(0);
+  } finally {
+    await f.dispose();
+  }
+});
+
+it('retains a larger holdout error for review and requires a verified parking pose', async () => {
+  const f = await setup();
+  const timer = setInterval(() => void f.send(), 50);
   try {
     await f.recordSafe();
     expect(f.service.status()?.safePosition).toEqual(pose(150, -50, 100));
@@ -857,15 +1093,26 @@ it('keeps a candidate parking pose separate from the start; a bad holdout blocks
       });
     await f.service.command(f.state.id, 'start', true);
     await rstest.waitFor(() =>
-      expect(f.service.status()?.stage).toBe('interrupted'),
+      expect(f.service.status()?.stage).toBe('boundary-review'),
     );
-    expect(f.service.status()!.error).toContain('Validation residual');
-    expect(f.service.status()!.calibration).toBeUndefined();
+    const state = f.service.status()!;
+    expect(state.explorationQuality?.holdoutMaxMm).toBeCloseTo(2);
+    expect(state.explorationQuality?.warnings).toContainEqual(
+      expect.objectContaining({ label: 'Holdout maximum' }),
+    );
+    expect(state.calibration).toBeUndefined();
     expect(f.adapter.movements).toHaveLength(0);
+    await expect(
+      f.service.command(state.id, 'verify-boundary', false),
+    ).rejects.toThrow('Review the measurements');
+    const verified = await f.service.command(state.id, 'verify-boundary', true);
+    expect(verified.calibration?.boundary.contactEdges).toBe(true);
+    expect(state.result).toBeUndefined();
   } finally {
+    clearInterval(timer);
     await f.dispose();
   }
-});
+}, 45000);
 
 it('exposes received touch diagnostics without treating history as active contact', async () => {
   const f = await setup();
@@ -896,14 +1143,15 @@ it('exposes received touch diagnostics without treating history as active contac
 });
 
 it.each([1.25, 2.5])(
-  'rejects held-out height error %s without another collection pass',
+  'preserves reviewable height error within the physical compensation range (%s mm)',
   async (heightError) => {
     const f = await setup();
     const timer = setInterval(() => void f.send(), 50);
     try {
       rstest
         .spyOn(AutomaticCapture.prototype, 'run')
-        .mockImplementation(async function (this: AutomaticCapture) {
+        .mockImplementation(async function (this: AutomaticCapture, host) {
+          await host.move(pose(25, 30, 30));
           this.reference = pose(100, -50, 30);
           for (const { point, purpose } of explorationTargets(layout, false)) {
             this.points.push({
@@ -928,15 +1176,25 @@ it.each([1.25, 2.5])(
       await rstest.waitFor(
         () => {
           const state = f.service.status()!;
-          expect(state.stage).toBe('interrupted');
-          expect(state.error).toMatch(
-            /Validation height residual|2 mm compensation limit/,
-          );
+          if (heightError > 2) {
+            expect(state.stage).toBe('interrupted');
+            expect(state.error).toMatch(/2 mm compensation limit/);
+          } else {
+            expect(state.stage).toBe('boundary-review');
+            expect(state.explorationQuality?.warnings).toContainEqual(
+              expect.objectContaining({
+                label: 'Holdout height error',
+                percent: 62.5,
+              }),
+            );
+          }
           expect(state.result).toBeUndefined();
         },
         { timeout: 10000 },
       );
       expect(collect).toHaveBeenCalledTimes(1);
+      expect(await f.adapter.getPose()).toEqual(pose(100, -50, 60));
+      expect(f.adapter.movements[1]).toEqual(pose(25, 30, 60));
       expect(
         f.service
           .status()!
@@ -989,81 +1247,119 @@ it('records measured installation reference and camera boundary, requires corrid
   }
 });
 
-it('automatically parks after boundary verification with taught mounting and still requires acceptance', async () => {
-  const f = await setup();
-  const timer = setInterval(() => void f.send(), 50);
-  try {
-    rstest
-      .spyOn(AutomaticCapture.prototype, 'run')
-      .mockImplementation(async function (this: AutomaticCapture) {
-        this.reference = pose(100, -50, 30);
-        for (const point of [
-          { x: 200, y: 400 },
-          { x: 220, y: 400 },
-          { x: 200, y: 480 },
-        ])
-          this.localPoints.push({
-            point,
-            positionMm: { x: point.x * 0.5, y: -point.y * 0.125, z: 30 },
-            purpose: 'direction',
-            readings: 1,
-            tipSpreadMm: 0,
-            touchSpreadPx: 0,
-          });
-        for (const { point, purpose } of explorationTargets(layout, false))
-          this.points.push({
-            point,
-            purpose,
-            positionMm: { x: point.x * 0.5, y: -point.y * 0.125, z: 30 },
-            readings: 1,
-            tipSpreadMm: 0,
-            touchSpreadPx: 0,
-          });
-      });
+it.each([1.01, 3])(
+  'parks after verified boundaries and routes a %s mm holdout through batch acceptance',
+  async (offsetMm) => {
+    const f = await setup();
+    const timer = setInterval(() => void f.send(), 50);
+    try {
+      rstest
+        .spyOn(AutomaticCapture.prototype, 'run')
+        .mockImplementation(async function (this: AutomaticCapture) {
+          this.reference = pose(100, -50, 30);
+          for (const point of [
+            { x: 200, y: 400 },
+            { x: 220, y: 400 },
+            { x: 200, y: 480 },
+          ])
+            this.localPoints.push({
+              point,
+              positionMm: { x: point.x * 0.5, y: -point.y * 0.125, z: 30 },
+              purpose: 'direction',
+              readings: 1,
+              tipSpreadMm: 0,
+              touchSpreadPx: 0,
+            });
+          for (const { point, purpose } of explorationTargets(layout, false))
+            this.points.push({
+              point,
+              purpose,
+              positionMm: {
+                x: point.x * 0.5 + (purpose === 'check' ? offsetMm : 0),
+                y: -point.y * 0.125,
+                z: 30,
+              },
+              readings: 1,
+              tipSpreadMm: 0,
+              touchSpreadPx: 0,
+            });
+        });
 
-    f.adapter.setPoseForTesting(pose(100, -50, 80));
-    await f.recordReference();
-    await f.service.command(f.state.id, 'position-boundary', true);
-    await rstest.waitFor(async () =>
-      expect((await f.adapter.getState()).dragMode).toBe(true),
-    );
-    f.adapter.setPoseForTesting(pose(100, 50, 80));
-    await f.service.command(f.state.id, 'record-boundary', true);
-    await f.service.command(f.state.id, 'save-teaching', true);
-    f.adapter.setPoseForTesting(pose(100, 50.000008, 75));
-    const move = rstest.spyOn(f.adapter, 'moveLinear');
-    await f.service.command(f.state.id, 'start-automatic', true);
-    await rstest.waitFor(
-      () => {
-        const state = f.service.status()!;
-        expect(state.error).toBeUndefined();
-        expect(state.stage).toBe('review');
-      },
-      { timeout: 30000 },
-    );
-    const state = f.service.status()!;
-    expect(move.mock.calls.slice(0, 3).map(([p]) => p)).toEqual([
-      pose(100, 50, 80),
-      pose(100, -50, 80),
-      pose(100, -50, 80),
-    ]);
-    for (const [, options] of move.mock.calls.slice(0, 3)) {
-      expect(options).toMatchObject({
-        speed: f.screen.actionSpeed,
-        acceleration: f.screen.actionAcceleration,
-      });
+      f.adapter.setPoseForTesting(pose(100, -50, 80));
+      await f.recordReference();
+      await f.service.command(f.state.id, 'position-boundary', true);
+      await rstest.waitFor(async () =>
+        expect((await f.adapter.getState()).dragMode).toBe(true),
+      );
+      f.adapter.setPoseForTesting(pose(100, 50, 80));
+      await f.service.command(f.state.id, 'record-boundary', true);
+      await f.service.command(f.state.id, 'save-teaching', true);
+      f.adapter.setPoseForTesting(pose(100, 50.000008, 75));
+      const move = rstest.spyOn(f.adapter, 'moveLinear');
+      await f.service.command(f.state.id, 'start-automatic', true);
+      if (offsetMm === 3) {
+        await rstest.waitFor(() =>
+          expect(f.service.status()?.stage).toBe('boundary-review'),
+        );
+        const parkedMoves = move.mock.calls.length;
+        const restored = await f
+          .forScreen('cam')
+          .restoreRecording(f.service.recording(), true);
+        expect(restored.stage).toBe('boundary-review');
+        expect(restored.explorationQuality?.holdoutMaxMm).toBeCloseTo(offsetMm);
+        expect(restored.explorationMode).toBe('standard');
+        expect(move).toHaveBeenCalledTimes(parkedMoves);
+        await f.service.command(f.state.id, 'verify-boundary', true);
+      }
+      await rstest.waitFor(
+        () => {
+          const state = f.service.status()!;
+          expect(state.error).toBeUndefined();
+          expect(state.stage).toBe('review');
+        },
+        { timeout: 30000 },
+      );
+      const state = f.service.status()!;
+      expect(move.mock.calls.slice(0, 3).map(([p]) => p)).toEqual([
+        pose(100, 50, 80),
+        pose(100, -50, 80),
+        pose(100, -50, 80),
+      ]);
+      for (const [, options] of move.mock.calls.slice(0, 3)) {
+        expect(options).toMatchObject({
+          speed: f.screen.actionSpeed,
+          acceleration: f.screen.actionAcceleration,
+        });
+      }
+      expect(state.calibration?.auto?.observationRecorded).toBe(true);
+      expect(state.safePosition!.positionMm.z).toBeGreaterThanOrEqual(80);
+      expect(state.result).toBeUndefined();
+      expect(state.explorationQuality?.holdoutMaxMm).toBeCloseTo(offsetMm);
+      const automatic = await f.service.acceptAutomatically();
+      expect(automatic.accepted).toBe(offsetMm === 1.01);
+      if (!automatic.accepted) {
+        expect(automatic.reasons).toContain(
+          'Holdout maximum 3.00% (target ≤1.5%)',
+        );
+        expect(f.service.status()?.stage).toBe('review');
+        await f.service.command(state.id, 'accept', true);
+      }
+      const saved = f.service.status()!;
+      expect(saved.stage).toBe('completed');
+      expect(saved.result?.verification?.protocol).toBe('auto-boundary-v1');
+      expect(saved.result?.verification?.auto?.validationMaxMm).toBeCloseTo(
+        offsetMm,
+      );
+      expect(saved.result?.verification?.auto?.humanAccepted).toBe(
+        !automatic.accepted,
+      );
+    } finally {
+      clearInterval(timer);
+      await f.dispose();
     }
-    expect(state.calibration?.auto?.observationRecorded).toBe(true);
-    expect(state.safePosition!.positionMm.z).toBeGreaterThanOrEqual(80);
-    expect(state.result).toBeUndefined();
-    const saved = await f.service.command(state.id, 'accept', true);
-    expect(saved.stage).toBe('completed');
-    expect(saved.result?.verification?.protocol).toBe('auto-boundary-v1');
-  } finally {
-    clearInterval(timer);
-    await f.dispose();
-  }
-}, 45000);
+  },
+  45000,
+);
 
 it('refuses a measured outline mismatch before collecting or moving', async () => {
   const f = await setup();
@@ -1145,7 +1441,7 @@ it.each(['disconnect', 'layout', 'stop'] as const)(
 
 it('interrupts active collection when a later outline check detects drift, before accepting any geometry', async () => {
   const f = await setup();
-  const stop = rstest.spyOn(f.runtime, 'stop');
+  const stop = rstest.spyOn(f.adapter, 'stop');
   let entered!: () => void;
   const collecting = new Promise<void>((done) => {
     entered = done;

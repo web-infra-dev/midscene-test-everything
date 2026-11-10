@@ -1,3 +1,7 @@
+import {
+  type WebCalibrationMapping,
+  mappingQualityWarnings,
+} from '@midscene/arm-kit-shared/assisted-contracts';
 import type { CameraCorrection } from '@midscene/arm-kit-shared/contracts';
 import { Alert, Button, Modal, Select, Space, Tag, Typography } from 'antd';
 import {
@@ -11,7 +15,8 @@ import { type ReactNode, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CameraCornerEditor } from '../../CameraCornerEditor';
 import { CorrectedPreview } from '../../CorrectedPreview';
-import { t, useCalibrationLanguage } from '../../i18n';
+import { calibrationErrorText, t, useCalibrationLanguage } from '../../i18n';
+import { CalibrationQualityWarnings } from './CalibrationQualityWarnings';
 
 /** One screen the camera observes; the sheet of glass a mapping belongs to. */
 export interface CameraMappingScreen {
@@ -48,6 +53,8 @@ export function CameraMappingStep({
   phoneConnected,
   phoneFullscreen = phoneConnected,
   mappingReady = true,
+  mapping,
+  mappingError,
   footer,
   busy,
   extra,
@@ -79,6 +86,8 @@ export function CameraMappingStep({
    */
   phoneFullscreen?: boolean;
   mappingReady?: boolean;
+  mapping?: WebCalibrationMapping;
+  mappingError?: string;
   footer: HTMLElement | null;
   busy?: boolean;
   /** A step-specific action, such as reopening the multi-screen review. */
@@ -116,7 +125,8 @@ export function CameraMappingStep({
   const mapped = Boolean(correction);
   const canConfirm =
     mapped && phoneConnected && phoneFullscreen && validity !== 'invalid';
-  const verified = canConfirm && mappingReady;
+  const verified = canConfirm && mappingReady && !mappingError;
+  const notice = error ?? mappingError;
   const apply = async (value: CameraCorrection) => {
     setError(undefined);
     await onApply(value);
@@ -314,7 +324,14 @@ export function CameraMappingStep({
           </div>
         </details>
       )}
-      {error && <Alert type="error" showIcon message={error} />}
+      {notice && (
+        <Alert type="error" showIcon message={calibrationErrorText(notice)} />
+      )}
+      {mapped && mapping && (
+        <CalibrationQualityWarnings
+          warnings={mappingQualityWarnings(mapping.accuracy, mapping.layout)}
+        />
+      )}
       <Space wrap>
         {extra}
         {verified ? (

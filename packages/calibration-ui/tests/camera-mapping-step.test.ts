@@ -1,6 +1,7 @@
 import { expect, it } from '@rstest/core';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { mergeSession } from '../src/components/MarkerCalibrationDialog';
 import { CameraMappingStep } from '../src/components/robot-arm/CameraMappingStep';
 
 const camera = { name: 'Bench camera', online: true };
@@ -21,6 +22,35 @@ const correction = {
 };
 const pendingCount = (html: string) =>
   (html.match(/data-done="false"/g) ?? []).length;
+
+it('merges a successful status snapshot without carrying forward a failed marker read', () => {
+  const target = { id: 'phone', name: 'Phone', state: 'succeeded' as const };
+  const next = {
+    id: 'session',
+    state: 'succeeded' as const,
+    streamId: 'cam',
+    createdAt: 0,
+    expiresAt: 1000,
+    targets: [target],
+  };
+  const previous = {
+    ...next,
+    token: 'session-token',
+    targets: [
+      {
+        ...target,
+        state: 'failed' as const,
+        token: 'page-token',
+        error: 'Missing markers',
+      },
+    ],
+  };
+  expect(mergeSession(previous, next)).toEqual({
+    ...next,
+    token: 'session-token',
+    targets: [{ ...target, token: 'page-token' }],
+  });
+});
 
 it('lists every camera-mapping requirement for the selected screen', () => {
   const html = renderToStaticMarkup(
@@ -74,6 +104,37 @@ it('marks the mapping confirmed once the page and the perspective are in place',
   // Detection stays the primary way to (re)build the preset.
   expect(html).toContain('识别屏幕标记');
   expect(html).toContain('校正透视');
+});
+
+it('shows a failed mapping check against an applied perspective until confirmation succeeds', () => {
+  const render = (mappingError?: string) =>
+    renderToStaticMarkup(
+      createElement(CameraMappingStep, {
+        camera,
+        screens,
+        screenId: 'screen-a',
+        base: '/calibration',
+        correction,
+        phoneConnected: true,
+        mappingReady: true,
+        mappingError,
+        footer: null,
+        onSelectScreen() {},
+        onPair() {},
+        onDetect() {},
+        onApply: async () => {},
+        onContinue() {},
+        refresh: async () => {},
+      }),
+    );
+  const failed = render(
+    'Keep at least five of the six calibration markers visible and in focus.',
+  );
+  expect(failed).toContain('至少有五个');
+  expect(failed).not.toContain('相机映射已确认');
+  const confirmed = render();
+  expect(confirmed).toContain('相机映射已确认');
+  expect(confirmed).not.toContain('至少有五个');
 });
 
 it('names every screen that already has a perspective applied', () => {

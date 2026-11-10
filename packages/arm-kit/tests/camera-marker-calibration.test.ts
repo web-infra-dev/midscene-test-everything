@@ -1,6 +1,9 @@
 import { expect, test } from '@rstest/core';
 import sharp from 'sharp';
-import { calibrationPageMarkers } from '../src/assisted-contracts.js';
+import {
+  calibrationPageMarkers,
+  mappingQualityWarnings,
+} from '../src/assisted-contracts.js';
 import {
   captureScreenMarkers,
   detectCalibrationMarkers,
@@ -9,6 +12,7 @@ import {
   recognizeScreenMarkers,
   screenBoundsProblem,
 } from '../src/camera/calibration-markers.js';
+import { applyHomography } from '../src/camera/vision-geometry.js';
 
 const layout = {
   revision: 1,
@@ -18,7 +22,11 @@ const layout = {
   markers: calibrationPageMarkers(400, 800),
 };
 
-async function photograph(shiftCheck = false, visible = layout.markers) {
+async function photograph(
+  shiftCheck = false,
+  visible = layout.markers,
+  offsetX = 0,
+) {
   const markers = visible
     .map((m) =>
       markerSvg(m.code).replace(
@@ -27,20 +35,63 @@ async function photograph(shiftCheck = false, visible = layout.markers) {
       ),
     )
     .join('');
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="580" height="800"><rect width="100%" height="100%" fill="#ccc"/><g transform="matrix(1,-.12,-.08,.84,95,70)"><rect width="400" height="800" fill="white"/>${markers}</g></svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="580" height="800"><rect width="100%" height="100%" fill="#ccc"/><g transform="matrix(1,-.12,-.08,.84,${95 + offsetX},70)"><rect width="400" height="800" fill="white"/>${markers}</g></svg>`;
   return sharp(Buffer.from(svg)).jpeg().toBuffer();
 }
 
-test('requires every fitting and independent check marker to be visible', async () => {
-  for (const code of [10, 14]) {
-    const visible = layout.markers.filter((marker) => marker.code !== code);
+test('scores fit and independent marker errors against viewport size with measurement slack', () => {
+  const fit = { count: 4, meanErrorCssPx: 3.01, maxErrorCssPx: 4.01 };
+  const validation = { ...fit, count: 2 };
+  const accuracy = { fit, validation, points: [] };
+  expect(mappingQualityWarnings(accuracy, layout)).toEqual([]);
+  validation.maxErrorCssPx = 6;
+  expect(mappingQualityWarnings(accuracy, layout)).toEqual([
+    { label: 'Check marker maximum error', percent: 1.5, targetPercent: 1 },
+  ]);
+  expect(
+    mappingQualityWarnings(accuracy, { width: 1600, height: 800 }),
+  ).toEqual([]);
+});
+
+test.each(layout.markers)(
+  'maps the page with marker $code occluded',
+  async (hidden) => {
+    const visible = layout.markers.filter((m) => m.code !== hidden.code);
     const frame = await photograph(false, visible);
-    await expect(
-      detectCalibrationMarkers(frame, layout.markers),
-    ).rejects.toThrow(
-      `Calibration marker ${code} could not be decoded uniquely (0 matches)`,
+    const { accuracy, webToImage } = await detectCalibrationMarkers(
+      frame,
+      layout.markers,
     );
-  }
+    expect(accuracy.points.map((p) => p.code)).toEqual(
+      visible.map((m) => m.code),
+    );
+    expect(accuracy.fit.count).toBe(hidden.purpose === 'fit' ? 3 : 4);
+    expect(accuracy.validation.count).toBe(hidden.purpose === 'check' ? 1 : 2);
+    for (const x of [0, layout.width]) {
+      for (const y of [0, layout.height]) {
+        const projected = applyHomography(webToImage, { x, y });
+        expect(
+          Math.hypot(
+            projected.x - (x - 0.08 * y + 95),
+            projected.y - (-0.12 * x + 0.84 * y + 70),
+          ),
+        ).toBeLessThan(4);
+      }
+    }
+  },
+);
+
+test('requires distributed marker coverage and reports a displaced remaining check marker', async () => {
+  const four = await photograph(false, layout.markers.slice(1, 5));
+  await expect(detectCalibrationMarkers(four, layout.markers)).rejects.toThrow(
+    'at least five',
+  );
+  const shifted = await photograph(true, layout.markers.slice(0, 5));
+  const { accuracy } = await detectCalibrationMarkers(shifted, layout.markers);
+  expect(mappingQualityWarnings(accuracy, layout).map((w) => w.label)).toEqual([
+    'Check marker mean error',
+    'Check marker maximum error',
+  ]);
 });
 
 test('uses the outer contour when a sharp front-facing marker decodes twice', async () => {
@@ -88,9 +139,13 @@ test('recovers dim markers and still checks the independent marker positions', a
   expect(accuracy.fit.count).toBe(4);
   expect(accuracy.validation.count).toBe(2);
   expect(accuracy.validation.maxErrorCssPx).toBeLessThanOrEqual(3);
-  await expect(
-    detectCalibrationMarkers(await dim(true), layout.markers),
-  ).rejects.toThrow('Independent check');
+  const shifted = await detectCalibrationMarkers(
+    await dim(true),
+    layout.markers,
+  );
+  expect(mappingQualityWarnings(shifted.accuracy, layout)).toContainEqual(
+    expect.objectContaining({ label: 'Check marker maximum error' }),
+  );
 });
 test('recovers the outer screen from a slanted six-marker phone over eight frames', async () => {
   const frame = await photograph();
@@ -263,6 +318,20 @@ test('returns the strongest complete frame after later frames lose a marker', as
       layout.markers,
     ),
   ).resolves.toBeDefined();
+}, 20000);
+
+test('uses a frame aligned with the median screen even if a displaced frame has more markers', async () => {
+  const displaced = await photograph(false, layout.markers, 15);
+  const stable = await photograph(false, layout.markers.slice(0, 5));
+  let index = 0;
+  const result = await recognizeScreenMarkers(
+    async () => (index++ === 0 ? displaced : stable),
+    layout,
+  );
+  expect(result.validFrames).toBe(8);
+  expect(result.jitterPx).toBeGreaterThan(10);
+  expect(result.jpeg).toBe(stable.toString('base64'));
+  expect(result.correction.points.topLeft.x).toBeCloseTo(95, -1);
 }, 20000);
 
 test('maps each of two simultaneously visible screens using its own marker IDs', async () => {

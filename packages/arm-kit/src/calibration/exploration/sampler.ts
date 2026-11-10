@@ -60,11 +60,6 @@ const STANDARD_MOTION_FACTOR = 0.1;
 const FAST_MOTION_FACTOR = 0.25;
 const STANDARD_PRESS_FACTOR = 0.25;
 const STEP_TIMEOUT_MS = 10000;
-export const MIN_COVERAGE = 0.6;
-/** Residual tolerances are physical and use both measured pixel-axis scales. */
-export const MAX_VALIDATION_MM = 1;
-export const MIN_PLANE_RMSE_MM = 0.5;
-export const MAX_GRID_RMS_MM = 0.75;
 interface TouchPoint {
   recovered?: boolean;
   pressedZ: number;

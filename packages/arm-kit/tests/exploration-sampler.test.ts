@@ -394,11 +394,19 @@ describe('first-time automatic exploration', () => {
             isFast,
           );
         if (mode === 'bad-validation') {
-          expect(fit).toThrow('Validation residual');
+          const result = fit();
+          expect(result.evidence.validationMaxPx).toBeCloseTo(20);
+          expect(result.warnings).toContainEqual(
+            expect.objectContaining({ label: 'Holdout maximum' }),
+          );
+          expect(result.candidate.acceptanceStatus).toBe('pending');
           return;
         }
         if (mode === 'fast-adaptive-tap' || mode === 'fast-tilt') {
-          expect(fit).toThrow('Insufficient plane inliers');
+          const result = fit();
+          expect(result.evidence.planeSource).toBe('assumed-horizontal');
+          expect(result.quality.inliers).toBeLessThan(result.quality.total);
+          expect(result.candidate.acceptanceStatus).toBe('pending');
           return;
         }
         const result = fit();

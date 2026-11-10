@@ -65,16 +65,19 @@ interface DisplayView {
   error?: string;
 }
 
-function mergeSession(
+export function mergeSession(
   current: SessionView | undefined,
   next: MarkerCalibrationSession,
 ): SessionView {
   return {
-    ...(current ?? {}),
+    token: current?.id === next.id ? current.token : undefined,
     ...next,
     targets: next.targets.map((target) => {
-      const previous = current?.targets.find((item) => item.id === target.id);
-      return { ...previous, ...target };
+      const previous =
+        current?.id === next.id
+          ? current.targets.find((item) => item.id === target.id)
+          : undefined;
+      return { token: previous?.token, ...target };
     }),
   };
 }

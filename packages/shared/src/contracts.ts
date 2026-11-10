@@ -573,6 +573,10 @@ export interface AutoCalibrationEvidence {
   validationRmsPx: number;
   validationMaxPx: number;
   validationMaxMm: number;
+  /** Held-out Z residual after applying local surface compensation. */
+  validationHeightMaxMm?: number;
+  /** Absolute cosine of the angle between the independently measured screen axes. */
+  axisSkewRatio?: number;
   coverage: number;
   surfaceMaxMm?: number;
   samples: {
@@ -850,6 +854,13 @@ export interface CurrentOperation {
   status: 'running' | 'completed' | 'cancelled' | 'stopped' | 'failed';
   error?: string;
 }
+export type RecoveryReason =
+  | 'socket-disconnect'
+  | 'manual-stop'
+  | 'emergency-stop'
+  | 'pause'
+  | 'fault'
+  | 'interruption';
 export interface RuntimeState {
   stopRevision: number;
   aiRun?: { requestId: string };
@@ -858,6 +869,7 @@ export interface RuntimeState {
   state: RobotState;
   operation?: CurrentOperation;
   recoveryRequired: boolean;
+  recoveryReason?: RecoveryReason;
   softwarePaused: boolean;
 }
 /** Controller initialization diagnostics; HTTP service availability is separate. */

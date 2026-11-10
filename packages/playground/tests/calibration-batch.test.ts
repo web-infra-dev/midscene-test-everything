@@ -196,6 +196,30 @@ it('rejects stale commands, retries only the failed screen and stops its current
   expect(f.batch.read()?.items[0].calibrationProfileId).toBe('saved-one');
   expect(f.stops).toContain('two');
 });
+
+it('continues boundary review on the same samples and screen before batch acceptance', async () => {
+  const f = await setup();
+  const service = f.entries.get('one').host.service;
+  service.command.mockImplementationOnce(async () => {
+    f.sessions.set('one', {
+      ...f.sessions.get('one')!,
+      stage: 'boundary-review',
+    });
+  });
+  await f.start('automatic');
+  await rstest.waitFor(() =>
+    expect(f.batch.read()?.items[0].status).toBe('awaiting-boundary-review'),
+  );
+  expect(service.acceptAutomatically).not.toHaveBeenCalled();
+  const id = f.sessions.get('one')!.id;
+  await f.batch.command(f.batch.read()!.revision, 'continue');
+  expect(service.command).toHaveBeenCalledWith(id, 'verify-boundary', true);
+  await rstest.waitFor(() =>
+    expect(f.batch.read()?.items[0].status).toBe('awaiting-acceptance'),
+  );
+  expect(f.starts).toEqual(['one']);
+  expect(f.batch.read()?.items[0].runIds).toEqual([id]);
+});
 it('requires the reviewed plan and operator confirmation before reserving the queue', async () => {
   const f = await setup();
   const plan = await f.batch.plan('cam');

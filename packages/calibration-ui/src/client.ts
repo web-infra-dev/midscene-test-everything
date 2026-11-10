@@ -15,6 +15,21 @@ export interface CalibrationClientOptions {
   attemptId?: string;
   fetch?: typeof globalThis.fetch;
 }
+export class CalibrationRequestError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string,
+  ) {
+    super(message);
+  }
+  get requiresCameraCheck() {
+    return (
+      this.code === 'MAPPING_REQUIRED' ||
+      this.code === 'VISION_BINDING_CHANGED' ||
+      this.code === 'CALIBRATION_MISMATCH'
+    );
+  }
+}
 export class CalibrationClient {
   private readonly baseUrl: string;
   constructor(private readonly options: CalibrationClientOptions) {
@@ -40,10 +55,11 @@ export class CalibrationClient {
     );
     const data = await response.json();
     if (!response.ok)
-      throw new Error(
+      throw new CalibrationRequestError(
         data.error?.message ??
           data.error ??
           `Calibration request failed (${response.status})`,
+        data.code,
       );
     return data as T;
   }

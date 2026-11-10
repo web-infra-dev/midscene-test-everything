@@ -50,6 +50,7 @@ export class ArmActionQueue {
 
   resume(): void {
     if (this.closed) throw new Error('Arm queue is closed');
+    if (!this.blocked) return;
     if (this.active) throw new Error('Current operation has not settled');
     this.blocked = false;
   }

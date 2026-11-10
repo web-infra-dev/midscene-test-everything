@@ -34,6 +34,7 @@ const itemLabels: Record<string, string> = {
   'awaiting-mapping': 'Waiting for page mapping',
   'awaiting-placement': 'Waiting for stylus placement',
   'awaiting-acceptance': 'Waiting for calibration acceptance',
+  'awaiting-boundary-review': 'Review calibration measurements',
   completed: 'Completed',
   failed: 'Failed',
   stopped: 'Stopped',
@@ -408,18 +409,22 @@ export const CalibrationBatchPanel = forwardRef<
             )}
             {batch.status === 'waiting' &&
               row &&
-              ['awaiting-mapping', 'awaiting-placement'].includes(
-                row.status,
-              ) && (
+              [
+                'awaiting-mapping',
+                'awaiting-placement',
+                'awaiting-boundary-review',
+              ].includes(row.status) && (
                 <Button
                   type="primary"
                   disabled={working}
                   onClick={() => command('continue')}
                 >
                   {t(
-                    row.status === 'awaiting-placement'
-                      ? 'Confirm Placement'
-                      : 'Continue this screen',
+                    row.status === 'awaiting-boundary-review'
+                      ? 'Continue to boundary verification'
+                      : row.status === 'awaiting-placement'
+                        ? 'Confirm Placement'
+                        : 'Continue this screen',
                   )}
                 </Button>
               )}
@@ -466,22 +471,23 @@ export const CalibrationBatchPanel = forwardRef<
                   </Button>
                 </>
               )}
-            {!isActive && batch.status !== 'completed' && (
-              <>
-                <Button
-                  disabled={working || disabled}
-                  onClick={() => command('retry')}
-                >
-                  {t('Retry This Screen')}
-                </Button>
-                <Button
-                  disabled={working || disabled}
-                  onClick={() => command('skip')}
-                >
-                  {t('Skip This Screen')}
-                </Button>
-              </>
-            )}
+            {(!isActive || row?.status === 'awaiting-boundary-review') &&
+              batch.status !== 'completed' && (
+                <>
+                  <Button
+                    disabled={working || disabled}
+                    onClick={() => command('retry')}
+                  >
+                    {t('Retry This Screen')}
+                  </Button>
+                  <Button
+                    disabled={working || disabled}
+                    onClick={() => command('skip')}
+                  >
+                    {t('Skip This Screen')}
+                  </Button>
+                </>
+              )}
           </Space>
         </div>
       )}

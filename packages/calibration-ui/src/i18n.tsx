@@ -57,12 +57,12 @@ export function calibrationErrorText(message: string): string {
       [missedPosition[1], missedPosition[2]],
     );
   const marker =
-    /^Calibration marker (\d+) could not be decoded uniquely \((\d+) matches\)\. Keep all calibration markers visible and in focus\.$/.exec(
+    /^Calibration marker (\d+) could not be decoded uniquely \((\d+) matches\)\.(?: Keep all calibration markers visible and in focus\.)?$/.exec(
       message,
     );
   if (!marker) return t(message);
   return t(
-    'Calibration marker {0} could not be decoded uniquely ({1} matches). Keep all calibration markers visible and in focus.',
+    'Calibration marker {0} could not be decoded uniquely ({1} matches).',
     [marker[1], marker[2]],
   );
 }

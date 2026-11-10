@@ -19,6 +19,61 @@ const phoneMap = (p: { x: number; y: number }) => {
   };
 };
 
+it.each([67, 40])(
+  'retains a 5.4 px / 1.01 mm holdout on a screen with a %i mm short edge',
+  async (shortSideMm) => {
+    const f = await fixture();
+    try {
+      const screen = { ...f.screen, pixelWidth: 1001, pixelHeight: 501 };
+      const { targets } = mappedExplorationTargets(
+        { width: 1000, height: 500 },
+        (p) => p,
+        { width: 1001, height: 501 },
+      );
+      const grid = targets.map(({ point, purpose }, i) => ({
+        contact: {
+          x: point.x * (1.01 / 5.4),
+          y: (-point.y * shortSideMm) / 500,
+          z: 30,
+        },
+        screen: { ...point, x: point.x + (purpose === 'check' ? 5.4 : 0) },
+        target: {
+          id: String(i),
+          css: point,
+          screen: point,
+          role:
+            purpose === 'check' ? ('validation' as const) : ('fit' as const),
+        },
+        pressedZ: 29.5,
+      }));
+      const result = fitExploration(
+        { grid, probes: [], screen, start: pose(100, -30, 80) },
+        f.tool,
+        f.runtime.capabilities,
+        {
+          id: 'relative-fit',
+          ...f.binding,
+          robotGeometryRevision: 1,
+          toolGeometryRevision: 1,
+          screenGeometryRevision: 1,
+        },
+        false,
+      );
+      expect(result.candidate.acceptanceStatus).toBe('pending');
+      expect(result.evidence.validationMaxPx).toBeCloseTo(5.4);
+      expect(result.evidence.validationMaxMm).toBeCloseTo(1.01);
+      expect(result.evidence.gridRmsMm).toBeCloseTo(0);
+      const warning = result.warnings.find(
+        (reading) => reading.label === 'Holdout maximum',
+      );
+      if (shortSideMm === 67) expect(warning).toBeUndefined();
+      else expect(warning?.percent).toBeCloseTo((100 * 1.01) / shortSideMm);
+    } finally {
+      await f.cleanup();
+    }
+  },
+);
+
 it.each([
   [false, 844],
   [true, 844],
@@ -92,20 +147,21 @@ it.each([
           },
           fast,
         );
+      const result = fit();
       if (height === 667) {
         expect(measuredCoverage).toBeLessThan(0.6);
-        expect(fit).toThrow(
-          `Touch coverage ${(measuredCoverage * 100).toFixed(0)}% is below 60%`,
+        expect(result.warnings).toContainEqual(
+          expect.objectContaining({ label: 'Touch coverage' }),
         );
       } else {
         if (height === 800) {
           expect(measuredCoverage).toBeGreaterThan(0.6);
           expect(measuredCoverage).toBeLessThan(0.62);
         }
-        const result = fit();
-        expect(result.coverage).toBeCloseTo(measuredCoverage, 10);
-        expect(result.candidate.acceptanceStatus).toBe('pending');
+        expect(result.warnings).toEqual([]);
       }
+      expect(result.coverage).toBeCloseTo(measuredCoverage, 10);
+      expect(result.candidate.acceptanceStatus).toBe('pending');
     } finally {
       await f.cleanup();
     }

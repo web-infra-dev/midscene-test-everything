@@ -602,7 +602,7 @@ export class CalibrationBatch {
             if (this.choice) throw new Error('Batch screen changed');
             if (!host.service.setup().mapping) await host.alignForBatch(signal);
             this.check(signal);
-            let session = await host.service.create();
+            let session = await host.service.create({ batch: true });
             const attemptId = session.id;
             const readAttempt = () => {
               const status = host.service.status();
@@ -668,7 +668,7 @@ export class CalibrationBatch {
               row.note = undefined;
             });
             await host.service.command(session.id, 'start-automatic', true);
-            const deadline = Date.now() + 15 * 60_000;
+            let deadline = Date.now() + 15 * 60_000;
             let checkedAcceptance = false;
             while (true) {
               this.check(signal);
@@ -696,10 +696,24 @@ export class CalibrationBatch {
                   409,
                 );
               if (
-                ['review', 'return-ready', 'positioning-safe'].includes(
-                  current.stage,
-                )
+                [
+                  'review',
+                  'boundary-review',
+                  'return-ready',
+                  'positioning-safe',
+                ].includes(current.stage)
               ) {
+                deadline = Date.now() + 15 * 60_000;
+                const phase =
+                  current.stage === 'review'
+                    ? 'awaiting-acceptance'
+                    : current.stage === 'boundary-review'
+                      ? 'awaiting-boundary-review'
+                      : 'awaiting-safe-position';
+                const status =
+                  current.stage === 'boundary-review'
+                    ? 'awaiting-boundary-review'
+                    : 'awaiting-acceptance';
                 if (
                   current.stage === 'review' &&
                   state.acceptance === 'automatic' &&
@@ -712,21 +726,12 @@ export class CalibrationBatch {
                     row.note = result.reasons.join(' · ');
                   });
                 }
-                if (
-                  row.status !== 'awaiting-acceptance' ||
-                  row.progress?.phase !==
-                    (current.stage === 'review'
-                      ? 'awaiting-acceptance'
-                      : 'awaiting-safe-position')
-                )
+                if (row.status !== status || row.progress?.phase !== phase)
                   await this.update(() => {
                     state.status = 'waiting';
-                    row.status = 'awaiting-acceptance';
+                    row.status = status;
                     row.progress = {
-                      phase:
-                        current.stage === 'review'
-                          ? 'awaiting-acceptance'
-                          : 'awaiting-safe-position',
+                      phase,
                       index: 1,
                       total: 1,
                     };
@@ -742,8 +747,13 @@ export class CalibrationBatch {
                   index: capture?.index ?? 0,
                   total: capture?.total ?? 1,
                 };
-                if (semanticJson(row.progress) !== semanticJson(progress))
+                if (
+                  row.status !== 'exploring' ||
+                  semanticJson(row.progress) !== semanticJson(progress)
+                )
                   await this.update(() => {
+                    state.status = 'running';
+                    row.status = 'exploring';
                     row.progress = progress;
                   });
                 if (Date.now() > deadline)
@@ -944,9 +954,14 @@ export class CalibrationBatch {
             );
           await host.service.command(session.id, 'accept', true);
         } else if (action === 'continue') {
-          if (row.status === 'awaiting-mapping')
+          if (
+            row.status === 'awaiting-boundary-review' &&
+            session?.stage === 'boundary-review'
+          ) {
+            await host.service.command(session.id, 'verify-boundary', true);
+          } else if (row.status === 'awaiting-mapping')
             await host.alignForBatch(this.abort!.signal);
-          else {
+          else if (row.status === 'awaiting-placement') {
             if ((await this.runtime.state()).state.dragMode)
               await this.runtime.exitDragMode();
             const selection = this.selection(this.state!.cameraId!);
@@ -959,7 +974,12 @@ export class CalibrationBatch {
                 409,
               );
             host.service.setBatchReference(current);
-          }
+          } else
+            throw new RobotArmError(
+              'INVALID_STAGE',
+              'The current batch step cannot be continued',
+              409,
+            );
         } else
           throw new RobotArmError('INVALID_ARGUMENT', 'Unknown batch command');
         await this.update(() => {});

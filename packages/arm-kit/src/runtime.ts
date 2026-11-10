@@ -344,11 +344,16 @@ export class RobotArmRuntime extends RobotKernel {
       return value;
     } catch (error) {
       if (this.operation?.requestId === operationId && this.leased) {
-        if (!signal.aborted)
-          await this.controlledStop().catch(() => {
-            this.recoveryRequired = true;
-          });
-        else await this.stopPromise;
+        if (!signal.aborted) {
+          const disconnected =
+            !calibrationSessionId &&
+            isRobotArmError(error) &&
+            error.code === 'DISCONNECTED';
+          if (disconnected) this.requireRecovery('socket-disconnect');
+          await this.controlledStop(
+            disconnected && !this.motionSubmitted,
+          ).catch(() => undefined);
+        } else await this.stopPromise;
         if (this.operation?.requestId === operationId)
           this.release(signal.aborted ? 'stopped' : 'failed', error);
       }
@@ -896,13 +901,17 @@ export class RobotArmRuntime extends RobotKernel {
     // controller, otherwise a dropped channel would demand recovery that itself
     // needs the channel to clear.
     const state = await this.adapter.getState(options.fresh === true);
-    if (state.faults.length) this.recoveryRequired = true;
+    if (state.status?.emergencyStop === 'active')
+      this.requireRecovery('emergency-stop');
+    else if (state.faults.length || state.status?.protectiveStop === 'active')
+      this.requireRecovery('fault');
     if (state.connected) this.connectionEstablished = true;
     this.recordPayloadEvidence();
     return {
       state,
       operation: this.operation ? { ...this.operation } : undefined,
       recoveryRequired: this.recoveryRequired,
+      recoveryReason: this.recoveryReason,
       softwarePaused: this.softwarePaused,
       stopRevision: this.stopGeneration,
       appliedPayload: this.adapter.appliedPayload(),
@@ -979,7 +988,11 @@ export class RobotArmRuntime extends RobotKernel {
   }
   async readiness() {
     const readiness = await this.adapter.readiness().catch((error) => {
-      this.recoveryRequired = true;
+      this.requireRecovery(
+        isRobotArmError(error) && error.code === 'DISCONNECTED'
+          ? 'socket-disconnect'
+          : 'interruption',
+      );
       throw error;
     });
     const runtime = await this.state();
@@ -1982,7 +1995,9 @@ export class RobotArmRuntime extends RobotKernel {
     await this.move(target, ctx, options.speed, options.acceleration);
     await this.stable(target, ctx);
   }
-  private async controlledStop(): Promise<void> {
+  private async controlledStop(
+    disconnectedBeforeMotion = false,
+  ): Promise<void> {
     try {
       // Send Stop immediately, then clear the queue again after a racing acceptance.
       const accepting = this.accepting;
@@ -2023,18 +2038,33 @@ export class RobotArmRuntime extends RobotKernel {
       this.screenSequence?.dispose();
       this.screenSequence = undefined;
     } catch (e) {
-      this.recoveryRequired = true;
+      if (
+        !(
+          disconnectedBeforeMotion &&
+          isRobotArmError(e) &&
+          e.code === 'DISCONNECTED'
+        )
+      )
+        this.recoveryRequired = true;
       throw e;
     }
   }
   async stop(): Promise<void> {
+    this.requireRecovery('manual-stop');
+    await this.stopCalibrationOperation();
+  }
+  /** Internal stop initiated by a calibration interlock, not an operator command. */
+  async stopCalibrationOperation(socketDisconnected = false): Promise<void> {
+    this.requireRecovery(
+      socketDisconnected ? 'socket-disconnect' : 'interruption',
+    );
     this.stopGeneration++;
     // A jog is not part of the motion queue, so Stop must release it explicitly.
     if (this.jogTimer) await this.stopJog().catch(() => undefined);
     const eventId = this.operation?.requestId ?? randomUUID();
     await this.audited(
       'control',
-      { control: 'stop' },
+      { control: 'stop', recoveryReason: this.recoveryReason },
       () => this.safetyControl('stop', () => this.finishStop()),
       eventId,
     );
@@ -2063,7 +2093,6 @@ export class RobotArmRuntime extends RobotKernel {
     return true;
   }
   private async finishStop(): Promise<void> {
-    if (this.leased || this.motionSubmitted) this.recoveryRequired = true;
     const pending = this.controlledStop();
     await pending;
     if (await this.interruptSession()) {
@@ -2116,6 +2145,7 @@ export class RobotArmRuntime extends RobotKernel {
    * fault; only an unconfirmable stop fails here.
    */
   async emergencyStop(): Promise<void> {
+    this.requireRecovery('emergency-stop');
     this.stopGeneration++;
     if (this.jogTimer) await this.stopJog().catch(() => undefined);
     const send = this.adapter.emergencyStop?.bind(this.adapter);
@@ -2151,6 +2181,7 @@ export class RobotArmRuntime extends RobotKernel {
    * running, and it leaves the runtime requiring an explicit recovery check.
    */
   async pause(): Promise<void> {
+    this.requireRecovery('pause');
     this.stopGeneration++;
     const send = this.adapter.pause?.bind(this.adapter);
     if (!send)
@@ -2259,6 +2290,70 @@ export class RobotArmRuntime extends RobotKernel {
       throw error;
     }
   }
+  /** Only the interrupted collection may release its socket-only gate. */
+  async recoverSamplingSocket(
+    operationId: string,
+    revision: number,
+    validateAttempt: () => void,
+  ) {
+    const guard = () => {
+      validateAttempt();
+      this.assertStopRevision(revision);
+      if (this.recoveryReason !== 'socket-disconnect')
+        throw new RobotArmError(
+          'RECOVERY_REQUIRED',
+          'Explicit recovery check is required',
+          409,
+        );
+      this.check();
+    };
+    if (this.current()?.requestId !== operationId)
+      throw new RobotArmError(
+        'STALE_CONTEXT',
+        'The interrupted collection no longer owns recovery',
+        409,
+      );
+    if (this.leased || this.stopInProgress)
+      throw new RobotArmError(
+        'BUSY',
+        'Wait for the interrupted collection to finish',
+        409,
+      );
+    await this.exclusive(
+      async () => {
+        guard();
+        try {
+          await checkRecovery(this.adapter, this.softwarePaused, guard);
+        } catch (error) {
+          const reasons = isRobotArmError(error) && error.details?.reasons;
+          if (Array.isArray(reasons)) {
+            if (reasons.includes('SIGNAL_EMERGENCYSTOP_ACTIVE'))
+              this.requireRecovery('emergency-stop');
+            else if (
+              reasons.includes('ROBOT_FAULT') ||
+              reasons.includes('SIGNAL_PROTECTIVESTOP_ACTIVE')
+            )
+              this.requireRecovery('fault');
+            else if (reasons.includes('ROBOT_PAUSED'))
+              this.requireRecovery('pause');
+            else this.requireRecovery('interruption');
+          }
+          throw error;
+        }
+        guard();
+        await this.profileStore.clearOperation(operationId);
+        guard();
+        this.recoveryRequired = false;
+      },
+      true,
+      { kind: 'control', requestId: operationId },
+    );
+    this.audit('control', operationId, 'completed', {
+      control: 'recover',
+      automatic: true,
+      recoveryReason: 'socket-disconnect',
+    });
+  }
   async recover(): Promise<void> {
     if (this.leased)
       throw new RobotArmError(
@@ -2269,6 +2364,7 @@ export class RobotArmRuntime extends RobotKernel {
     const before = this.adapter.payloadApplicationSnapshot();
     const detail: Record<string, unknown> = {
       control: 'recover',
+      recoveryReason: this.recoveryReason,
       payloadBefore: before,
     };
     await this.audited('control', detail, () =>

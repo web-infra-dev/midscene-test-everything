@@ -29,13 +29,11 @@ async function fixture({ screens = true }: { screens?: boolean } = {}) {
   const arm = new ArmController({ adapter, profileStore: store });
   await arm.connect();
   let image = Buffer.alloc(0);
+  const frame = () => ({ jpeg: image, id: Date.now(), capturedAt: Date.now() });
   const stream = {
+    currentFrame: () => (image.length ? frame() : undefined),
     getInfo: () => ({ state: 'running' }),
-    getFrame: async () => ({
-      jpeg: image,
-      id: Date.now(),
-      capturedAt: Date.now(),
-    }),
+    getFrame: async () => frame(),
     getOptions: () => ({ width: 1000, height: 900 }),
   };
   const root = new CameraSession(
@@ -226,6 +224,40 @@ it('binds each phone once, gives it distinct markers and applies all passing per
   expect(second.targetHost.service.setup().selection?.toolProfileId).toBe(
     first.targetHost.service.setup().selection?.toolProfileId,
   );
+  expect(f.adapter.movements).toHaveLength(0);
+});
+it('keeps markers visible on the screen whose perspective passed but page mapping failed', async () => {
+  const f = await fixture();
+  const first = await f.connect();
+  const second = await f.connect();
+  const command = { cameraId: 'cam', id: f.session.id, token: f.session.token };
+  await f.render();
+  await f.service.markerAction({ ...command, action: 'detect' });
+  await f.render(true);
+  const applied = await f.service.markerAction({ ...command, action: 'apply' });
+  expect(applied).toMatchObject({
+    mappingErrors: {
+      [second.targetId]:
+        'Keep at least five of the six calibration markers visible and in focus.',
+    },
+  });
+  expect(first.targetHost.service.phoneView().view).toBe('touch-preview');
+  expect(second.targetHost.service.phoneView().view).toBe('markers');
+  expect(second.targetHost.service.setup().mapping).toBeUndefined();
+  expect(
+    f.devices.entries.get(second.targetId)!.camera.getCorrection(),
+  ).toBeDefined();
+
+  await f.render();
+  second.targetHost.service.receivePhone({
+    ...second.targetHost.service.phoneObservation()!,
+    sequence: 2,
+    view: 'markers',
+    markersPainted: true,
+    markerRequest: undefined,
+  });
+  expect((await second.targetHost.service.mapSetup()).mapping).toBeDefined();
+  expect(second.targetHost.service.phoneView().view).toBe('touch-preview');
   expect(f.adapter.movements).toHaveLength(0);
 });
 it('preserves a passing screen and only retries the failed phone, retaining stable page bindings', async () => {

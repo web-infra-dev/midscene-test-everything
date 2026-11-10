@@ -1,3 +1,4 @@
+import { CALIBRATION_RELATIVE_SLACK } from './calibration-quality.js';
 import type { ImagePoint, ScreenQuad } from './camera/vision-types.js';
 export const MARKER_CALIBRATION_PROTOCOL = 'marker-v4' as const;
 export const MAX_MARKER_CALIBRATION_TARGETS = 9;
@@ -37,6 +38,44 @@ export interface MarkerCalibrationResult {
   reprojectionRmsePx: number;
   markerIds: number[];
   durationMs: number;
+}
+
+/** Corner quantisation sets a pixel floor; optical noise scales with capture resolution. */
+export function markerNoiseAllowancePx(width: number, height: number) {
+  return (
+    Math.max(2.5, Math.hypot(width, height) * 0.002) *
+    (1 + CALIBRATION_RELATIVE_SLACK)
+  );
+}
+
+export function markerCaptureRecommended(
+  result: Pick<
+    MarkerCalibrationResult,
+    | 'frameCount'
+    | 'validFrames'
+    | 'imageWidth'
+    | 'imageHeight'
+    | 'cornerJitterPx'
+    | 'reprojectionRmsePx'
+  >,
+) {
+  const allowance = markerNoiseAllowancePx(
+    result.imageWidth,
+    result.imageHeight,
+  );
+  return (
+    Number.isFinite(allowance) &&
+    result.imageWidth > 0 &&
+    result.imageHeight > 0 &&
+    Number.isInteger(result.frameCount) &&
+    result.frameCount > 0 &&
+    Number.isInteger(result.validFrames) &&
+    result.validFrames <= result.frameCount &&
+    result.validFrames / result.frameCount >= 0.5 &&
+    [result.cornerJitterPx, result.reprojectionRmsePx].every(
+      (px) => px >= 0 && px <= allowance,
+    )
+  );
 }
 
 export interface MarkerCalibrationSession {

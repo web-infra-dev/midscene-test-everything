@@ -1,11 +1,41 @@
 import { randomUUID } from 'node:crypto';
-import { type CurrentOperation, RobotArmError } from '../contracts.js';
+import {
+  type CurrentOperation,
+  type RecoveryReason,
+  RobotArmError,
+} from '../contracts.js';
 
 /** Shared lease for application services and SDK motion. Safety controls bypass it. */
 export class OperationCoordinator {
   protected operation?: CurrentOperation;
   protected leased = false;
-  protected recoveryRequired = false;
+  private requiredRecovery?: RecoveryReason;
+  get recoveryReason() {
+    return this.requiredRecovery;
+  }
+  protected get recoveryRequired() {
+    return this.recoveryReason !== undefined;
+  }
+  protected set recoveryRequired(value: boolean) {
+    if (!value) this.requiredRecovery = undefined;
+    else this.requireRecovery('interruption');
+  }
+  protected requireRecovery(reason: RecoveryReason) {
+    // A later transport error must never downgrade an operator or hardware stop.
+    const priority: Record<RecoveryReason, number> = {
+      'socket-disconnect': 0,
+      interruption: 1,
+      fault: 2,
+      pause: 3,
+      'manual-stop': 4,
+      'emergency-stop': 5,
+    };
+    if (
+      !this.recoveryReason ||
+      priority[reason] > priority[this.recoveryReason]
+    )
+      this.requiredRecovery = reason;
+  }
   protected abort?: AbortController;
   protected interrupt:
     | 'stop'

@@ -2,6 +2,16 @@ export const assistedCalibrationZh: Record<string, string> = {
   'Calibration positions': '标定位置',
   'Safe Parking Position': '安全避让位',
   '{0} · outside frame': '{0} · 画面外',
+  'Check camera mapping before starting calibration':
+    '开始标定前需要重新检查相机映射。',
+  'The robot was stopped manually. Confirm recovery before sampling.':
+    '机械臂已手动停止。恢复采样前，请确认恢复。',
+  'Emergency stop was triggered. Confirm recovery before sampling.':
+    '急停已触发。解除急停后，请确认恢复。',
+  'Resolve the controller fault and confirm recovery before sampling.':
+    '请处理控制器报警，再确认恢复。',
+  'Connection interrupted. Checking readiness before returning to sampling setup.':
+    '连接中断，重连并检查机械臂状态后将返回采样准备。',
   'Resume the robot to continue calibration.':
     '请在顶部恢复机械臂运行，再继续标定。',
   'Check controller recovery before collecting points.':
@@ -10,6 +20,7 @@ export const assistedCalibrationZh: Record<string, string> = {
     '采样前，请确认机械臂已使能并已应用工具负载。',
   'No measurement recorded for this step.': '本次标定未保存这一步的测量记录。',
   'Boundary verification': '边界验证',
+  'Continue to boundary verification': '继续边界验证',
   'Sampling and fitting are followed by automatic hover and contact boundary verification. Record the Safe Position afterwards, then review and save.':
     '采样拟合后自动执行悬停与接触边界验证，再记录安全位置、检查并保存。',
   'I confirm the screen is horizontal and secured, the setup is ready, and the workspace is clear for sampling and automatic boundary verification.':
@@ -305,6 +316,25 @@ export const assistedCalibrationZh: Record<string, string> = {
   'Review measured clicks': '检查点击测量结果',
   'Verifying clicks': '正在验证点击',
   'Mean Error': '平均误差',
+  'Review calibration measurements': '请复核以下标定测量值',
+  'Review targets allow {0}% relative measurement error.':
+    '以下建议值均有 {0}% 的相对容差。',
+  '{0} {1}% (target ≥{2}%)': '{0} {1}%（建议 ≥{2}%）',
+  '{0} {1}% (target ≤{2}%)': '{0} {1}%（建议 ≤{2}%）',
+  'Grid RMS {0} mm ({3}% of short edge) · Holdout maximum {1} mm ({4}%) · Coverage {2}%':
+    '网格均方根误差 {0} mm（屏幕短边的 {3}%） · 独立验证最大误差 {1} mm（{4}%） · 覆盖率 {2}%',
+  'Grid RMS': '网格均方根误差（占屏幕短边）',
+  'Holdout maximum': '独立验证最大误差（占屏幕短边）',
+  'Touch coverage': '触点覆盖率',
+  'Plane RMS': '平面均方根误差（占高度补偿范围）',
+  'Plane inliers': '平面拟合内点占比',
+  'Plane sample span': '平面采点跨度（占对应屏幕边长）',
+  'Holdout height error': '独立验证高度误差（占高度补偿范围）',
+  'Screen axis skew': '屏幕两轴投影偏斜率',
+  'Fit marker mean error': '拟合标记平均误差（占页面短边）',
+  'Fit marker maximum error': '拟合标记最大误差（占页面短边）',
+  'Check marker mean error': '验证标记平均误差（占页面短边）',
+  'Check marker maximum error': '验证标记最大误差（占页面短边）',
   'Maximum Error': '最大误差',
   Target: '目标',
   Error: '误差',

@@ -288,6 +288,7 @@ export interface AutoCalibrationGeometry {
   gridRmsMm: number;
   /** Largest absolute local height correction stored on the candidate. */
   surfaceMaxMm: number;
+  axisSkewRatio: number;
 }
 
 /**
@@ -335,15 +336,14 @@ function surfaceCompensation(
   };
 }
 
-/** Held-out contacts must satisfy both the absolute limit and the local fit. */
-export function validateSurfaceHeights(
+/** Measure independent Z error while enforcing the physical compensation range. */
+export function maxSurfaceResidualMm(
   candidate: Pick<
     CalibrationProfile,
     'plane' | 'inward' | 'surface' | 'origin' | 'xAxis' | 'yAxis'
   >,
   contacts: readonly Vector3[],
-  toleranceMm: number,
-): void {
+): number {
   const residuals = contacts.map((contact) => {
     const height =
       (dot(candidate.plane.normal, contact) - candidate.plane.offset) /
@@ -351,13 +351,7 @@ export function validateSurfaceHeights(
     assertSurfaceDeviationMm(height);
     return Math.abs(surfaceDepthMm(candidate, contact));
   });
-  const maxResidualMm = Math.max(...residuals);
-  if (maxResidualMm > toleranceMm)
-    throw new RobotArmError(
-      'CALIBRATION_QUALITY',
-      `Validation height residual ${maxResidualMm.toFixed(2)} mm exceeds the ${toleranceMm} mm validation tolerance`,
-      409,
-    );
+  return Math.max(...residuals);
 }
 
 export function autoCalibrationGeometry(input: {
@@ -442,14 +436,8 @@ export function autoCalibrationGeometry(input: {
     physicalWidthMm: distance(p2, origin),
     physicalHeightMm: distance(p3, origin),
   };
-  // Downstream screen actions use orthogonal metric axes. Reject a sheared
-  // mapping instead of accepting a low affine residual that it cannot execute.
-  if (Math.abs(dot(unit(uVector), unit(vVector))) > 0.03)
-    throw new RobotArmError(
-      'CALIBRATION_QUALITY',
-      'Measured screen axes are not perpendicular',
-      409,
-    );
+  // Score the orthogonal frame that screen actions actually execute.
+  const axisSkewRatio = Math.abs(dot(unit(uVector), unit(vVector)));
   frame.physicalWidthMm = measuredSize.physicalWidthMm;
   frame.physicalHeightMm = measuredSize.physicalHeightMm;
   const geometry = screenGeometry(
@@ -460,7 +448,7 @@ export function autoCalibrationGeometry(input: {
     input.tool,
     input.capabilities,
   );
-  if (dot(geometry.yAxis, unit(vVector)) < 0.99)
+  if (dot(geometry.yAxis, unit(vVector)) <= 0)
     throw new RobotArmError(
       'CALIBRATION_QUALITY',
       'Measured screen orientation is inconsistent with the contact plane',
@@ -523,5 +511,6 @@ export function autoCalibrationGeometry(input: {
     gridRmsPx,
     gridRmsMm,
     surfaceMaxMm,
+    axisSkewRatio,
   };
 }

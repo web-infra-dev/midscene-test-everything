@@ -4,9 +4,9 @@ import {
   autoCalibrationGeometry,
   fitAffine,
   invertAffine,
+  maxSurfaceResidualMm,
   screenFrame,
   screenResidualMm,
-  validateSurfaceHeights,
 } from '../src/calibration/exploration/geometry.js';
 import { surfaceDepthMm } from '../src/calibration/exploration/plane.js';
 import { screenContactMm } from '../src/calibration/geometry.js';
@@ -46,16 +46,12 @@ describe('automatic calibration geometry', () => {
       const contacts = (depthMm: number) => [
         { x: 50, y: -25, z: 30 - depthMm },
       ];
-      expect(() =>
-        validateSurfaceHeights(candidate, contacts(1.75), 1),
-      ).not.toThrow();
+      expect(maxSurfaceResidualMm(candidate, contacts(1.75))).toBeCloseTo(0);
       // A 0.75 mm local residual cannot excuse a measured 2.5 mm deviation.
-      expect(() => validateSurfaceHeights(candidate, contacts(2.5), 1)).toThrow(
+      expect(() => maxSurfaceResidualMm(candidate, contacts(2.5))).toThrow(
         '2 mm compensation limit',
       );
-      expect(() => validateSurfaceHeights(candidate, contacts(0.5), 1)).toThrow(
-        'Validation height residual 1.25 mm',
-      );
+      expect(maxSurfaceResidualMm(candidate, contacts(0.5))).toBeCloseTo(1.25);
     } finally {
       await f.cleanup();
     }
@@ -374,7 +370,7 @@ describe('automatic calibration geometry', () => {
       await f.cleanup();
     }
   });
-  it('uses three-dimensional edge lengths for an inclined screen and rejects shear', async () => {
+  it('uses three-dimensional edge lengths and measures skew in the executable frame', async () => {
     const f = await fixture();
     try {
       const angle = Math.PI / 6;
@@ -418,15 +414,15 @@ describe('automatic calibration geometry', () => {
       expect(result.measuredSize.physicalWidthMm).toBeCloseTo(200, 5);
       expect(result.measuredSize.physicalHeightMm).toBeCloseTo(100, 5);
       expect(result.candidate.xAxis.z).toBeCloseTo(0.5, 5);
-      expect(() =>
-        autoCalibrationGeometry({
-          ...input,
-          samples: samples.map((s) => ({
-            ...s,
-            robot: { ...s.robot, x: s.robot.x + s.screen.y * 0.1 },
-          })),
-        }),
-      ).toThrow('not perpendicular');
+      const sheared = autoCalibrationGeometry({
+        ...input,
+        samples: samples.map((s) => ({
+          ...s,
+          robot: { ...s.robot, x: s.robot.x + s.screen.y * 0.1 },
+        })),
+      });
+      expect(sheared.axisSkewRatio).toBeGreaterThan(0.03);
+      expect(sheared.gridRmsMm).toBeGreaterThan(1);
     } finally {
       await f.cleanup();
     }

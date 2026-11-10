@@ -5,6 +5,7 @@ import type {
   WorkstationScreenState,
 } from '@midscene/arm-kit-shared/assisted-contracts';
 import type { CameraCorrection } from '@midscene/arm-kit-shared/contracts';
+import { markerCaptureRecommended } from '@midscene/arm-kit-shared/marker-contracts';
 import type {
   DetectionFrame,
   MarkerCalibrationCreateResult,
@@ -48,6 +49,7 @@ import {
   CalibrationBatchPanel,
   type CalibrationBatchPanelHandle,
 } from './components/robot-arm/CalibrationBatchPanel';
+import { ExplorationQualitySummary } from './components/robot-arm/CalibrationQualityWarnings';
 import { CameraMappingStep } from './components/robot-arm/CameraMappingStep';
 import { ExplorationProgress } from './components/robot-arm/ExplorationProgress';
 import { InstallationTeaching } from './components/robot-arm/InstallationTeaching';
@@ -59,7 +61,12 @@ import { WebCalibrationWorkspace } from './components/robot-arm/WebCalibrationWo
 import { useAssistedCalibration } from './hooks/useAssistedCalibration';
 import { useCameraPhoneReadiness } from './hooks/useCameraPhoneReadiness';
 import { usePerspectiveValidity } from './hooks/usePerspectiveValidity';
-import { CalibrationLanguageProvider, t, useLanguage } from './i18n';
+import {
+  CalibrationLanguageProvider,
+  calibrationErrorText,
+  t,
+  useLanguage,
+} from './i18n';
 import {
   RobotVisionApiError,
   RobotVisionClient,
@@ -143,6 +150,8 @@ function GuidedContent({
   const [screens, setScreens] = useState<BoundScreen[]>([]);
   const [states, setStates] = useState<WorkstationScreenState[]>([]);
   const [error, setError] = useState<string>();
+  const [mappingError, setMappingError] = useState<string>();
+  const [singleFailure, setSingleFailure] = useState<SingleStatus>();
   const [loadError, setLoadError] = useState<string>();
   const [closing, setClosing] = useState(false);
   const [illustrationContainer, setIllustrationContainer] =
@@ -273,10 +282,13 @@ function GuidedContent({
     setMarkerOpen(false);
     setPerspectiveEditor(false);
     setApplying(false);
+    setSingleFailure(undefined);
+    setMappingError(undefined);
     setError(undefined);
   }, []);
   const currentStep = useRef(step);
   currentStep.current = step;
+  const reportedSingleFailure = useRef<string>();
   const refreshSequence = useRef(0);
   const currentBase = useRef(base);
   currentBase.current = base;
@@ -362,7 +374,12 @@ function GuidedContent({
       if (busy || inBatch) setStep(3);
       else if (next.mappingReady === false)
         setStep((current) => (current === 3 ? 1 : current));
-      if (singleStatus.phase === 'error') setError(singleStatus.error);
+      setSingleFailure(
+        singleStatus.phase === 'error' &&
+          singleStatus.attemptId !== reportedSingleFailure.current
+          ? singleStatus
+          : undefined,
+      );
     },
     [base, batchClient, cameraId, initialStep, selectedId],
   );
@@ -403,9 +420,12 @@ function GuidedContent({
       if (saved.output) {
         try {
           await client.mapAssistedCalibration(saved.output);
+          if (currentBase.current === base) setMappingError(undefined);
         } catch (cause) {
           if (currentBase.current === base)
-            setError(cause instanceof Error ? cause.message : String(cause));
+            setMappingError(
+              cause instanceof Error ? cause.message : String(cause),
+            );
         }
       }
       await refresh();
@@ -430,6 +450,7 @@ function GuidedContent({
       );
     // Keep the correction cleared until the operator starts a new pass.
     autoDetectStarted.current = selectedId;
+    setMappingError(undefined);
     await refresh();
   }, [base, refresh, selectedId]);
   useEffect(() => {
@@ -594,6 +615,21 @@ function GuidedContent({
       await refresh();
     }
   };
+  const checkCameraBeforeCalibration = async () => {
+    if (cancellingSingle.current) return;
+    try {
+      await cancelSingle();
+      if (currentBase.current !== base) return;
+      setError(undefined);
+      setRetryId(undefined);
+      setPerspectiveEditor(false);
+      setStep(1);
+      setMarkerOpen(true);
+    } catch (cause) {
+      if (currentBase.current === base)
+        setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
   const close = async () => {
     setClosing(true);
     try {
@@ -639,9 +675,7 @@ function GuidedContent({
             target.state === 'succeeded' &&
             target.result !== undefined &&
             target.display?.fullscreen === true &&
-            target.result.validFrames >= 4 &&
-            target.result.cornerJitterPx <= 4 &&
-            target.result.reprojectionRmsePx <= 4,
+            markerCaptureRecommended(target.result),
         );
       if (!confident) {
         setReview({ ...result, token });
@@ -655,9 +689,10 @@ function GuidedContent({
           token,
         );
         if (currentBase.current !== base) return;
-        const failures = Object.values(result.mappingErrors);
-        if (failures.length) setError(failures.join('\n'));
-        else void message.success(t('Camera mapping applied automatically'));
+        const failure = result.mappingErrors[selectedId];
+        setMappingError(failure);
+        if (!failure)
+          void message.success(t('Camera mapping applied automatically'));
         await refresh();
         if (currentBase.current !== base) return;
         setReview(undefined);
@@ -667,7 +702,7 @@ function GuidedContent({
         if (currentBase.current !== base) return;
         setReview({ ...result, token });
         setReviewOpen(true);
-        setError(cause instanceof Error ? cause.message : String(cause));
+        setMappingError(cause instanceof Error ? cause.message : String(cause));
       } finally {
         if (currentBase.current === base) setApplying(false);
       }
@@ -685,7 +720,13 @@ function GuidedContent({
    */
   const autoDetectStarted = useRef<string>();
   useEffect(() => {
-    if (step !== 1 || markerOpen || !config || config.correction) return;
+    if (step !== 1 || !config) return;
+    if (markerOpen) {
+      autoDetectStarted.current = selectedId;
+      return;
+    }
+    if (config.correction && config.mappingReady !== false && !outlineBlocked)
+      return;
     // Markers are only reported from a fullscreen page; opening the dialog
     // earlier would detect against a viewport the camera cannot trust.
     if (!phoneConnected || !phoneFullscreen) return;
@@ -696,6 +737,8 @@ function GuidedContent({
     step,
     markerOpen,
     config?.correction,
+    config?.mappingReady,
+    outlineBlocked,
     phoneConnected,
     phoneFullscreen,
     selectedId,
@@ -754,6 +797,18 @@ function GuidedContent({
     startSingle,
     base,
   ]);
+  const recoveryMessages = {
+    'manual-stop':
+      'The robot was stopped manually. Confirm recovery before sampling.',
+    'emergency-stop':
+      'Emergency stop was triggered. Confirm recovery before sampling.',
+    'socket-disconnect': controller.session?.awaitingSocketRecovery
+      ? 'Connection interrupted. Checking readiness before returning to sampling setup.'
+      : 'Check controller recovery before collecting points.',
+    fault: 'Resolve the controller fault and confirm recovery before sampling.',
+    pause: 'Resume the robot to continue calibration.',
+    interruption: 'Check controller recovery before collecting points.',
+  };
   const powerControl = config && !config.ready && (
     <CalibrationPowerButton
       key={base}
@@ -832,6 +887,18 @@ function GuidedContent({
                     }
               }
             />
+            {step === 3 && singleFailure?.error && (
+              <Alert
+                type="error"
+                showIcon
+                message={calibrationErrorText(singleFailure.error)}
+                closable
+                onClose={() => {
+                  reportedSingleFailure.current = singleFailure.attemptId;
+                  setSingleFailure(undefined);
+                }}
+              />
+            )}
             {error && (
               <Alert
                 type="error"
@@ -913,6 +980,8 @@ function GuidedContent({
                       phoneConnected={phoneConnected}
                       phoneFullscreen={phoneFullscreen}
                       mappingReady={Boolean(controller.setup.mapping)}
+                      mapping={controller.setup.mapping}
+                      mappingError={mappingError}
                       footer={footer}
                       busy={controller.busy}
                       extra={
@@ -1028,7 +1097,19 @@ function GuidedContent({
                       }}
                       onApply={applyCorrection}
                       onConfirm={async () => {
-                        await controller.map(config.output);
+                        try {
+                          await controller.map(config.output);
+                        } catch (cause) {
+                          if (currentBase.current === base)
+                            setMappingError(
+                              cause instanceof Error
+                                ? cause.message
+                                : String(cause),
+                            );
+                          return;
+                        }
+                        if (currentBase.current === base)
+                          setMappingError(undefined);
                         await refresh();
                       }}
                       onClear={config.correction ? clearCorrection : undefined}
@@ -1092,7 +1173,10 @@ function GuidedContent({
                             config.armState?.state.paused
                             ? 'Resume the robot to continue calibration.'
                             : config.armState?.recoveryRequired
-                              ? 'Check controller recovery before collecting points.'
+                              ? recoveryMessages[
+                                  config.armState.recoveryReason ??
+                                    'interruption'
+                                ]
                               : 'Prepare the robot and tool payload before collecting points.',
                         )}
                         action={
@@ -1154,16 +1238,8 @@ function GuidedContent({
                         footer={footer}
                         result={controller.session?.result}
                         onConnectPhone={() => setPhonesOpen(true)}
-                        onCheckCamera={() => {
-                          void cancelSingle()
-                            .then(() => {
-                              if (currentBase.current === base) {
-                                setMarkerOpen(false);
-                                setStep(1);
-                              }
-                            })
-                            .catch((cause) => setError(String(cause)));
-                        }}
+                        onCheckCamera={checkCameraBeforeCalibration}
+                        cameraCheckRequired={outlineBlocked}
                         prepareFromTeaching={lease?.phase === 'running'}
                         readyToCapture={config.ready && !outlineBlocked}
                         readyToStart={config.ready && !outlineBlocked}
@@ -1189,14 +1265,15 @@ function GuidedContent({
                         <Button
                           type="primary"
                           loading={singleQueued}
-                          disabled={
-                            !config.ready || outlineBlocked || singleQueued
-                          }
-                          onClick={() =>
-                            void startSingle().catch((cause) =>
-                              setError(String(cause)),
-                            )
-                          }
+                          disabled={!config.ready || singleQueued}
+                          onClick={() => {
+                            if (outlineBlocked || !controller.setup.mapping)
+                              void checkCameraBeforeCalibration();
+                            else
+                              void startSingle().catch((cause) =>
+                                setError(String(cause)),
+                              );
+                          }}
                         >
                           {t('Calibrate {0}', [selected?.name ?? selectedId])}
                         </Button>
@@ -1374,8 +1451,7 @@ function GuidedContent({
             .then(async (result) => {
               await refresh();
               if (currentBase.current !== base) return;
-              const failures = Object.values(result.mappingErrors);
-              if (failures.length) setError(failures.join('\n'));
+              setMappingError(result.mappingErrors[selectedId]);
               setReview(undefined);
               setReviewOpen(false);
               setMarkerOpen(false);
@@ -1462,15 +1538,7 @@ function ActiveBatchScreen({
     <div className="guided-batch-progress">
       <div>
         {session && <ExplorationProgress session={session} />}
-        {session?.explorationQuality && (
-          <Typography.Paragraph>
-            {t('Grid RMS {0} mm · Holdout maximum {1} mm · Coverage {2}%', [
-              session.explorationQuality.gridRmsMm.toFixed(2),
-              session.explorationQuality.holdoutMaxMm.toFixed(2),
-              Math.round(session.explorationQuality.coverage * 100),
-            ])}
-          </Typography.Paragraph>
-        )}
+        <ExplorationQualitySummary quality={session?.explorationQuality} />
         {session &&
           ['return-ready', 'positioning-safe'].includes(session.stage) && (
             <Typography.Paragraph>

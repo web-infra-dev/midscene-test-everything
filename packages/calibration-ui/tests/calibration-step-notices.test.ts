@@ -1,6 +1,7 @@
 import { expect, it } from '@rstest/core';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { CalibrationClient, CalibrationRequestError } from '../src/client';
 import { PhonePairStep } from '../src/components/robot-arm/PhonePairStep';
 import { WebCalibrationWorkspace } from '../src/components/robot-arm/WebCalibrationWorkspace';
 import { WebCameraMappingStep } from '../src/components/robot-arm/WebCameraMappingStep';
@@ -109,6 +110,38 @@ it('offers automatic collection before recording the safe position', () => {
   expect(html).not.toContain('15 点');
 });
 
+it('shows the percent, raw holdout and continuation action for a reviewable fit', () => {
+  const value = controller();
+  value.session = {
+    id: 'review-fit',
+    stage: 'boundary-review',
+    phoneConnected: true,
+    points: [],
+    verification: [],
+    samples: 9,
+    anchors: [],
+    explorationQuality: {
+      gridRmsMm: 0.2,
+      holdoutMaxMm: 3,
+      shortSideMm: 100,
+      coverage: 0.64,
+      warnings: [{ label: 'Holdout maximum', percent: 3, targetPercent: 1.5 }],
+    },
+  };
+  const html = renderToStaticMarkup(
+    createElement(WebCalibrationWorkspace, {
+      controller: value,
+      footer: null,
+      onActivated: async () => {},
+    }),
+  );
+  expect(html).toContain('3.00 mm');
+  expect(html).toContain('3.00%');
+  expect(html).toContain('建议 ≤1.5%');
+  expect(html).toContain('10% 的相对容差');
+  expect(html).toContain('继续边界验证');
+});
+
 it.each([true, false])(
   'uses the reference step only if the selected screen needs a reference (has reference: %s)',
   (hasReference) => {
@@ -196,6 +229,45 @@ it('offers phone and mapping recovery when a restarted host has no assisted sess
   expect(html).toContain('连接手机');
   expect(html).toContain('检查相机映射');
 });
+
+it('keeps Start available when the camera check is the next action', () => {
+  const value = controller(true);
+  const render = (onCheckCamera?: () => void) =>
+    renderToStaticMarkup(
+      createElement(WebCalibrationWorkspace, {
+        controller: value,
+        footer: null,
+        onActivated: async () => {},
+        onCheckCamera,
+      }),
+    );
+  const startButton = /(<button[^>]*>)[^<]*<span>开始自动标定/;
+  expect(render(() => {}).match(startButton)?.[1]).toBeDefined();
+  expect(render(() => {}).match(startButton)?.[1]).not.toContain('disabled');
+  expect(render().match(startButton)?.[1]).toContain('disabled');
+});
+
+it.each([
+  ['MAPPING_REQUIRED', true],
+  ['VISION_BINDING_CHANGED', true],
+  ['CALIBRATION_MISMATCH', true],
+  ['PHONE_UNAVAILABLE', false],
+  ['BUSY', false],
+] as const)(
+  'uses the backend code %s to route calibration setup failures',
+  async (code, requiresCameraCheck) => {
+    const client = new CalibrationClient({
+      baseUrl: '/test',
+      fetch: async () =>
+        Response.json({ error: 'setup check failed', code }, { status: 409 }),
+    });
+    const error = await client
+      .createAssistedCalibration()
+      .catch((error) => error);
+    expect(error).toBeInstanceOf(CalibrationRequestError);
+    expect(error).toMatchObject({ code, requiresCameraCheck });
+  },
+);
 
 it.each(['slide', 'standard', 'fast'] as const)(
   'offers a confirmed regular retry only after sliding collection fails (%s)',

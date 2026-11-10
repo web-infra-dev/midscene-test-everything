@@ -1,4 +1,5 @@
 import sharp from 'sharp';
+import { CALIBRATION_RELATIVE_SLACK } from '../assisted-contracts.js';
 import { RobotVisionError } from './errors.js';
 import { destinationCorners } from './perspective-transformer.js';
 import {
@@ -56,7 +57,6 @@ export const VALIDITY_MISMATCH_MIN_DRIFT_RATIO = 0.01;
  * longer covers the display area, even when every edge still finds a gradient.
  */
 export const VALIDITY_MISMATCH_MIN_ROTATION_DEG = 0.5;
-export const VALIDITY_MAX_FIT_RESIDUAL_PX = 2.5;
 export const VALIDITY_MIN_CORRESPONDENCES = 24;
 export const VALIDITY_TEXTURE_INSIDE_MIN = 5;
 export const VALIDITY_TEXTURE_RATIO_MIN = 2.5;
@@ -448,6 +448,7 @@ function fitSimilarity(
   samples: readonly EdgeSample[],
   quad: ScreenQuad,
   screenWidth: number,
+  residualAllowancePx: number,
 ): SimilarityFit | undefined {
   if (samples.length < VALIDITY_MIN_CORRESPONDENCES) return undefined;
   const fit = (subset: readonly EdgeSample[]): SimilarityFit => {
@@ -504,7 +505,7 @@ function fitSimilarity(
       row[1]! * first.ty +
       row[2]! * first.scale +
       row[3]! * first.rotation;
-    return Math.abs(predicted - offset) <= VALIDITY_MAX_FIT_RESIDUAL_PX;
+    return Math.abs(predicted - offset) <= residualAllowancePx;
   });
   return kept.length >= VALIDITY_MIN_CORRESPONDENCES ? fit(kept) : first;
 }
@@ -704,6 +705,10 @@ export async function checkPerspectiveValidity(
 ): Promise<PerspectiveValidityResult> {
   const { image, quad } = prepared ?? (await decodeWorkingFrame(input));
   const { edges, screenWidth } = measureEdges(image, quad);
+  // Edge offsets are measured on the working frame, with a subpixel-fitting noise floor.
+  const residualAllowancePx =
+    Math.max(2.5, screenWidth * VALIDITY_ALIGN_TOLERANCE_RATIO) *
+    (1 + CALIBRATION_RELATIVE_SLACK);
   const texture = measureTexture(image, quad, screenWidth);
   const { band, bandsBySide } = await measureBand(image, quad);
   const usable = edges.flatMap((edge) => edge.usable);
@@ -713,7 +718,7 @@ export async function checkPerspectiveValidity(
   const noEdge = edges.filter((edge) => edge.report.class === 'no-edge');
   const fit =
     usable.length >= VALIDITY_MIN_CORRESPONDENCES && observedEdges >= 3
-      ? fitSimilarity(usable, quad, screenWidth)
+      ? fitSimilarity(usable, quad, screenWidth, residualAllowancePx)
       : undefined;
   const foreignSides = edges
     .filter(
@@ -773,7 +778,7 @@ export async function checkPerspectiveValidity(
     Math.abs(fit!.scale) <= VALIDITY_ALIGN_MAX_SCALE &&
     Math.abs((fit!.rotation * 180) / Math.PI) <=
       VALIDITY_ALIGN_MAX_ROTATION_DEG &&
-    fit!.residual <= VALIDITY_MAX_FIT_RESIDUAL_PX;
+    fit!.residual <= residualAllowancePx;
   /*
    * A band is a strip inside the saved outline whose level differs from the
    * screen interior. It is what a bezel looks like when the outline is too
@@ -807,9 +812,7 @@ export async function checkPerspectiveValidity(
     };
 
   const coherentFit =
-    Boolean(fit) &&
-    observedEdges >= 3 &&
-    fit!.residual <= VALIDITY_MAX_FIT_RESIDUAL_PX;
+    Boolean(fit) && observedEdges >= 3 && fit!.residual <= residualAllowancePx;
   const rotationDeg = fit ? Math.abs((fit.rotation * 180) / Math.PI) : 0;
   // A pure translation only moves the two edges parallel to it; requiring
   // three would miss the most common failure entirely.
