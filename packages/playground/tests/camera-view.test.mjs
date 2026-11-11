@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import { test } from '@rstest/core';
 import {
   clearStandaloneCorrection,
+  registerClientPreview,
   saveStandaloneCorrection,
   streamCameraPreview,
   streamStandalonePreview,
@@ -15,8 +16,9 @@ function fixture() {
     destroyed: false,
     writableEnded: false,
     writable: true,
-    writeHead() {
+    writeHead(_status, headers) {
       this.headersSent = true;
+      this.headers = headers;
     },
     write(data) {
       this.frames.push(data.toString());
@@ -34,6 +36,7 @@ function fixture() {
   let calls = 0;
   const entry = {
     camera: {
+      camera: { id: 'camera', name: 'Camera', backend: 'avfoundation' },
       stream,
       getRectifiedPreviewTarget: () => ({
         width: 400,
@@ -53,6 +56,7 @@ const tick = () => new Promise((resolve) => setImmediate(resolve));
 test('raw preview keeps camera pixels and respects response backpressure', async () => {
   const f = fixture();
   await streamCameraPreview(f.res, f.entry);
+  assert.equal(f.res.headers.Connection, 'close');
   f.res.writable = false;
   f.stream.emit('frame', { jpeg: Buffer.from('raw') });
   f.stream.emit('frame', { jpeg: Buffer.from('dropped') });
@@ -408,4 +412,102 @@ test('standalone corrected preview acquires the selected screen', async () => {
   f.res.destroy();
   await pending;
   assert.equal(owners.size, 0);
+});
+
+test('a new preview from the same tab retires its previous multipart response', async () => {
+  const first = fixture();
+  const second = fixture();
+  const cameras = {
+    async acquire() {
+      return first.entry.camera;
+    },
+    async release() {},
+  };
+  const pendingFirst = streamStandalonePreview(
+    first.res,
+    cameras,
+    'camera',
+    'raw',
+    undefined,
+    'tab-one',
+  );
+  await tick();
+  const pendingSecond = streamStandalonePreview(
+    second.res,
+    cameras,
+    'camera',
+    'raw',
+    undefined,
+    'tab-one',
+  );
+  await tick();
+  assert.equal(first.res.destroyed, true);
+  assert.equal(first.res.writableEnded, true);
+  assert.equal(second.res.destroyed, false);
+  second.res.destroy();
+  await Promise.all([pendingFirst, pendingSecond]);
+});
+
+test('different tabs keep their own connected preview', async () => {
+  const first = fixture();
+  const second = fixture();
+  await streamCameraPreview(first.res, first.entry, false, 'tab-a');
+  await streamCameraPreview(second.res, second.entry, false, 'tab-b');
+  assert.equal(first.res.destroyed, false);
+  assert.equal(second.res.destroyed, false);
+  first.res.destroy();
+  second.res.destroy();
+});
+
+test('a connected raw/corrected swap retires the same tab response', async () => {
+  const raw = fixture();
+  const corrected = fixture();
+  await streamCameraPreview(raw.res, raw.entry, false, 'tab-swap');
+  await streamCameraPreview(corrected.res, corrected.entry, true, 'tab-swap');
+  assert.equal(raw.res.destroyed, true);
+  assert.equal(corrected.res.destroyed, false);
+  corrected.res.destroy();
+});
+
+test('simultaneous preview slots in one tab stay alive', async () => {
+  const stage = fixture();
+  const marker = fixture();
+  await streamCameraPreview(
+    stage.res,
+    stage.entry,
+    false,
+    'tab-slots',
+    'stage',
+  );
+  await streamCameraPreview(
+    marker.res,
+    marker.entry,
+    false,
+    'tab-slots',
+    'marker',
+  );
+  assert.equal(stage.res.destroyed, false);
+  assert.equal(marker.res.destroyed, false);
+  stage.res.destroy();
+  marker.res.destroy();
+});
+
+test('global preview registry caps one tab at two streams', () => {
+  const first = fixture();
+  const second = fixture();
+  const third = fixture();
+  registerClientPreview('tab-cap', 'first', first.res);
+  registerClientPreview('tab-cap', 'second', second.res);
+  assert.equal(first.res.destroyed, false);
+  registerClientPreview('tab-cap', 'third', third.res);
+  assert.equal(first.res.destroyed, true);
+  assert.equal(first.res.writableEnded, true);
+  assert.equal(second.res.destroyed, false);
+  assert.equal(third.res.destroyed, false);
+  const other = fixture();
+  registerClientPreview('tab-other', 'first', other.res);
+  assert.equal(other.res.destroyed, false);
+  second.res.destroy();
+  third.res.destroy();
+  other.res.destroy();
 });

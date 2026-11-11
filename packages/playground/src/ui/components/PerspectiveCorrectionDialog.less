@@ -68,14 +68,11 @@
   }
   .range-output {
     display: grid;
+    /* A definite track makes the canvas max-height resolve, not just max-width. */
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);
     place-items: start center;
     overflow: auto;
     overscroll-behavior: contain;
-  }
-  .corrected-preview-canvas {
-    display: block;
-    max-width: 100%;
-    height: auto;
   }
   .camera-corner-editor {
     display: grid;

@@ -14,6 +14,7 @@
     "format:ci": "pretty-quick --since HEAD~1",
     "projects": "nx show projects",
     "dev": "pnpm --filter @midscene/arm-kit-playground-mg400 dev",
+    "dev:mock": "pnpm --filter @midscene/arm-kit-playground-mg400 dev:mock",
     "build": "pnpm --filter \"./packages/*\" -r build",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",

@@ -82,7 +82,8 @@ export const useCameras = create<{
     set({ pendingId: id, error: undefined });
     try {
       await cameraRequest('start', id);
-      await get().refresh();
+      // The stream just opened; do not probe the device list again.
+      await get().refresh(false);
     } catch (error) {
       set({ error: error instanceof Error ? error.message : String(error) });
     } finally {
@@ -94,7 +95,7 @@ export const useCameras = create<{
     set({ pendingId: id, error: undefined });
     try {
       await cameraRequest('stop', id);
-      await get().refresh();
+      await get().refresh(false);
     } catch (error) {
       set({ error: error instanceof Error ? error.message : String(error) });
     } finally {
@@ -116,7 +117,8 @@ export const useCameras = create<{
       const response = await fetch(
         discover ? '/api/cameras?refresh=true' : '/api/cameras',
         {
-          signal: AbortSignal.timeout(5000),
+          // Device enumeration can take several seconds while cameras stream.
+          signal: AbortSignal.timeout(20_000),
         },
       );
       if (revision !== listRevision) return;

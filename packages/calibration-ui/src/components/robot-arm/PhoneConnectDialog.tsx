@@ -148,8 +148,11 @@ export function PhoneConnectDialog({
     setScreenRenameError(undefined);
     setRestoreError(undefined);
   }, [open]);
+  /** The bound screen's current name; the stage and mapping use this name. */
+  const boundScreenName = (device: InstallationConnection['devices'][number]) =>
+    savedScreens.find((screen) => screen.id === device.screenId)?.name;
   const pageNameValue = (device: InstallationConnection['devices'][number]) =>
-    pageNames[device.id] ?? device.name ?? '';
+    pageNames[device.id] ?? boundScreenName(device) ?? device.name ?? '';
   const pageNameProblem = (
     device: InstallationConnection['devices'][number],
   ) => {
@@ -158,8 +161,7 @@ export function PhoneConnectDialog({
     const duplicate = (readiness?.connection?.devices ?? []).some(
       (other) =>
         other.id !== device.id &&
-        (pageNames[other.id] ?? other.name ?? '').trim().toLowerCase() ===
-          name.toLowerCase(),
+        pageNameValue(other).trim().toLowerCase() === name.toLowerCase(),
     );
     return duplicate ? t('Screen names must be unique.') : undefined;
   };
@@ -536,7 +538,11 @@ export function PhoneConnectDialog({
                         <Input
                           aria-label={t('Screen name for {0}', [device.label])}
                           maxLength={SCREEN_NAME_LIMIT}
-                          placeholder={device.name ?? device.label}
+                          placeholder={
+                            boundScreenName(device) ??
+                            device.name ??
+                            device.label
+                          }
                           onChange={(event) =>
                             setPageNames((current) => ({
                               ...current,

@@ -523,3 +523,34 @@ export function destinationCorners(
       return [topLeft, topRight, bottomRight, bottomLeft];
   }
 }
+
+function distance(a: ImagePoint, b: ImagePoint): number {
+  return Math.hypot(b.x - a.x, b.y - a.y);
+}
+
+/**
+ * Natural output rectangle for a measured screen quad, used when no operator
+ * output size is saved. Opposite edges are averaged and swapped for sideways
+ * rotations, so the corrected image keeps the glass's aspect ratio instead of
+ * the camera frame's. Both the SDK preview and the UI editor use this.
+ */
+export function measuredPerspectiveTarget(
+  quad: ScreenQuad,
+  rotation: PerspectiveRotation,
+): { width: number; height: number } {
+  const width =
+    (distance(quad.topLeft, quad.topRight) +
+      distance(quad.bottomLeft, quad.bottomRight)) /
+    2;
+  const height =
+    (distance(quad.topLeft, quad.bottomLeft) +
+      distance(quad.topRight, quad.bottomRight)) /
+    2;
+  const sideways = rotation === 90 || rotation === 270;
+  const bounded = (size: number) =>
+    Math.min(4096, Math.max(2, Math.round(size)));
+  return {
+    width: bounded(sideways ? height : width),
+    height: bounded(sideways ? width : height),
+  };
+}

@@ -27,6 +27,7 @@ import { PlaygroundArmControls } from './arm-controls.js';
 import {
   type CameraPreviewView,
   clearStandaloneCorrection,
+  registerClientPreview,
   saveStandaloneCorrection,
   streamCameraPreview,
   streamStandalonePreview,
@@ -56,6 +57,11 @@ export interface PlaygroundOptions {
   connection?: { adapter: string; options: Record<string, string | number> };
   connectionDiagram?: 'ethernet';
   installationId?: string;
+  /**
+   * Start the configured connection without waiting for the browser. Defaults
+   * to discovery; a simulator sets it because it has no controller to probe.
+   */
+  autoConnect?: boolean;
   port?: number;
   webRoot?: string;
   /** Additional local frontend origins allowed during development. */
@@ -68,6 +74,7 @@ export async function startArmPlayground({
   connection,
   connectionDiagram,
   installationId,
+  autoConnect,
   port,
   webRoot,
   developmentOrigins,
@@ -84,7 +91,7 @@ export async function startArmPlayground({
         connectionDiagram,
         discoverHost,
       ),
-    autoConnect: Boolean(discoverHost),
+    autoConnect: autoConnect ?? Boolean(discoverHost),
     port,
     webRoot,
     developmentOrigins,
@@ -859,6 +866,15 @@ export async function startPlaygroundHost({
           });
         const registry = devices;
         if (
+          url.pathname.endsWith('/calibration/camera/preview') &&
+          req.method === 'GET'
+        )
+          registerClientPreview(
+            url.searchParams.get('client') ?? undefined,
+            `host:${id}:${url.searchParams.get('viewer') ?? 'preview'}`,
+            res,
+          );
+        if (
           await host.handle(req, res, () => {
             if (registry !== devices || registry.entries.get(id)?.host !== host)
               throw new RobotArmError(
@@ -958,11 +974,15 @@ export async function startPlaygroundHost({
         return send(405, { error: 'Method not allowed' });
       }
       if (url.pathname === '/api/cameras' && req.method === 'GET') {
+        const registry = devices;
+        const refresh = url.searchParams.get('refresh') === 'true';
+        // Automatic workspace refreshes must not probe the devices while a
+        // capture process is running; only an explicit refresh may.
         const cameras = await listCameras({
-          refresh: url.searchParams.get('refresh') === 'true',
+          refresh,
+          cachedOnly: !refresh,
           includeBuiltIn: true,
         });
-        const registry = devices;
         const deviceSession = registry ? setup.session : null;
         const screens = registry?.screens(true);
         const controlScreens = screenControl?.screens();
@@ -1033,7 +1053,10 @@ export async function startPlaygroundHost({
       }
       if (url.pathname === '/api/cameras/start' && req.method === 'POST') {
         const input = await readBody(req);
-        const cameras = await listCameras({ includeBuiltIn: true });
+        const cameras = await listCameras({
+          includeBuiltIn: true,
+          cachedOnly: true,
+        });
         const camera = cameras.find((entry) => entry.id === input.id);
         if (!camera) return send(404, { error: 'Camera not found' });
         const activeDevices = devices;
@@ -1207,6 +1230,8 @@ export async function startPlaygroundHost({
           'raw') as CameraPreviewView;
         if (view !== 'raw' && view !== 'corrected')
           return send(400, { error: 'Unknown camera view' });
+        const client = url.searchParams.get('client') ?? undefined;
+        const viewer = url.searchParams.get('viewer') ?? undefined;
         if (!devices && id) {
           if (url.searchParams.has('screen'))
             return send(400, {
@@ -1222,12 +1247,20 @@ export async function startPlaygroundHost({
             view === 'corrected'
               ? (await pendingPerspectives.get(id))?.scope
               : undefined,
+            client,
+            viewer,
           );
           return;
         }
         const entry = devices?.entries.get(id);
         if (!entry) return send(404, { error: 'Camera is not running' });
-        await streamCameraPreview(res, entry, view === 'corrected');
+        await streamCameraPreview(
+          res,
+          entry,
+          view === 'corrected',
+          client,
+          viewer,
+        );
         return;
       }
       if (url.pathname === '/api/cameras/frame' && req.method === 'GET') {

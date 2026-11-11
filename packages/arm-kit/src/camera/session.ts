@@ -24,7 +24,7 @@ import { PerspectiveMonitor } from './perspective-monitor.js';
 import { PerspectiveTransformer } from './perspective-transformer.js';
 import { checkPerspectiveValidity } from './perspective-validity.js';
 import type { CameraBackend, CameraDevice, CameraFrame } from './types.js';
-import { validateQuad } from './vision-geometry.js';
+import { measuredPerspectiveTarget, validateQuad } from './vision-geometry.js';
 import type { PerspectiveTarget } from './vision-types.js';
 
 export type { CameraCorrection } from '../contracts.js';
@@ -391,25 +391,9 @@ export class CameraSession implements CalibrationVision {
     const correction = this.correction;
     if (!correction) return undefined;
     if (this.target) return structuredClone(this.target);
-    const { topLeft, topRight, bottomRight, bottomLeft } = correction.points;
-    const width =
-      (Math.hypot(topRight.x - topLeft.x, topRight.y - topLeft.y) +
-        Math.hypot(
-          bottomRight.x - bottomLeft.x,
-          bottomRight.y - bottomLeft.y,
-        )) /
-      2;
-    const height =
-      (Math.hypot(bottomLeft.x - topLeft.x, bottomLeft.y - topLeft.y) +
-        Math.hypot(bottomRight.x - topRight.x, bottomRight.y - topRight.y)) /
-      2;
     const { rotation } = correction;
-    const sideways = rotation === 90 || rotation === 270;
-    const bounded = (size: number) =>
-      Math.min(4096, Math.max(2, Math.round(size)));
     return {
-      width: bounded(sideways ? height : width),
-      height: bounded(sideways ? width : height),
+      ...measuredPerspectiveTarget(correction.points, rotation),
       rotation,
     };
   }

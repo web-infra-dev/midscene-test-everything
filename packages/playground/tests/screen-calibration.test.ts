@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ArmController, type CameraSessionManager } from '@midscene/arm-kit';
@@ -182,6 +182,7 @@ async function fixture({ screens = true }: { screens?: boolean } = {}) {
     adapter,
     store,
     devices,
+    directory,
     service,
     session: session!,
     connect,
@@ -639,6 +640,9 @@ it('keeps paired pages at home on restart until their own calibration screen ope
   expect(device.screenId).toBe(page.saved.targetId);
   const restored = (await restarted.phoneHost(token))!;
   const other = await f.devices.addScreen('cam', 'Other');
+  // The wizard selects the new screen immediately; its host must already be
+  // prepared or the first configuration poll reports "Calibration is not ready".
+  expect(f.devices.entries.get(other.id)?.host).toBeDefined();
   await restarted.resumeBoundPage(await f.devices.ensureHost(other.id));
   expect(restored.mode).toBe('waiting');
   const host = await f.devices.ensureHost(device.screenId!);
@@ -734,4 +738,47 @@ it('checks all current outlines before writing any passing result when a phone m
     f.devices.entries.get(second.targetId)?.camera.getCorrection(),
   ).toBeUndefined();
   expect(f.adapter.movements).toHaveLength(0);
+});
+
+it('does not expose a stored perspective after the applied correction is cleared', async () => {
+  const f = await fixture({ screens: false });
+  await f.store.saveScreenTarget({ id: 'seed', cameraId: 'cam', name: 'Seed' });
+  const file = join(f.directory, 'profiles.json');
+  const data = JSON.parse(await readFile(file, 'utf8'));
+  // Older naming builds persisted the whole screen DTO, snapshot included.
+  data.screenTargets.push({
+    id: 'cam',
+    cameraId: 'cam',
+    name: '111',
+    hasCorrection: true,
+    hasSavedPerspective: true,
+    correction: {
+      points: {
+        topLeft: { x: 10, y: 10 },
+        topRight: { x: 90, y: 10 },
+        bottomRight: { x: 90, y: 90 },
+        bottomLeft: { x: 10, y: 90 },
+      },
+      sourceWidth: 100,
+      sourceHeight: 100,
+      rotation: 0,
+    },
+  });
+  await writeFile(file, JSON.stringify(data));
+  await f.store.load();
+
+  const screen = f.devices.screens().find((entry) => entry.id === 'cam');
+  expect(screen?.hasCorrection).toBe(false);
+  expect(screen?.correction).toBeUndefined();
+  expect(screen?.hasSavedPerspective).toBe(false);
+
+  await f.store.saveScreenTarget({
+    id: 'fresh',
+    cameraId: 'cam',
+    name: 'Fresh',
+    correction: data.screenTargets[1].correction,
+  } as never);
+  expect(
+    f.store.list().screenTargets?.find((entry) => entry.id === 'fresh'),
+  ).toEqual({ id: 'fresh', cameraId: 'cam', name: 'Fresh' });
 });

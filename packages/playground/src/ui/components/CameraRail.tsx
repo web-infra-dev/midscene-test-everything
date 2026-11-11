@@ -36,7 +36,7 @@ export function CameraRail({
             ) : camera.stream?.state === 'running' ? (
               // The stage already owns the selected camera's preview stream.
               <LiveCameraImage
-                src={cameraPreviewUrl(camera.id)}
+                src={cameraPreviewUrl(camera.id, 'raw', 'rail')}
                 alt={camera.name}
               />
             ) : (

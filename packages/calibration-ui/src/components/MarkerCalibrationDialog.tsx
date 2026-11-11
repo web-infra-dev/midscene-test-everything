@@ -335,8 +335,13 @@ export function MarkerCalibrationDialog({
   const announcedDevices = useRef(new Set<string>());
   const restoringDevices = useRef(new Set<string>());
   const devicesActive = useRef(false);
+  const devicesRefreshing = useRef(false);
   const handingOff = useRef(false);
   const refreshDevices = useCallback(async () => {
+    // A slow display/device query must not stack another copy every 2s: the
+    // browser only has six connections per origin, and the arm poll needs one.
+    if (devicesRefreshing.current) return;
+    devicesRefreshing.current = true;
     try {
       // The display list is what tells an idle page apart from one that is
       // already serving another screen, so both lists travel together.
@@ -403,6 +408,8 @@ export function MarkerCalibrationDialog({
     } catch (cause) {
       if (devicesActive.current)
         setDeviceError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      devicesRefreshing.current = false;
     }
   }, [screenCalib, focusTargetId, stream?.deviceId]);
 
@@ -847,7 +854,11 @@ export function MarkerCalibrationDialog({
     const token = session?.token ?? activeToken.current;
     if (!id || !token) return;
     let cancelled = false;
+    let running = false;
     const poll = async () => {
+      // Do not stack status polls behind a slow calibration command.
+      if (running) return;
+      running = true;
       try {
         const next = await api.markerCalibrationStatus(id, token);
         if (!next) throw new Error('Calibration status response is empty');
@@ -872,6 +883,8 @@ export function MarkerCalibrationDialog({
             onSessionCancelled?.(id);
           setError(cause instanceof Error ? cause.message : String(cause));
         }
+      } finally {
+        running = false;
       }
     };
     const timer = window.setInterval(() => void poll(), POLL_INTERVAL_MS);

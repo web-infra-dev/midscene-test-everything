@@ -1,5 +1,6 @@
 import { armUiTheme } from '@midscene/arm-kit-shared';
 import type { CalibrationPreviewPositions } from '@midscene/arm-kit-shared/assisted-contracts';
+import type { PerspectiveTarget } from '@midscene/arm-kit-shared/camera/vision-types';
 import type {
   CameraCorrection,
   PerspectiveValiditySummary,
@@ -36,6 +37,7 @@ import { useAssistedCalibration } from './hooks/useAssistedCalibration';
 import { usePerspectiveValidity } from './hooks/usePerspectiveValidity';
 import { CalibrationLanguageProvider, t, useCalibrationLanguage } from './i18n';
 import { calibrationPowerControl } from './power-state';
+import { cameraPreviewUrl } from './preview-url';
 import type {
   AssistedCalibrationInput,
   AssistedMappingInput,
@@ -60,6 +62,8 @@ export interface Configuration {
   correction?: CameraCorrection;
   previewPositions?: CalibrationPreviewPositions;
   correctionOutput?: { width: number; height: number };
+  /** Enforced rectangle of the live corrected preview. */
+  perspectiveTarget?: PerspectiveTarget;
   correctionKey?: string;
   perspectiveValidity?: PerspectiveValiditySummary;
   result?: CalibrationProfile;
@@ -126,7 +130,10 @@ export function CalibrationWorkspace({
   const [reviewFooter, setReviewFooter] = useState<HTMLDivElement | null>(null);
   const [acceptedRevision, setAcceptedRevision] = useState<number>();
   const reviewSize =
-    config?.correctionOutput ?? config?.output ?? review.setup.layout?.screen;
+    config?.correctionOutput ??
+    config?.output ??
+    config?.perspectiveTarget ??
+    review.setup.layout?.screen;
   const [editingSetup, setEditingSetup] = useState(false);
   const [footer, setFooter] = useState<HTMLDivElement | null>(null);
   const [navigation, setNavigation] = useState<HTMLDivElement | null>(null);
@@ -297,7 +304,7 @@ export function CalibrationWorkspace({
                   live={
                     <CameraCornerEditor
                       value={config.correction}
-                      src={`${base}/camera/preview`}
+                      src={cameraPreviewUrl(base, 'review-live')}
                       disabled
                     />
                   }
@@ -306,7 +313,7 @@ export function CalibrationWorkspace({
                       <CorrectedPreview
                         correction={config.correction}
                         size={reviewSize}
-                        src={`${base}/camera/preview`}
+                        src={cameraPreviewUrl(base, 'review-corrected')}
                       />
                     )
                   }
@@ -397,7 +404,7 @@ export function CalibrationWorkspace({
                       <div className="calibration-position-frame">
                         <img
                           className="calibration-preview"
-                          src={`${base}/camera/preview`}
+                          src={cameraPreviewUrl(base, 'review-position')}
                           alt={config.camera.name}
                         />
                         {config.correction &&

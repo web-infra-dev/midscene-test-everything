@@ -15,40 +15,62 @@ export interface ScreenOutlineEntry {
   validity?: 'valid' | 'invalid' | 'suspected' | 'unverified';
 }
 
+export interface ScreenOutlineLabelPlacement {
+  left: number;
+  top: number;
+  angle: number;
+}
+
 const corners = ['topLeft', 'topRight', 'bottomRight', 'bottomLeft'] as const;
+
+/**
+ * Place the screen name on the screen's own top edge, as defined by the
+ * perspective correction: topLeft→topRight, centered on its midpoint and
+ * turned parallel to it. The phone may lie sideways in the camera, so this
+ * edge can appear on any side of the raw preview; the corrected screen is the
+ * reference, not whichever edge happens to look highest on the page.
+ */
+export function screenOutlineLabelPlacement(
+  correction: CameraCorrection,
+  box: { width: number; height: number },
+): ScreenOutlineLabelPlacement | undefined {
+  const { sourceWidth: width, sourceHeight: height, points } = correction;
+  if (!width || !height || !box.width || !box.height) return undefined;
+  const scale = Math.min(box.width / width, box.height / height);
+  const offsetX = (box.width - width * scale) / 2;
+  const offsetY = (box.height - height * scale) / 2;
+  const { topLeft, topRight } = points;
+  const angle =
+    (Math.atan2(topRight.y - topLeft.y, topRight.x - topLeft.x) * 180) /
+    Math.PI;
+  return {
+    left: offsetX + ((topLeft.x + topRight.x) / 2) * scale,
+    top: offsetY + ((topLeft.y + topRight.y) / 2) * scale,
+    // The edge is undirected; keep the text from reading upside down.
+    angle: angle > 90 ? angle - 180 : angle < -90 ? angle + 180 : angle,
+  };
+}
 
 function ScreenOutline({ outline }: { outline: ScreenOutlineEntry }) {
   const { name, correction, active, validity } = outline;
   const { sourceWidth: width, sourceHeight: height, points } = correction;
   const layer = useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState<{ left: number; top: number }>();
-  const centerX = (points.topLeft.x + points.topRight.x) / 2;
-  const centerY = (points.topLeft.y + points.topRight.y) / 2;
+  const [placement, setPlacement] = useState<ScreenOutlineLabelPlacement>();
 
   useLayoutEffect(() => {
     const element = layer.current;
     if (!element || !name) return;
     const measure = () => {
       const box = element.getBoundingClientRect();
-      if (!box.width || !box.height) return;
-      const scale = Math.min(box.width / width, box.height / height);
-      const offsetX = (box.width - width * scale) / 2;
-      const offsetY = (box.height - height * scale) / 2;
-      const clamp = (value: number, size: number, padding: number) => {
-        const inset = Math.min(padding, size / 2);
-        return Math.max(inset, Math.min(value, size - inset));
-      };
-      setPosition({
-        left: offsetX + clamp(centerX * scale, width * scale, 10),
-        top: offsetY + clamp(centerY * scale, height * scale, 4),
-      });
+      const next = screenOutlineLabelPlacement(correction, box);
+      if (next) setPlacement(next);
     };
     measure();
     if (typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => observer.disconnect();
-  }, [name, width, height, centerX, centerY]);
+  }, [name, correction]);
 
   return (
     <div
@@ -78,7 +100,15 @@ function ScreenOutline({ outline }: { outline: ScreenOutlineEntry }) {
         <span
           aria-hidden="true"
           className="camera-mapping-outline-label"
-          style={position ?? { visibility: 'hidden' }}
+          style={
+            placement
+              ? {
+                  left: placement.left,
+                  top: placement.top,
+                  transform: `translate(-50%, -50%) rotate(${placement.angle}deg)`,
+                }
+              : { visibility: 'hidden' }
+          }
         >
           {name}
         </span>

@@ -1,7 +1,10 @@
 import { expect, it } from '@rstest/core';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { ScreenOutlines } from '../src/components/robot-arm/ScreenOutlines';
+import {
+  ScreenOutlines,
+  screenOutlineLabelPlacement,
+} from '../src/components/robot-arm/ScreenOutlines';
 
 const correction = {
   points: {
@@ -92,4 +95,50 @@ it.each([
   expect(html).not.toContain('相机侧边界');
   expect(html).not.toContain('画面外');
   expect(html).not.toContain('calibration-position-markers');
+});
+
+it('centers the screen name on the calibrated top edge, even on the side', () => {
+  expect(
+    screenOutlineLabelPlacement(correction, { width: 640, height: 480 }),
+  ).toEqual({ left: 240, top: 30, angle: 0 });
+
+  // The phone lies sideways in the camera. The calibrated top edge is
+  // topLeft→topRight, which appears on the right of the raw preview; the
+  // visually highest line (bottomLeft→topLeft) is the screen's left edge.
+  const turned = {
+    ...correction,
+    sourceWidth: 1920,
+    sourceHeight: 1080,
+    points: {
+      topLeft: { x: 1470.2567, y: 344.1293 },
+      topRight: { x: 1577.7457, y: 682.5847 },
+      bottomRight: { x: 479.8209, y: 705.8523 },
+      bottomLeft: { x: 575.3721, y: 376.8125 },
+    },
+  };
+  const placement = screenOutlineLabelPlacement(turned, {
+    width: 1920,
+    height: 1080,
+  });
+  expect(placement?.left).toBeCloseTo(1524, 0);
+  expect(placement?.top).toBeCloseTo(513.36, 1);
+  expect(placement?.angle).toBeCloseTo(72.38, 1);
+});
+
+it('letterboxes the placement and keeps the text upright', () => {
+  expect(
+    screenOutlineLabelPlacement(correction, { width: 1000, height: 480 }),
+  ).toEqual({ left: 420, top: 30, angle: 0 });
+
+  const reversed = {
+    ...correction,
+    points: {
+      ...correction.points,
+      topLeft: { x: 440, y: 30 },
+      topRight: { x: 40, y: 30 },
+    },
+  };
+  expect(
+    screenOutlineLabelPlacement(reversed, { width: 640, height: 480 })?.angle,
+  ).toBe(0);
 });

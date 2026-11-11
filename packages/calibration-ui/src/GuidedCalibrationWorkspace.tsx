@@ -73,6 +73,8 @@ import {
   ScreenCalibClient,
   markerRequest,
 } from './marker-client';
+import { cameraPreviewUrl } from './preview-url';
+import { screensWithoutDraft, selectableScreens } from './screen-selection';
 import { TeachingClient } from './teaching-client';
 import { isRequiredPhonePage } from './utils/phone-readiness';
 import './styles.less';
@@ -150,6 +152,18 @@ function GuidedContent({
   const config =
     loadedConfig?.deviceId === selectedId ? loadedConfig : undefined;
   const [screens, setScreens] = useState<BoundScreen[]>([]);
+  const [draftScreen, setDraftScreen] = useState<{
+    id: string;
+    name: string;
+  }>();
+  const draftScreenRef = useRef<{ id: string; name: string }>();
+  const updateDraftScreen = useCallback(
+    (value: { id: string; name: string } | undefined) => {
+      draftScreenRef.current = value;
+      setDraftScreen(value);
+    },
+    [],
+  );
   const [states, setStates] = useState<WorkstationScreenState[]>([]);
   const [error, setError] = useState<string>();
   const [mappingError, setMappingError] = useState<string>();
@@ -190,6 +204,12 @@ function GuidedContent({
   const singleBusy = singleQueued || lease?.phase === 'running';
   const [checkedScreen, setCheckedScreen] = useState<string>();
   const autoOpened = useRef<string>();
+  /** A screen created by Add Screen until that pass is committed or canceled. */
+  const pendingAddedScreen = useRef<{ id: string; previous?: string }>();
+  /** The manual corner editor took over the pending Add Screen target. */
+  const keepPendingAddedScreen = useRef(false);
+  /** One Add Screen request at a time; a double click must not open two. */
+  const addingScreen = useRef(false);
   const startingSingle = useRef<Promise<SingleStatus>>();
   const cancellingSingle = useRef(false);
   const batchPanel = useRef<CalibrationBatchPanelHandle>(null);
@@ -227,7 +247,8 @@ function GuidedContent({
       selectedId,
     ],
   );
-  const savedScreens = screens.filter(
+  const visibleScreens = screensWithoutDraft(screens, draftScreen?.id);
+  const savedScreens = visibleScreens.filter(
     (s) => s.cameraId === cameraId && s.hasCorrection,
   );
   const phoneCameras = useMemo(
@@ -253,11 +274,7 @@ function GuidedContent({
     cameras: phoneCameras,
     cameraId,
   });
-  const knownScreens = screens.filter(
-    (s) =>
-      s.cameraId === cameraId &&
-      (s.hasCorrection || s.markerSlot !== undefined),
-  );
+  const knownScreens = selectableScreens(visibleScreens, cameraId);
   const selected = screens.find((s) => s.id === selectedId);
   const phonePage = phoneReadiness.connection?.devices.find(
     (page) =>
@@ -268,9 +285,12 @@ function GuidedContent({
   );
   const phoneConnected = Boolean(phonePage);
   const phoneFullscreen = Boolean(phonePage?.fullscreen);
-  const existing = selected
-    ? [{ id: selected.id, name: selected.name, pageKey: selected.pageKey }]
-    : undefined;
+  /** The Add Screen target is calibrated without being mounted in the selector. */
+  const existing = draftScreen
+    ? [{ id: draftScreen.id, name: draftScreen.name }]
+    : selected
+      ? [{ id: selected.id, name: selected.name, pageKey: selected.pageKey }]
+      : undefined;
   const selectScreen = useCallback((next: string) => {
     resumeCalibration.current = undefined;
     restoringMapping.current = undefined;
@@ -399,6 +419,18 @@ function GuidedContent({
     },
     [base, batchClient, cameraId, initialStep, selectedId],
   );
+  /** Seed the next screen's config so a selection change does not blank it. */
+  const preloadConfiguration = useCallback(async (screenId: string) => {
+    try {
+      return await markerRequest<Configuration>(
+        `/api/devices/${encodeURIComponent(screenId)}/calibration/configuration`,
+        undefined,
+        AbortSignal.timeout(15000),
+      );
+    } catch {
+      return undefined;
+    }
+  }, []);
   const [connectingPage, setConnectingPage] = useState<string>();
   const connectPage = useCallback(
     async (id: string, camera: string, assignCamera = false) => {
@@ -517,8 +549,6 @@ function GuidedContent({
         if (!abort.signal.aborted) timer = setTimeout(() => void poll(), 1500);
       }
     };
-    setConfig(undefined);
-
     setLoadError(undefined);
     void poll();
     return () => {
@@ -659,12 +689,42 @@ function GuidedContent({
       await cancelSingle();
       if (config?.armState?.state.dragMode && teaching)
         await teaching.exitDrag();
+      const pending = pendingAddedScreen.current;
+      pendingAddedScreen.current = undefined;
+      // Closing the wizard is a cancel for a screen that was only added and
+      // never calibrated; a calibrated one was already cleared by `detected`.
+      if (pending) await discardPendingAddedScreen(pending);
+      updateDraftScreen(undefined);
       onClose(selectedId);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
       setClosing(false);
     }
   };
+  const commitMarkerTarget = useCallback(
+    async (targetId: string) => {
+      pendingAddedScreen.current = undefined;
+      keepPendingAddedScreen.current = false;
+      setRetryId(undefined);
+      if (draftScreenRef.current?.id === targetId) updateDraftScreen(undefined);
+      await refresh();
+      if (currentBase.current !== base) return;
+      const nextConfig = await preloadConfiguration(targetId);
+      if (nextConfig) setConfig(nextConfig);
+      setReview(undefined);
+      setReviewOpen(false);
+      setMarkerOpen(false);
+      if (targetId !== selectedId) selectScreen(targetId);
+    },
+    [
+      base,
+      preloadConfiguration,
+      refresh,
+      selectScreen,
+      selectedId,
+      updateDraftScreen,
+    ],
+  );
   const detected = useCallback(
     async (
       _session: unknown,
@@ -672,11 +732,17 @@ function GuidedContent({
       _targets: string[],
       token: string,
     ) => {
+      const targetId =
+        draftScreenRef.current?.id ??
+        pendingAddedScreen.current?.id ??
+        selectedId;
       if (
         currentBase.current !== base ||
-        !result.session.targets.every((target) => target.id === selectedId)
+        !result.session.targets.every((target) => target.id === targetId)
       )
         return;
+      // Detection committed this screen; closing the dialog later must not
+      // roll back the Add Screen that opened it.
       setRetryId(undefined);
       const { session } = result;
       /*
@@ -707,15 +773,11 @@ function GuidedContent({
           token,
         );
         if (currentBase.current !== base) return;
-        const failure = result.mappingErrors[selectedId];
+        const failure = result.mappingErrors[targetId];
         setMappingError(failure);
         if (!failure)
           void message.success(t('Camera mapping applied automatically'));
-        await refresh();
-        if (currentBase.current !== base) return;
-        setReview(undefined);
-        setReviewOpen(false);
-        setMarkerOpen(false);
+        await commitMarkerTarget(targetId);
       } catch (cause) {
         if (currentBase.current !== base) return;
         setReview({ ...result, token });
@@ -725,11 +787,49 @@ function GuidedContent({
         if (currentBase.current === base) setApplying(false);
       }
     },
-    [base, selectedId, markerClient, message, refresh],
+    [base, commitMarkerTarget, selectedId, markerClient, message, refresh],
+  );
+  /**
+   * Add Screen creates the target before its marker pass. Cancelling that pass
+   * must take the empty target back out, otherwise it keeps the screen picker
+   * visible and leaves a screen nobody calibrated. A target that already has a
+   * correction or a saved perspective is kept.
+   */
+  const discardPendingAddedScreen = useCallback(
+    async ({ id, previous }: { id: string; previous?: string }) => {
+      try {
+        const listed = await markerRequest<{ screens: BoundScreen[] }>(
+          '/api/screens',
+        );
+        const added = listed.screens.find((screen) => screen.id === id);
+        if (!added || added.hasCorrection || added.hasSavedPerspective) return;
+        // The manual corner editor already took ownership of this target.
+        if (keepPendingAddedScreen.current) {
+          keepPendingAddedScreen.current = false;
+          return;
+        }
+        await pageClient.deleteScreen(cameraId, id);
+        if (currentBase.current !== base) return;
+        await refresh();
+        if (previous && listed.screens.some((screen) => screen.id === previous))
+          selectScreen(previous);
+      } catch (cause) {
+        if (currentBase.current === base)
+          setError(cause instanceof Error ? cause.message : String(cause));
+      }
+    },
+    [base, cameraId, pageClient, refresh, selectScreen],
   );
   const markerClosed = useCallback(() => {
+    const pending = pendingAddedScreen.current;
+    pendingAddedScreen.current = undefined;
     if (currentBase.current === base) setMarkerOpen(false);
-  }, [base]);
+    if (pending)
+      void discardPendingAddedScreen(pending).finally(() => {
+        if (draftScreenRef.current?.id === pending.id)
+          updateDraftScreen(undefined);
+      });
+  }, [base, discardPendingAddedScreen, updateDraftScreen]);
   /**
    * A screen that is connected and bound has its markers on the page already,
    * so the camera step starts the perspective pass by itself: the dialog
@@ -932,7 +1032,9 @@ function GuidedContent({
             </ol>
           </nav>
           <Space className="guided-toolbar-actions">
-            {step > 0 && (
+            {/* Step 2 has its own phone-page entry in the checklist; later
+                steps still need this toolbar shortcut. */}
+            {step > 1 && (
               <Button onClick={() => setPhonesOpen(true)}>
                 {t('View Phone Page')}
               </Button>
@@ -1010,22 +1112,30 @@ function GuidedContent({
                       displayName={config.camera.name}
                       autoCreateScreen
                       autoAddTarget={false}
-                      key={selectedId}
+                      key={draftScreen?.id ?? selectedId}
                       existingScreens={retryId ? undefined : existing}
-                      focusTargetId={retryId ?? selectedId}
+                      focusTargetId={retryId ?? draftScreen?.id ?? selectedId}
                       resumeSession={retryId ? markerSession : undefined}
                       includeSucceededTargets={Boolean(retryId)}
                       keepSessionOnClose
                       onAdjustManually={() => {
                         // The operator chose the manual path, so the automatic
-                        // pass must not reopen over the editor.
-                        autoDetectStarted.current = selectedId;
+                        // pass must not reopen over the editor. The manual
+                        // editor owns a just-created target; do not roll it back.
+                        keepPendingAddedScreen.current = true;
+                        const draft = draftScreenRef.current;
+                        if (draft) {
+                          pendingAddedScreen.current = undefined;
+                          updateDraftScreen(undefined);
+                          selectScreen(draft.id);
+                        }
+                        autoDetectStarted.current = draft?.id ?? selectedId;
                         setPerspectiveEditor(true);
                       }}
                       onClose={markerClosed}
                       onDetected={detected}
                       onSessionCreated={setMarkerSession}
-                      existingScreenNames={screens
+                      existingScreenNames={visibleScreens
                         .filter((s) => s.cameraId === cameraId)
                         .map((s) => s.name)}
                     />
@@ -1046,7 +1156,11 @@ function GuidedContent({
                         if (open) autoDetectStarted.current = selectedId;
                         setPerspectiveEditor(open);
                       }}
-                      output={config.correctionOutput ?? config.output}
+                      output={
+                        config.perspectiveTarget ??
+                        config.correctionOutput ??
+                        config.output
+                      }
                       validity={perspective.summary?.state}
                       phoneConnected={phoneConnected}
                       phoneFullscreen={phoneFullscreen}
@@ -1112,15 +1226,41 @@ function GuidedContent({
                                   )
                                 )
                                   return;
+                                const deletingId = selectedId;
+                                // Leave the screen before deleting it: config
+                                // and validity polls for a disappearing id are
+                                // what produced the transient error and flash.
+                                const fallback = knownScreens.find(
+                                  (screen) => screen.id !== deletingId,
+                                );
+                                if (
+                                  pendingAddedScreen.current?.id === deletingId
+                                )
+                                  pendingAddedScreen.current = undefined;
+                                setScreens((current) =>
+                                  current.filter(
+                                    (screen) => screen.id !== deletingId,
+                                  ),
+                                );
+                                if (fallback) {
+                                  const nextConfig = await preloadConfiguration(
+                                    fallback.id,
+                                  );
+                                  if (nextConfig) setConfig(nextConfig);
+                                  selectScreen(fallback.id);
+                                }
                                 try {
                                   await pageClient.deleteScreen(
                                     cameraId,
-                                    selectedId,
+                                    deletingId,
                                   );
                                   setReview(undefined);
                                   setMarkerSession(undefined);
                                   setRetryId(undefined);
-                                  await refresh();
+                                  // Do not call refresh(): it is bound to the
+                                  // deleted screen's base and would request its
+                                  // configuration again. The new base's poll
+                                  // reloads the list and the fallback config.
                                 } catch (cause) {
                                   setError(
                                     cause instanceof Error
@@ -1138,6 +1278,9 @@ function GuidedContent({
                       key={selectedId}
                       onSelectScreen={selectScreen}
                       onAddScreen={async () => {
+                        if (addingScreen.current) return;
+                        addingScreen.current = true;
+                        keepPendingAddedScreen.current = false;
                         try {
                           const names = new Set(
                             screens
@@ -1151,7 +1294,18 @@ function GuidedContent({
                             { cameraId, name: `Screen ${number}` },
                           );
                           if (currentBase.current !== base) return;
-                          selectScreen(created.id);
+                          // Keep the active screen mounted. The new target is
+                          // calibrated as a draft and only becomes selectable
+                          // after the marker pass commits it.
+                          const draft = {
+                            id: created.id,
+                            name: `Screen ${number}`,
+                          };
+                          updateDraftScreen(draft);
+                          pendingAddedScreen.current = {
+                            id: created.id,
+                            previous: selectedId,
+                          };
                           setMarkerOpen(true);
                         } catch (cause) {
                           setError(
@@ -1159,6 +1313,8 @@ function GuidedContent({
                               ? cause.message
                               : String(cause),
                           );
+                        } finally {
+                          addingScreen.current = false;
                         }
                       }}
                       onPair={() => setPhonesOpen(true)}
@@ -1399,7 +1555,10 @@ function GuidedContent({
                         <div className="guided-preview-frame">
                           <img
                             className="calibration-preview"
-                            src={`/api/devices/${encodeURIComponent(activeId)}/calibration/camera/preview`}
+                            src={cameraPreviewUrl(
+                              `/api/devices/${encodeURIComponent(activeId)}/calibration`,
+                              'guided-preview',
+                            )}
                             data-testid="calibration-live-camera"
                             alt={config.camera.name}
                           />
@@ -1502,9 +1661,13 @@ function GuidedContent({
           setMarkerOpen(true);
         }}
         onApply={() => {
+          const targetId =
+            draftScreenRef.current?.id ??
+            pendingAddedScreen.current?.id ??
+            selectedId;
           if (
             !review ||
-            !review.session.targets.every((target) => target.id === selectedId)
+            !review.session.targets.every((target) => target.id === targetId)
           )
             return;
           setError(undefined);
@@ -1530,12 +1693,9 @@ function GuidedContent({
               throw cause;
             })
             .then(async (result) => {
-              await refresh();
               if (currentBase.current !== base) return;
-              setMappingError(result.mappingErrors[selectedId]);
-              setReview(undefined);
-              setReviewOpen(false);
-              setMarkerOpen(false);
+              setMappingError(result.mappingErrors[targetId]);
+              await commitMarkerTarget(targetId);
             })
             .catch((cause) => {
               if (currentBase.current === base)
@@ -1603,7 +1763,10 @@ function GuidedMarkerCalibration(
 function WizardFooter({
   container,
   children,
-}: { container: HTMLElement; children: ReactNode }) {
+}: {
+  container: HTMLElement;
+  children: ReactNode;
+}) {
   return createPortal(
     <div className="robot-web-actions">{children}</div>,
     container,

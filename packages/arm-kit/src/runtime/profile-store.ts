@@ -747,7 +747,10 @@ export class ProfileStore {
         );
       draft.screenTargets = [
         ...(draft.screenTargets ?? []),
-        { ...input, name: input.name.trim() },
+        // Persist identity only. Callers may pass a full screen DTO (with a
+        // live correction snapshot); that snapshot must never outlive the
+        // camera's applied perspective.
+        { id: input.id, cameraId: input.cameraId, name: input.name.trim() },
       ];
     });
   }
