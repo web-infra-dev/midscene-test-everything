@@ -911,3 +911,30 @@ it('starts a marker session for the explicitly created Add Screen target', async
     true,
   );
 });
+it('reassigns a released phone to an explicitly created replacement screen', async () => {
+  const f = await fixture();
+  const first = await f.connect();
+  const second = await f.connect();
+  await f.service.pageAction({
+    action: 'delete-screen',
+    cameraId: 'cam',
+    id: second.targetId,
+  });
+  const replacement = await f.devices.addScreen('cam', 'Replacement');
+  const session = await f.service.create('cam', undefined, [replacement.id]);
+  expect(session.targets.map((target) => target.id)).toEqual([replacement.id]);
+  const display = (await f.service.pageAction({
+    action: 'create-display',
+    visionSessionId: session.id,
+    targetId: replacement.id,
+    visionToken: session.targets[0].token,
+  })) as TargetDisplaySession;
+  await f.service.pageAction({
+    action: 'assign',
+    id: second.page.saved.id,
+    role: 'markers',
+    targetDisplayId: display.id,
+  });
+  expect(second.page.saved.targetId).toBe(replacement.id);
+  expect(first.page.saved.targetId).toBe(first.targetId);
+});

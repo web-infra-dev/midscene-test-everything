@@ -875,6 +875,58 @@ function GuidedContent({
     },
     [base, cameraId, pageClient, refresh, selectScreen],
   );
+  const startAddedScreenCalibration = useCallback(async () => {
+    if (addingScreen.current) return false;
+    addingScreen.current = true;
+    keepPendingAddedScreen.current = false;
+    let createdTarget: string | undefined;
+    try {
+      const cameraScreens = screens.filter(
+        (screen) => screen.cameraId === cameraId,
+      );
+      const knownIds = cameraScreens.map((screen) => screen.id);
+      const name = `Screen ${cameraScreens.length + 1}`;
+      // Create the target explicitly. Allocating by name can reuse a screen
+      // that is already bound to another phone, which starts the wrong pass.
+      createdTarget = (
+        await markerRequest<{ id: string }>('/api/screens', {
+          cameraId,
+          name,
+        })
+      ).id;
+      const created = await markerClient.createMarkerCalibration(
+        cameraId,
+        undefined,
+        undefined,
+        [createdTarget],
+      );
+      if (currentBase.current !== base) {
+        await pageClient
+          .deleteScreen(cameraId, createdTarget)
+          .catch(() => undefined);
+        return false;
+      }
+      setFirstScreenCalibrationForConnection(false);
+      setMarkerAdd(true);
+      setMarkerSession(created);
+      setRetryId(undefined);
+      pendingAddedScreen.current = {
+        previous: selectedId,
+        knownIds,
+      };
+      setMarkerOpen(true);
+      return true;
+    } catch (cause) {
+      if (createdTarget)
+        await pageClient
+          .deleteScreen(cameraId, createdTarget)
+          .catch(() => undefined);
+      setError(cause instanceof Error ? cause.message : String(cause));
+      return false;
+    } finally {
+      addingScreen.current = false;
+    }
+  }, [base, cameraId, markerClient, pageClient, screens, selectedId]);
   const markerClosed = useCallback(() => {
     const pending = pendingAddedScreen.current;
     pendingAddedScreen.current = undefined;
@@ -1348,63 +1400,7 @@ function GuidedContent({
                           setPhonesOpen(true);
                           return;
                         }
-                        if (addingScreen.current) return;
-                        addingScreen.current = true;
-                        keepPendingAddedScreen.current = false;
-                        let createdTarget: string | undefined;
-                        try {
-                          const knownIds = screens
-                            .filter((s) => s.cameraId === cameraId)
-                            .map((s) => s.id);
-                          const name = `Screen ${screens.filter((s) => s.cameraId === cameraId).length + 1}`;
-                          // Create a real new target first. Asking the marker
-                          // service to allocate by name reuses a calibrated /
-                          // bound screen, which made Add Screen reopen the old one.
-                          createdTarget = (
-                            await markerRequest<{ id: string }>(
-                              '/api/screens',
-                              {
-                                cameraId,
-                                name,
-                              },
-                            )
-                          ).id;
-                          const created =
-                            await markerClient.createMarkerCalibration(
-                              cameraId,
-                              undefined,
-                              undefined,
-                              [createdTarget],
-                            );
-                          if (currentBase.current !== base) {
-                            await pageClient
-                              .deleteScreen(cameraId, createdTarget)
-                              .catch(() => undefined);
-                            createdTarget = undefined;
-                            return;
-                          }
-                          setFirstScreenCalibrationForConnection(false);
-                          setMarkerAdd(true);
-                          setMarkerSession(created);
-                          setRetryId(undefined);
-                          pendingAddedScreen.current = {
-                            previous: selectedId,
-                            knownIds,
-                          };
-                          setMarkerOpen(true);
-                        } catch (cause) {
-                          if (createdTarget)
-                            await pageClient
-                              .deleteScreen(cameraId, createdTarget)
-                              .catch(() => undefined);
-                          setError(
-                            cause instanceof Error
-                              ? cause.message
-                              : String(cause),
-                          );
-                        } finally {
-                          addingScreen.current = false;
-                        }
+                        await startAddedScreenCalibration();
                       }}
                       onPair={() => setPhonesOpen(true)}
                       onDetect={() => {
@@ -1723,15 +1719,19 @@ function GuidedContent({
         }}
         onContinue={
           phoneConnectionForAddScreen
-            ? () => {
+            ? async () => {
                 setPhonesOpen(false);
                 setPhoneConnectionForAddScreen(false);
                 setRetryId(undefined);
-                setFirstScreenCalibrationForConnection(
-                  knownScreens.length === 0,
-                );
-                setMarkerAdd(knownScreens.length > 0);
-                setMarkerOpen(true);
+                if (knownScreens.length === 0) {
+                  setFirstScreenCalibrationForConnection(true);
+                  setMarkerAdd(false);
+                  setMarkerOpen(true);
+                  return;
+                }
+                setFirstScreenCalibrationForConnection(false);
+                setMarkerAdd(false);
+                await startAddedScreenCalibration();
               }
             : undefined
         }

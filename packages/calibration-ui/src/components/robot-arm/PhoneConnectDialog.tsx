@@ -72,7 +72,7 @@ export function PhoneConnectDialog({
   open: boolean;
   onClose: () => void;
   /** Continues from a first-screen Add Screen into the marker pass. */
-  onContinue?: () => void;
+  onContinue?: () => void | Promise<void>;
   readiness?: CameraPhoneReadiness;
   /** Cameras a page can be bound to; the current camera is the default. */
   cameras?: readonly PhoneConnectCamera[];
@@ -103,6 +103,7 @@ export function PhoneConnectDialog({
 }) {
   useLanguage();
   const [selectedCameraId, setSelectedCameraId] = useState<string>();
+  const [continuing, setContinuing] = useState(false);
   const currentCameraId = readiness?.cameraId;
   const cameraOptions = cameras.length
     ? cameras
@@ -139,6 +140,7 @@ export function PhoneConnectDialog({
   useEffect(() => {
     if (!open) {
       openedRef.current = false;
+      setContinuing(false);
       return;
     }
     if (openedRef.current) return;
@@ -693,8 +695,15 @@ export function PhoneConnectDialog({
         {onContinue && (
           <Button
             block
-            disabled={!phonesConnected}
-            onClick={onContinue}
+            disabled={!phonesConnected || continuing}
+            loading={continuing}
+            onClick={() => {
+              if (continuing) return;
+              setContinuing(true);
+              void Promise.resolve(onContinue()).finally(() =>
+                setContinuing(false),
+              );
+            }}
             type="primary"
           >
             {t('Continue to Calibration')}
