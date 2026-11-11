@@ -8,6 +8,17 @@ import {
 import type { PlaygroundOptions } from '@midscene/arm-kit-playground';
 import { listNetworkPorts, prepareNetwork } from './network.js';
 
+/** `--mock` or ARM_PLAYGROUND_MOCK=1 replaces the controller with a simulator. */
+export function mockArmRequested(
+  argv: readonly string[] = process.argv,
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  return (
+    argv.includes('--mock') ||
+    ['1', 'true'].includes((env.ARM_PLAYGROUND_MOCK ?? '').toLowerCase())
+  );
+}
+
 function answer<T>(value: T | symbol): T {
   if (typeof value === 'symbol') {
     cli.cancel('已取消启动。');
@@ -31,6 +42,19 @@ async function port(label: string, initial: number, min = 1) {
 }
 
 export async function setupMg400(): Promise<PlaygroundOptions | undefined> {
+  if (mockArmRequested()) {
+    // Load the simulator only in mock mode; a real connection never imports it.
+    const { MockMg400Adapter } = await import('./mock-arm.js');
+    cli.log.warn(
+      '模拟机械臂：不会连接或移动真实控制器，仅用于相机和界面调试。',
+    );
+    return {
+      installationId: 'mg400-mock',
+      connectionDiagram: 'ethernet',
+      autoConnect: true,
+      createAdapter: () => new MockMg400Adapter(),
+    };
+  }
   if (!process.argv.includes('--manual')) {
     const options = {
       dashboardPort: Number(DOBOT_MG400_DEFAULTS.dashboardPort),

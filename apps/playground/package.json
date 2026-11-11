@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx dev.ts",
+    "dev:mock": "tsx dev.ts --mock",
     "start": "tsx index.ts",
     "typecheck": "tsc --noEmit --strict --skipLibCheck --target ES2022 --module NodeNext index.ts dev.ts",
     "test": "rstest run"
@@ -12,6 +13,7 @@
   "dependencies": {
     "@clack/prompts": "^0.11.0",
     "@midscene/arm-adapter-mg400": "workspace:*",
+    "@midscene/arm-kit": "workspace:*",
     "@midscene/arm-kit-playground": "workspace:*"
   },
   "devDependencies": {

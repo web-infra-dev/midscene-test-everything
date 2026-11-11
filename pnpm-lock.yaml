@@ -41,6 +41,9 @@ importers:
       '@midscene/arm-adapter-mg400':
         specifier: workspace:*
         version: link:../../packages/adapter-mg400
+      '@midscene/arm-kit':
+        specifier: workspace:*
+        version: link:../../packages/arm-kit
       '@midscene/arm-kit-playground':
         specifier: workspace:*
         version: link:../../packages/playground
