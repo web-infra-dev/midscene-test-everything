@@ -5,6 +5,7 @@ import { CalibrationRequestError } from '../../client';
 import type { AssistedCalibrationController } from '../../hooks/useAssistedCalibration';
 import { calibrationErrorText, t, useCalibrationLanguage } from '../../i18n';
 import type { CalibrationProfile } from '../../robot-arm-api';
+import { speakCalibration } from '../../voice/calibration';
 import { ExplorationQualitySummary } from './CalibrationQualityWarnings';
 import { ExplorationProgress } from './ExplorationProgress';
 import { SetupNotice } from './SetupNotice';
@@ -555,7 +556,16 @@ export function WebCalibrationWorkspace({
                     </Typography.Paragraph>
                     <Checkbox
                       checked={confirmed}
-                      onChange={(e) => setConfirmed(e.target.checked)}
+                      onChange={(e) => {
+                        setConfirmed(e.target.checked);
+                        if (e.target.checked)
+                          speakCalibration(
+                            mode === 'slide'
+                              ? 'slideClearance'
+                              : 'samplingReady',
+                            2,
+                          );
+                      }}
                     >
                       {t(
                         mode === 'standard'
@@ -565,7 +575,7 @@ export function WebCalibrationWorkspace({
                     </Checkbox>
                   </>
                 )}
-              {s?.capture && <ExplorationProgress session={s} />}
+              {s && <ExplorationProgress session={s} />}
               {(stage === 'safety' || stage === 'returning') && (
                 <Typography.Paragraph>
                   {t(

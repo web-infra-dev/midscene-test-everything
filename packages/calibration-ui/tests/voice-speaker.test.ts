@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, rstest } from '@rstest/core';
+import { voiceMessages } from '../src/voice/messages';
 import { VoiceSpeaker } from '../src/voice/speaker';
 
 function fixture() {
@@ -60,6 +61,33 @@ describe('voice queue', () => {
     rstest.advanceTimersByTime(4500);
     finish();
     expect(port.speak).toHaveBeenCalledTimes(3);
+    speaker.cancel();
+  });
+  it('keeps the latest calibration instruction and lets a stop interrupt motion warnings', () => {
+    rstest.useFakeTimers();
+    const { speaker, port, finish } = fixture();
+    speaker.configure(true, 'zh', true);
+    speaker.notify('approachStart', 2, 'calibration');
+    speaker.notify('directionProbe', 1, 'calibration');
+    speaker.notify('autoSampling', 1, 'calibration');
+    finish();
+    expect(port.speak.mock.calls.map(([text]) => text)).toEqual([
+      voiceMessages.approachStart[1],
+      voiceMessages.autoSampling[1],
+    ]);
+    speaker.notify('hover', 2, 'calibration');
+    speaker.notify('contact', 2, 'calibration');
+    expect(port.speak.mock.calls.at(-1)?.[0]).toBe(voiceMessages.contact[1]);
+    speaker.notify('emergencySent', 3);
+    speaker.notify('referenceReturn', 2, 'calibration');
+    speaker.notify('phoneReady', 1, 'calibration');
+    expect(port.speak.mock.calls.at(-1)?.[0]).toBe(
+      voiceMessages.emergencySent[1],
+    );
+    finish();
+    expect(port.speak.mock.calls.at(-1)?.[0]).toBe(
+      voiceMessages.referenceReturn[1],
+    );
     speaker.cancel();
   });
   it('does not play before activation or while hidden; switches language without old speech', () => {

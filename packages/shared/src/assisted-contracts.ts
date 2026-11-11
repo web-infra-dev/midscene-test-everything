@@ -331,6 +331,8 @@ export interface AssistedCalibrationSetup {
   >;
   teaching?: import('./contracts.js').InstallationTeaching;
   markerCapture?: { request: string; attempt: number; captureAt: number };
+  /** Progress of the latest page-mapping check in this setup. */
+  mappingCheck?: 'checking' | 'confirmed' | 'failed';
   prepared: boolean;
   phoneConnected: boolean;
   layout?: CalibrationPageLayout;
@@ -400,6 +402,8 @@ export interface AssistedCalibrationState {
   mapping?: WebCalibrationMapping;
   automaticPhase?: 'local' | 'grid';
   samples: number;
+  /** Travel to the reference before probing or after a sampling/fit check. */
+  referenceTravel?: 'approach' | 'return';
   /** Operator-authorized collection, safe return and verification sequence. */
   automaticWorkflow?: boolean;
   explorationMode?: AutomaticExplorationMode;

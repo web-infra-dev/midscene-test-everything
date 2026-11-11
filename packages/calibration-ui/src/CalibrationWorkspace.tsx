@@ -46,6 +46,7 @@ import type { RuntimeState } from './robot-arm-api';
 import type { CameraProfile } from './types';
 import { VoiceSettings } from './voice/VoiceSettings';
 import { useBrowserVoice } from './voice/browser';
+import { speakCalibration } from './voice/calibration';
 import './styles.less';
 import './standalone/page.less';
 export interface Configuration {
@@ -465,6 +466,9 @@ export function CalibrationPowerButton({
         disabled={control.disabled || pending}
         onClick={() => {
           setFailure(undefined);
+          if (control.action === 'enable') speakCalibration('confirmEnable', 2);
+          if (control.action === 'recover')
+            speakCalibration('checkRecovery', 2);
           setConfirming(control.action);
         }}
       >
@@ -486,7 +490,9 @@ export function CalibrationPowerButton({
           setPending(true);
           setFailure(undefined);
           try {
+            if (confirming === 'payload') speakCalibration('payload');
             await apply(confirming);
+            if (confirming === 'payload') speakCalibration('payloadDone');
             setConfirming(undefined);
           } catch (error) {
             setFailure(error instanceof Error ? error.message : String(error));

@@ -1,5 +1,5 @@
 import { Button, InputNumber, Modal, Space, Typography } from 'antd';
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { SetupIllustration } from './components/robot-arm/SetupIllustration';
 import { ToolSetupStep } from './components/robot-arm/ToolSetupStep';
@@ -10,6 +10,7 @@ import {
 } from './components/robot-arm/setup-draft';
 import { t, useCalibrationLanguage } from './i18n';
 import type { EffectiveCapabilities, ToolProfile } from './robot-arm-api';
+import { speakCalibration } from './voice/calibration';
 
 export interface MeasuredCalibrationSetup {
   width?: number;
@@ -33,6 +34,7 @@ export function CalibrationSetup({
   onSave(input: MeasuredCalibrationSetup): Promise<void>;
 }) {
   useCalibrationLanguage();
+  useEffect(() => speakCalibration('toolSetup'), []);
   const id = useId();
   const inferred = initial && inferAxialTool(initial.tool);
   const [axis, setAxis] = useState<ToolAxis>(inferred?.axis ?? '-Z');

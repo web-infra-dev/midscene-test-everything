@@ -11,12 +11,18 @@ import type {
   TeachingBinding as ProfileBinding,
   TeachingClient as RobotArmApi,
 } from '../../teaching-client';
+import { speakCalibration } from '../../voice/calibration';
 import { TeachingDiagram } from './TeachingDiagram';
 const points: InstallationTeachingPoint[] = ['reference', 'cameraBoundary'];
 const labels = {
   reference: 'Reference Position',
   cameraBoundary: 'Camera-side Boundary',
 };
+const teachingVoice = {
+  reference: 'teachReference',
+  cameraBoundary: 'teachBoundary',
+  review: 'confirmCorridor',
+} as const;
 const prompts = {
   reference:
     'Hold the tip 2–5 cm above the screen centre. Free travel stays at this height or above.',
@@ -58,6 +64,9 @@ export function InstallationTeaching({
   const [dragging, setDragging] = useState(false);
   const [moving, setMoving] = useState(false);
   const [error, setError] = useState<string>();
+  useEffect(() => {
+    if (loaded) speakCalibration(teachingVoice[stage]);
+  }, [loaded, stage]);
   useEffect(() => {
     let alive = true;
     setSaved(null);
@@ -172,8 +181,13 @@ export function InstallationTeaching({
         disabled={busy || !loaded || !stateReady || (disabled && !dragging)}
         onClick={() =>
           void work(async () => {
-            if (dragging) await api.exitDrag();
-            else await api.enterTeachingDrag(binding);
+            if (dragging) {
+              await api.exitDrag();
+              speakCalibration('exitDrag');
+            } else {
+              speakCalibration('beforeDrag', 2);
+              await api.enterTeachingDrag(binding);
+            }
             const state = await api.state();
             setDragging(Boolean(state.state.dragMode));
             setEnabled(Boolean(state.state.enabled));
@@ -212,6 +226,7 @@ export function InstallationTeaching({
                 corridorConfirmed: confirmed,
               });
               setSaved(teaching);
+              speakCalibration('teachingSaved');
               onSaved?.();
             } else {
               const next = await api.captureInstallationPoint(binding, stage);
@@ -349,6 +364,12 @@ export function InstallationTeaching({
                       onClick={() =>
                         void work(async () => {
                           const current = await api.state();
+                          speakCalibration(
+                            point === 'reference'
+                              ? 'approachStart'
+                              : 'gotoBoundary',
+                            2,
+                          );
                           await api.gotoTeachingPosition(
                             binding,
                             saved.id,

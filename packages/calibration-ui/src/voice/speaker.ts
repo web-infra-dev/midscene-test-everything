@@ -12,6 +12,7 @@ interface Pending {
   event: VoiceEvent;
   priority: number;
   at: number;
+  scope?: string;
 }
 /** Independent of React and robot APIs. Speech must never gate a control command. */
 export class VoiceSpeaker {
@@ -50,16 +51,28 @@ export class VoiceSpeaker {
       /* Browser speech can disappear during teardown. */
     }
   }
-  notify(event: VoiceEvent, priority = 0) {
+  notify(event: VoiceEvent, priority = 0, scope?: string) {
     if (!this.enabled || !this.active) return;
     const at = Date.now();
     const last = this.recent.get(event);
     if (last !== undefined && at - last < 2500) return;
-    if (this.current && priority > this.current.priority) {
+    // Replace superseded guidance while retaining higher-priority warnings.
+    if (scope)
+      this.queue = this.queue.filter(
+        (item) => item.scope !== scope || item.priority > priority,
+      );
+    if (
+      this.current &&
+      (priority > this.current.priority ||
+        (scope &&
+          scope === this.current.scope &&
+          priority >= 2 &&
+          priority === this.current.priority))
+    ) {
       this.cancel();
     }
     this.recent.set(event, at);
-    this.queue.push({ event, priority, at });
+    this.queue.push({ event, priority, at, scope });
     this.queue.sort((a, b) => b.priority - a.priority);
     this.queue = this.queue.slice(0, 3);
     this.flush();

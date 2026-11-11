@@ -11,12 +11,16 @@ import type {
   CalibrationPhoneStatus,
   RobotArmApi,
 } from '../robot-arm-api';
-import { calibrationAnnouncements } from '../voice/calibration';
+import {
+  calibrationAnnouncements,
+  speakCalibration,
+} from '../voice/calibration';
 
 export function useAssistedCalibration(
   api: RobotArmApi,
   installation: string | undefined,
   active: boolean,
+  mode: 'single' | 'batch' = 'single',
 ) {
   const store = useMemo(
     () =>
@@ -54,26 +58,31 @@ export function useAssistedCalibration(
       cancelling: false,
     });
     if (!active) return;
-    const announce = calibrationAnnouncements();
+    const announce = calibrationAnnouncements(mode);
+    let receiving = false;
     const unsubscribe = api.subscribeCalibration(
       (snapshot) => {
         if (current === generation.current) {
+          receiving = true;
           announce(snapshot);
           store.setState({ ...snapshot, connectionError: undefined });
         }
       },
       () => {
-        if (current === generation.current)
+        if (current === generation.current) {
+          if (receiving) speakCalibration('connectionLost', 2);
+          receiving = false;
           store.setState({
             connectionError: t('Calibration connection lost. Reconnecting…'),
           });
+        }
       },
     );
     return () => {
       generation.current++;
       unsubscribe();
     };
-  }, [store, api, active]);
+  }, [store, api, active, mode]);
   const run = useCallback(
     async <T>(work: () => Promise<T>, cancel = false) => {
       const pending = requests.current;
@@ -119,6 +128,28 @@ export function useAssistedCalibration(
     run(() => {
       if (!session)
         throw new Error('Start calibration in the Calibration step');
+      if (confirmed) {
+        switch (action) {
+          case 'position-reference':
+          case 'position-boundary':
+          case 'position-safe':
+            speakCalibration('beforeDrag', 2);
+            break;
+          case 'start':
+          case 'start-fast':
+          case 'start-slide':
+          case 'start-automatic':
+          case 'retry-standard':
+            speakCalibration('autoStarted', 2);
+            break;
+          case 'verify-boundary':
+            speakCalibration('autoVerifying', 2);
+            break;
+          case 'return-safe':
+            speakCalibration('returnSafe', 2);
+            break;
+        }
+      }
       return api.assistedCalibrationCommand(
         session.id,
         action,

@@ -5,10 +5,11 @@ import '@arco-design/web-react/es/Spin/style/css.js';
 import '@arco-design/web-react/es/Tag/style/css.js';
 import '@arco-design/web-react/es/Typography/style/css.js';
 import { Button, QRCode } from 'antd';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { AssistedCalibrationController } from '../../hooks/useAssistedCalibration';
 import { t, useCalibrationLanguage } from '../../i18n';
+import { speakCalibration } from '../../voice/calibration';
 import { SetupNotice } from './SetupNotice';
 
 export function PhonePairStep({
@@ -27,6 +28,10 @@ export function PhonePairStep({
     phone.links.find((item) => item.url === link)?.url ?? phone.links[0]?.url;
   const screen = setup.layout?.screen;
   const connected = phone.state === 'connected';
+  const waitingForPhone = phone.state === 'waiting' && Boolean(url);
+  useEffect(() => {
+    if (waitingForPhone) speakCalibration('mappingWaiting');
+  }, [waitingForPhone]);
   const title = {
     connected: 'Phone connected',
     waiting: 'Scan with your phone to connect',

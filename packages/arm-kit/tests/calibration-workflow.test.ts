@@ -435,6 +435,11 @@ describe('phone-assisted calibration coordinator', () => {
         .mockRejectedValue(new Error('Point probe failed'));
       const reference = await f.recordReference();
       f.service.setBatchTravelHeight(120);
+      let movesBeforeReturn: number | undefined;
+      const unsubscribe = f.service.subscribe(() => {
+        if (f.service.status()?.referenceTravel === 'return')
+          movesBeforeReturn ??= f.adapter.movements.length;
+      });
       await f.service.command(f.state.id, 'start-slide', true);
       await rstest.waitFor(() =>
         expect(f.service.status()).toMatchObject({
@@ -444,6 +449,9 @@ describe('phone-assisted calibration coordinator', () => {
           samples: 1,
         }),
       );
+      unsubscribe();
+      expect(movesBeforeReturn).toBe(1);
+      expect(f.service.status()?.referenceTravel).toBeUndefined();
       expect(f.adapter.movements).toEqual([
         pose(25, 30, 30),
         pose(25, 30, 120),
@@ -1048,6 +1056,11 @@ it.each([
       f.detectMarkers.mockReturnValueOnce(
         Response.json({ ...mapping, accuracy }),
       );
+      const checks = new Set<string>();
+      const unsubscribe = f.service.subscribe(() => {
+        const phase = f.service.setup().mappingCheck;
+        if (phase) checks.add(phase);
+      });
       if (accepted) {
         expect((await f.service.mapSetup()).mapping?.accuracy).toEqual(
           accuracy,
@@ -1058,6 +1071,11 @@ it.each([
         });
         expect(f.service.setup().mapping).toBeUndefined();
       }
+      unsubscribe();
+      expect([...checks]).toEqual([
+        'checking',
+        accepted ? 'confirmed' : 'failed',
+      ]);
     } finally {
       await f.dispose();
     }
@@ -1362,6 +1380,14 @@ it.each([1.01, 3])(
       await f.service.command(f.state.id, 'save-teaching', true);
       f.adapter.setPoseForTesting(pose(100, 50.000008, 75));
       const move = rstest.spyOn(f.adapter, 'moveLinear');
+      const phases = new Set<string>();
+      const unsubscribe = f.service.subscribe(() => {
+        const current = f.service.status()!;
+        if (current.referenceTravel) phases.add(current.referenceTravel);
+        if (current.stage === 'safety' && current.calibration?.progress)
+          phases.add(current.calibration.progress.group);
+        if (current.stage === 'avoiding-camera') phases.add(current.stage);
+      });
       await f.service.command(f.state.id, 'start-automatic', true);
       if (offsetMm === 3) {
         await rstest.waitFor(() =>
@@ -1386,6 +1412,13 @@ it.each([1.01, 3])(
         { timeout: 30000 },
       );
       const state = f.service.status()!;
+      unsubscribe();
+      expect([...phases]).toEqual([
+        'approach',
+        'hover',
+        'contact',
+        'avoiding-camera',
+      ]);
       expect(move.mock.calls.slice(0, 3).map(([p]) => p)).toEqual([
         pose(100, 50, 80),
         pose(100, -50, 80),

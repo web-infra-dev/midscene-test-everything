@@ -1,6 +1,8 @@
 import { Alert, Button, Space, Typography } from 'antd';
+import { useEffect } from 'react';
 import type { PerspectiveObservation } from '../hooks/usePerspectiveValidity';
 import { t, useLanguage } from '../i18n';
+import { speakCalibration } from '../voice/calibration';
 
 /** A compact finding; raw frames remain visible beside the calibration controls. */
 export function PerspectiveObservationCard({
@@ -22,8 +24,11 @@ export function PerspectiveObservationCard({
       (observation.check?.validity.edges.filter(
         (edge) => edge.class === 'on-edge',
       ).length ?? 0) >= 3);
-  if (!review && !observation.error) return null;
   const invalid = validity?.state === 'invalid';
+  useEffect(() => {
+    if (invalid) speakCalibration('perspectiveInvalid', 2);
+  }, [invalid, screenName]);
+  if (!review && !observation.error) return null;
   const title = invalid
     ? t('Perspective correction is out of date')
     : observation.error

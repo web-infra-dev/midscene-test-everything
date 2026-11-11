@@ -3176,6 +3176,7 @@ export class RobotArmRuntime extends RobotKernel {
     id: string,
     command: CalibrationCommand,
     beforeMove?: () => Promise<void>,
+    onProgress?: () => void,
   ): Promise<CalibrationSession> {
     if (
       !command ||
@@ -3311,6 +3312,9 @@ export class RobotArmRuntime extends RobotKernel {
             if (this.session?.id === id && !this.abort?.signal.aborted) {
               this.session.progress = next.progress;
               this.session.verificationRuns = next.verificationRuns;
+              if (this.session.auto && next.auto)
+                this.session.auto.avoidingCamera = next.auto.avoidingCamera;
+              onProgress?.();
             }
           },
           adapter: this.adapter,

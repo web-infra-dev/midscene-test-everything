@@ -866,6 +866,7 @@ export class CalibrationWorkflow {
     }
   }
   private markerCapture?: AssistedCalibrationSetup['markerCapture'];
+  private mappingCheck?: AssistedCalibrationSetup['mappingCheck'];
   setMarkerCapture(value?: AssistedCalibrationSetup['markerCapture']) {
     this.markerCapture = value;
     this.changed();
@@ -874,15 +875,21 @@ export class CalibrationWorkflow {
     return {
       ...this.configuration.status(),
       markerCapture: this.markerCapture,
+      mappingCheck: this.mappingCheck,
     };
   }
   async prepare(input: AssistedCalibrationInput) {
-    return this.configureSetup(() => this.configuration.prepare(input));
+    return this.configureSetup(() => {
+      this.mappingCheck = undefined;
+      return this.configuration.prepare(input);
+    });
   }
   async mapSetup(output?: AssistedMappingInput) {
     return this.configureSetup(async () => {
       let request: string | undefined;
       let mapped = false;
+      this.mappingCheck = 'checking';
+      this.changed();
       try {
         const result = await this.configuration.map(output, async () => {
           // An unchanged mapping can be confirmed while the touch preview is open.
@@ -920,13 +927,17 @@ export class CalibrationWorkflow {
           this.aligned = true;
         return result;
       } finally {
+        this.mappingCheck = mapped ? 'confirmed' : 'failed';
         if (request) this.finishMarkerDisplay(request, mapped);
       }
     });
   }
   /** The camera correction was cleared, so the page mapping no longer holds. */
   async clearMapping() {
-    return this.configureSetup(() => this.configuration.clearMapping());
+    return this.configureSetup(() => {
+      this.mappingCheck = undefined;
+      return this.configuration.clearMapping();
+    });
   }
   private async configureSetup(
     work: () => AssistedCalibrationSetup | Promise<AssistedCalibrationSetup>,
@@ -1680,19 +1691,27 @@ export class CalibrationWorkflow {
           409,
         );
       const reference = s.referencePosition!;
-      const returnToReference = () =>
-        moveToTaughtPosition(
-          host,
-          teaching,
-          tool,
-          reference,
-          input.motion!,
-          Math.max(
-            knownScreenTravelHeight(this.runtime.profileStore.list(), input),
-            this.batchTravelTipZMm ?? Number.NEGATIVE_INFINITY,
-          ),
-        );
-      if (teaching) await returnToReference();
+      const travelToReference = async (reason: 'approach' | 'return') => {
+        s.referenceTravel = reason;
+        this.changed();
+        try {
+          await moveToTaughtPosition(
+            host,
+            teaching,
+            tool,
+            reference,
+            input.motion!,
+            Math.max(
+              knownScreenTravelHeight(this.runtime.profileStore.list(), input),
+              this.batchTravelTipZMm ?? Number.NEGATIVE_INFINITY,
+            ),
+          );
+        } finally {
+          s.referenceTravel = undefined;
+          this.changed();
+        }
+      };
+      if (teaching) await travelToReference('approach');
       let lastMoveConfirmed = false;
       const checkCollecting = () => {
         host.check();
@@ -1753,7 +1772,7 @@ export class CalibrationWorkflow {
         await this.assertMechanicalFrame(true);
         checkCollecting();
         try {
-          await returnToReference();
+          await travelToReference('return');
         } catch (returnError) {
           throw new RobotArmError(
             isRobotArmError(returnError)
@@ -1769,7 +1788,7 @@ export class CalibrationWorkflow {
       // Sampling can finish with the tip pressed. Park using the measured
       // reference before waiting for a review of the new geometry.
       if (lastMoveConfirmed && s.explorationQuality?.warnings?.length)
-        await returnToReference();
+        await travelToReference('return');
     });
     this.captureOperationId = this.runtime.current()?.requestId;
     let outlineCheck: Promise<void> | undefined;
@@ -1816,6 +1835,7 @@ export class CalibrationWorkflow {
   private async verifyFittedBoundary(s: SessionState) {
     this.runtime.assertStopRevision(this.captureStopRevision!);
     s.stage = 'returning';
+    this.changed();
     await this.adopt(this.fittedGeometry!, s.referencePosition!, false);
     if (s.stage !== 'returning') return;
     s.stage = 'safety';
@@ -1828,6 +1848,7 @@ export class CalibrationWorkflow {
         expectedRevision: s.calibration!.revision,
       },
       () => this.assertMechanicalFrame(true),
+      this.changed,
     );
     if (s.stage !== 'safety') return;
     if (s.calibration.auto?.observationRecorded) {
@@ -2134,6 +2155,8 @@ export class CalibrationWorkflow {
     s.calibration = await this.runtime.calibrationCommand(
       s.calibration.id,
       command,
+      undefined,
+      this.changed,
     );
     this.changed();
     return this.status()!;

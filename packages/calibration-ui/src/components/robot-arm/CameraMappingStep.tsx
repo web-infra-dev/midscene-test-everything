@@ -16,6 +16,7 @@ import { createPortal } from 'react-dom';
 import { CameraCornerEditor } from '../../CameraCornerEditor';
 import { CorrectedPreview } from '../../CorrectedPreview';
 import { calibrationErrorText, t, useCalibrationLanguage } from '../../i18n';
+import { speakCalibration } from '../../voice/calibration';
 import { CalibrationQualityWarnings } from './CalibrationQualityWarnings';
 
 /** One screen the camera observes; the sheet of glass a mapping belongs to. */
@@ -127,6 +128,7 @@ export function CameraMappingStep({
     mapped && phoneConnected && phoneFullscreen && validity !== 'invalid';
   const verified = canConfirm && mappingReady && !mappingError;
   const notice = error ?? mappingError;
+  useEffect(() => speakCalibration('cameraSetup'), [screenId]);
   const apply = async (value: CameraCorrection) => {
     setError(undefined);
     await onApply(value);

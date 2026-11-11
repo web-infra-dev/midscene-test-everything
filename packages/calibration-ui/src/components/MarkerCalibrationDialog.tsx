@@ -45,6 +45,7 @@ import {
   restoreMarkerPages,
 } from '../utils/restore-marker-pages';
 import { robotCue, robotVoice } from '../voice/browser';
+import { speakCalibration } from '../voice/calibration';
 import { SetupNotice, selectSetupNotice } from './robot-arm/SetupNotice';
 
 const POLL_INTERVAL_MS = 800;
@@ -914,6 +915,9 @@ export function MarkerCalibrationDialog({
     );
     return Boolean(device?.visible && !device.fullscreen);
   });
+  useEffect(() => {
+    if (fullscreenPending) speakCalibration('markerDisplayMode');
+  }, [fullscreenPending]);
   const pageKey = (session?.targets ?? [])
     .map((target) => {
       const device = devices.find(
@@ -989,9 +993,9 @@ export function MarkerCalibrationDialog({
               setCountdown(seconds ? { seconds, retry } : undefined);
               if (seconds === 0) robotCue.play('shutter');
               if (seconds === 3)
-                robotVoice.notify(
+                speakCalibration(
                   retry ? 'markersRetry' : 'markersCountdown',
-                  1,
+                  2,
                 );
             },
             response(response) {
@@ -1031,6 +1035,7 @@ export function MarkerCalibrationDialog({
         onClose();
       } catch (cause) {
         if (controller.signal.aborted) return;
+        speakCalibration('markerFailed');
         if (cause instanceof RobotVisionApiError && cause.details?.targetErrors)
           setError(String(cause.details.targetErrors));
         else setError(cause instanceof Error ? cause.message : String(cause));

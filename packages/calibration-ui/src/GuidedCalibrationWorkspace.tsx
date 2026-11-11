@@ -589,6 +589,7 @@ function GuidedContent({
     progressClient,
     activeId,
     step === 3 && batchActive,
+    'batch',
   );
   const cancelSingle = async () => {
     autoOpened.current = selectedId;

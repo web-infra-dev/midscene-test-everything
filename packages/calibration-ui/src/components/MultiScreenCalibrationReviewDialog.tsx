@@ -5,7 +5,9 @@ import type {
 } from '@midscene/arm-kit-shared/marker-contracts';
 import { Alert, Button, Card, Modal, Space, Tag, Typography } from 'antd';
 import { Check, Crosshair, ScanLine } from 'lucide-react';
+import { useEffect } from 'react';
 import { t } from '../i18n';
+import { speakCalibration } from '../voice/calibration';
 
 export function MultiScreenCalibrationReviewDialog({
   session,
@@ -37,6 +39,11 @@ export function MultiScreenCalibrationReviewDialog({
   const succeeded = session?.targets.filter(
     (target) => target.state === 'succeeded' && target.result,
   );
+  const hasResult = Boolean(succeeded?.length);
+  useEffect(() => {
+    if (open && session)
+      speakCalibration(hasResult ? 'markerReview' : 'markerFailed');
+  }, [open, session?.id, hasResult]);
   return (
     <Modal
       centered

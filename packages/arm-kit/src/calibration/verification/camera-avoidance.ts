@@ -95,6 +95,7 @@ export async function avoidCamera(
       return true;
     } finally {
       s.auto.avoidingCamera = false;
+      host.progress?.(s);
     }
   }
   return false;

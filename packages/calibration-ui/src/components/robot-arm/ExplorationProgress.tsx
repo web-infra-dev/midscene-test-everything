@@ -25,6 +25,16 @@ export function ExplorationProgress({
   const failed =
     (session.stage === 'interrupted' && session.collectionFailed) ||
     session.stage === 'capture-failed';
+  if (session.stage === 'collecting' && session.referenceTravel)
+    return (
+      <output>
+        {t(
+          session.referenceTravel === 'approach'
+            ? 'Preparing to move to the calibration reference. Keep the path clear.'
+            : 'Preparing to lift and return to the reference. Keep the path clear.',
+        )}
+      </output>
+    );
   if (
     !capture ||
     (!failed && session.stage !== 'collecting' && session.stage !== 'reprobing')

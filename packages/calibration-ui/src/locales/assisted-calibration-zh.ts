@@ -27,6 +27,10 @@ export const assistedCalibrationZh: Record<string, string> = {
   'No measurement recorded for this step.': '本次标定未保存这一步的测量记录。',
   'Boundary verification': '边界验证',
   'Preparing boundary verification': '正在准备边界验证',
+  'Preparing to move to the calibration reference. Keep the path clear.':
+    '机械臂准备前往标定参考位，请让开运动路径。',
+  'Preparing to lift and return to the reference. Keep the path clear.':
+    '机械臂准备抬起并返回参考位，请让开运动路径。',
   'Continue to boundary verification': '继续边界验证',
   'Sampling and fitting are followed by automatic hover and contact boundary verification. Record the Safe Position afterwards, then review and save.':
     '采样拟合后自动执行悬停与接触边界验证，再记录安全位置、检查并保存。',

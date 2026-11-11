@@ -20,6 +20,7 @@ import type {
   CalibrationProfile,
 } from './robot-arm-api';
 import type { CameraProfile } from './types';
+import { speakCalibration } from './voice/calibration';
 
 /** Shared wizard. Hosts supply camera preview/editor; all calibration commands use one client. */
 function CalibrationPanelContent(props: {
@@ -275,8 +276,10 @@ function AutomaticScreenStep({
           if (!abort.signal.aborted) advance();
         })
         .catch((cause) => {
-          if (!abort.signal.aborted)
+          if (!abort.signal.aborted) {
+            speakCalibration('mappingFailed');
             setError(cause instanceof Error ? cause.message : String(cause));
+          }
         });
     }, 0);
     return () => {

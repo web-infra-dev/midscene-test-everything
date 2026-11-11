@@ -23,6 +23,7 @@ import {
 } from 'react';
 import type { BatchClient as RobotArmApi } from '../../batch-client';
 import { t } from '../../i18n';
+import { batchAnnouncements, speakCalibration } from '../../voice/calibration';
 
 const active = (batch: CalibrationBatchState | null | undefined) =>
   Boolean(batch && ['running', 'waiting', 'stopping'].includes(batch.status));
@@ -113,12 +114,14 @@ export const CalibrationBatchPanel = forwardRef<
     mounted.current = true;
     let disposed = false;
     let pending = false;
+    const announce = batchAnnouncements();
     const refresh = async () => {
       if (pending) return;
       pending = true;
       try {
         const result = await api.calibrationBatch();
         if (disposed) return;
+        announce(result);
         setBatch(result);
         latest.current.onActiveChange?.(active(result));
         const current = result?.items[result.currentIndex];
@@ -188,7 +191,9 @@ export const CalibrationBatchPanel = forwardRef<
     void perform(async () => {
       if (!cameraId) throw new Error(t('Select the main camera first.'));
       const next = await api.calibrationBatchPlan(cameraId);
+      if (!mounted.current) return;
       setPlan(next);
+      speakCalibration('batchClearance', 2);
       setHorizontalConfirmed(false);
       setManualAcceptance(false);
       setCorridorConfirmed(false);
@@ -209,6 +214,7 @@ export const CalibrationBatchPanel = forwardRef<
         throw new Error(
           t('Review the calibration plan again before starting.'),
         );
+      speakCalibration('batchNext', 2);
       await api.startCalibrationBatch({
         planVersion: plan.version,
         cameraId,
@@ -222,12 +228,25 @@ export const CalibrationBatchPanel = forwardRef<
     });
   const command = (action: CalibrationBatchCommand['action']) => {
     if (!batch) return;
-    void perform(() =>
-      api.calibrationBatchCommand(batch.id, {
+    void perform(() => {
+      if (action === 'enter-drag') speakCalibration('beforeDrag', 2);
+      if (
+        action === 'continue' &&
+        batch.items[batch.currentIndex]?.status === 'awaiting-boundary-review'
+      )
+        speakCalibration('autoVerifying', 2);
+      else if (
+        action === 'retry' ||
+        action === 'skip' ||
+        (action === 'continue' &&
+          batch.items[batch.currentIndex]?.status === 'awaiting-placement')
+      )
+        speakCalibration('batchNext', 2);
+      return api.calibrationBatchCommand(batch.id, {
         action,
         revision: batch.revision,
-      }),
-    );
+      });
+    });
   };
   const row = batch?.items[batch.currentIndex];
   const isActive = active(batch);
