@@ -1,13 +1,22 @@
-import { PlaygroundApp } from '@midscene/arm-kit-playground/shell';
 import { DisconnectedPreview } from '@midscene/arm-kit-playground/shell/DisconnectedPreview.tsx';
-import { PlaygroundPreview } from '@midscene/arm-kit-playground/shell/PlaygroundPreview.tsx';
-import { Button, Modal, Popover, Spin, Tabs, Tooltip, message } from 'antd';
+import { ScreenshotViewer } from '@midscene/arm-kit-playground/visualizer';
+import {
+  Button,
+  Form,
+  Modal,
+  Popover,
+  Select,
+  Spin,
+  Tooltip,
+  message,
+} from 'antd';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   BindingSetup,
   type Connection,
   ConnectionPanel,
 } from './ConnectionPanel';
+import { ManagerLayout } from './ManagerLayout';
 import { type Route, navigate } from './routes';
 import './multi-device.css';
 
@@ -161,7 +170,7 @@ export function MultiDeviceApp({ route }: { route: Route }) {
   const remove = (item: Workspace) => {
     Modal.confirm({
       title: '移除此设备？',
-      content: '将停止这台设备的任务并释放连接，其他设备不受影响。',
+      content: '将从当前列表移除此设备并释放连接，已保存的配置仍然保留。',
       okText: '移除',
       cancelText: '取消',
       onOk: async () => {
@@ -314,35 +323,9 @@ function DeviceWorkspace({
       </Button>
     </div>
   );
-  const bar = (
-    <div className="ios-hid-device-tabs">
-      <Tabs
-        size="small"
-        activeKey={item.id}
-        onChange={(id) => navigate(`workspace/${id}`)}
-        tabBarExtraContent={
-          <Button
-            type="text"
-            size="small"
-            loading={adding}
-            onClick={() => void onAdd()}
-          >
-            ＋ 添加设备
-          </Button>
-        }
-        items={tabs.map((other) => ({
-          key: other.id,
-          label: (
-            <span className="ios-hid-tab-label">
-              <span
-                className={`ios-hid-tab-dot${other.state?.phase !== 'ready' || other.screenError ? ' warning' : ''}`}
-              />
-              {workspaceName(other, workspaces)}
-            </span>
-          ),
-        }))}
-      />
-      {!ready && (
+  const recoveryControls = (
+    <>
+      {!ready && item.connected && (
         <div className="ios-hid-device-notice">
           <span>{busy ? recoveryMessage : error}</span>
         </div>
@@ -363,88 +346,177 @@ function DeviceWorkspace({
           verifying={item.state?.phase === 'connecting'}
         />
       )}
-    </div>
+    </>
   );
-  // Retain each task component while switching tabs so in-flight tasks and drafts survive.
+  const [form] = Form.useForm();
+  const createSession = async (input?: Record<string, unknown>) => {
+    const response = await fetch(`${item.apiBase}/session`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Midscene-Playground': 'setup',
+      },
+      body: JSON.stringify(input ?? {}),
+      signal: AbortSignal.timeout(11 * 60_000),
+    });
+    if (!response.ok)
+      throw new Error((await response.json()).error ?? '连接失败');
+    return true;
+  };
+  const getScreenshot = useCallback(async () => {
+    const response = await fetch(`${item.apiBase}/screenshot`, {
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new Error('画面获取失败');
+    return response.json();
+  }, [item.apiBase]);
+  const setup =
+    active && isHome ? (
+      <div className="ios-hid-connect-page">
+        {(tabs.length > 0 || settingUp) && (
+          <nav className="ios-hid-connect-nav" aria-label="页面导航">
+            <Button
+              className="ios-hid-back-workspace"
+              type="text"
+              size="small"
+              loading={returning}
+              onClick={() => {
+                if (settingUp) void returnToAdd();
+                else
+                  navigate(
+                    `workspace/${tabs.some((other) => other.id === item.id) ? item.id : tabs[0].id}`,
+                  );
+              }}
+            >
+              {settingUp ? '← 返回添加设备' : '← 返回工作台'}
+            </Button>
+          </nav>
+        )}
+        <ConnectionPanel
+          connection={item.state}
+          initialSource={item.source}
+          controller={{
+            state: { form, sessionMutating: settingUp },
+            actions: { createSession },
+          }}
+          previewTarget={previewTarget}
+          apiBase={item.apiBase}
+          reservedPeers={workspaces
+            .filter(
+              (other) =>
+                // Occupancy follows workspace membership, including outages.
+                other.id !== item.id && other.connected,
+            )
+            .map((other) => other.bluetoothPeerId)
+            .filter((id): id is string => Boolean(id))}
+          reservedSources={workspaces
+            .filter(
+              (other) =>
+                other.id !== item.id && other.connected && other.sourceId,
+            )
+            .map((other) => `${other.source}:${other.sourceId}`)}
+          onConnected={() => {
+            void reload();
+            navigate(`workspace/${item.id}`);
+          }}
+        />
+      </div>
+    ) : null;
+  if (!active) return null;
   return (
-    <div style={{ display: active ? 'block' : 'none' }}>
-      <PlaygroundApp
-        sessionReady={item.connected && !(active && isHome)}
-        serverUrl={`${location.origin}${item.apiBase}`}
-        appVersion="1.17.5"
-        title="iOS HID Playground"
-        playgroundConfig={{
-          storageNamespace: `ios-hid-${item.id}`,
-          historyNamespace: `ios-hid-${item.id}`,
-          disableExecution: !ready,
-        }}
-        workspaceHeader={bar}
-        renderSetup={(controller) =>
-          active && isHome ? (
-            <div className="ios-hid-connect-page">
-              {(tabs.length > 0 || settingUp) && (
-                <nav className="ios-hid-connect-nav" aria-label="页面导航">
+    <ManagerLayout
+      sidebar={
+        <div className="ios-hid-manager-panel">
+          {recoveryControls}
+          {isHome ? (
+            setup
+          ) : (
+            <section className="ios-hid-manager-summary">
+              <div className="ios-hid-manager-summary-heading">
+                <h2>设备信息</h2>
+                <span
+                  className={`ios-hid-manager-status${ready ? ' ready' : ''}`}
+                >
+                  {ready ? '连接正常' : busy ? '正在恢复' : '需要处理'}
+                </span>
+              </div>
+              <dl>
+                <dt>设备名称</dt>
+                <dd>{name}</dd>
+                <dt>画面来源</dt>
+                <dd>{sourceLabel(item.source)}</dd>
+                <dt>蓝牙键鼠</dt>
+                <dd>{item.state?.phase === 'ready' ? '已连接' : '未连接'}</dd>
+                <dt>设备 ID</dt>
+                <dd className="ios-hid-manager-device-id">
+                  <code>{item.state?.device?.id ?? '等待连接'}</code>
                   <Button
-                    className="ios-hid-back-workspace"
-                    type="text"
                     size="small"
-                    loading={returning}
+                    type="text"
+                    disabled={!item.state?.device?.id}
                     onClick={() => {
-                      if (settingUp) void returnToAdd();
-                      else
-                        navigate(
-                          `workspace/${tabs.some((other) => other.id === item.id) ? item.id : tabs[0].id}`,
+                      void navigator.clipboard
+                        .writeText(item.state!.device!.id)
+                        .then(() => message.success('已复制设备 ID'))
+                        .catch(() =>
+                          message.warning('复制失败，请手动选择设备 ID。'),
                         );
                     }}
                   >
-                    {settingUp ? '← 返回添加设备' : '← 返回工作台'}
+                    复制
                   </Button>
-                </nav>
-              )}
-              <ConnectionPanel
-                connection={item.state}
-                initialSource={item.source}
-                controller={controller}
-                previewTarget={previewTarget}
-                apiBase={item.apiBase}
-                reservedPeers={workspaces
-                  .filter(
-                    (other) =>
-                      // Occupancy follows workspace membership, including outages.
-                      other.id !== item.id && other.connected,
-                  )
-                  .map((other) => other.bluetoothPeerId)
-                  .filter((id): id is string => Boolean(id))}
-                reservedSources={workspaces
-                  .filter(
-                    (other) =>
-                      other.id !== item.id && other.connected && other.sourceId,
-                  )
-                  .map((other) => `${other.source}:${other.sourceId}`)}
-                onConnected={() => {
-                  void reload();
-                  navigate(`workspace/${item.id}`);
-                }}
-              />
-            </div>
-          ) : null
-        }
-        renderPreview={(controller) =>
-          !active ? null : isHome || !item.connected ? (
-            <div className="ios-hid-preview" ref={setPreviewTarget}>
-              <DisconnectedPreview />
-            </div>
-          ) : recoverySetup ? (
-            <div className="ios-hid-preview" ref={setPreviewTarget} />
-          ) : (
-            <div className="ios-hid-device-preview">
-              <div className="ios-hid-device-preview-header">
-                <span>
-                  {name}
-                  <small>／ {sourceLabel(item.source)}</small>
-                </span>
+                </dd>
+              </dl>
+            </section>
+          )}
+        </div>
+      }
+      preview={
+        isHome || !item.connected ? (
+          <div className="ios-hid-preview" ref={setPreviewTarget}>
+            <DisconnectedPreview />
+          </div>
+        ) : recoverySetup ? (
+          <div className="ios-hid-preview" ref={setPreviewTarget} />
+        ) : (
+          <div className="ios-hid-device-preview">
+            <div className="ios-hid-device-preview-header">
+              <div className="ios-hid-preview-device">
+                {tabs.length > 1 ? (
+                  <Select
+                    aria-label="切换设备"
+                    size="small"
+                    variant="borderless"
+                    value={item.id}
+                    onChange={(id) => navigate(`workspace/${id}`)}
+                    options={tabs.map((other) => ({
+                      value: other.id,
+                      label: (
+                        <span className="ios-hid-device-option">
+                          <span
+                            className={`ios-hid-device-dot${other.state?.phase !== 'ready' || other.screenError ? ' warning' : ''}`}
+                          />
+                          {workspaceName(other, workspaces)}
+                        </span>
+                      ),
+                    }))}
+                  />
+                ) : (
+                  <span>{name}</span>
+                )}
+                <small>／ {sourceLabel(item.source)}</small>
+              </div>
+              <div className="ios-hid-preview-actions">
+                <Button
+                  type="text"
+                  size="small"
+                  loading={adding}
+                  onClick={() => void onAdd()}
+                >
+                  ＋ 添加设备
+                </Button>
                 <Popover
-                  trigger="click"
+                  trigger={['hover', 'click']}
                   placement="bottomRight"
                   content={details}
                 >
@@ -462,34 +534,33 @@ function DeviceWorkspace({
                   </Tooltip>
                 </Popover>
               </div>
-              <div className="ios-hid-device-video">
-                <PlaygroundPreview
-                  playgroundSDK={controller.state.playgroundSDK}
-                  runtimeInfo={controller.state.runtimeInfo}
-                  serverUrl={`${location.origin}${item.apiBase}`}
-                  serverOnline={controller.state.serverOnline}
-                  isUserOperating={controller.state.isUserOperating || !ready}
-                />
-                {!ready && (
-                  <div className="ios-hid-device-preview-error">
-                    <strong>
-                      {busy
-                        ? '正在恢复设备连接…'
-                        : item.screenError
-                          ? '画面已中断'
-                          : '设备连接已断开'}
-                    </strong>
-                    {!busy && <p>{error}</p>}
-                    <Button loading={busy} onClick={() => void refresh()}>
-                      刷新
-                    </Button>
-                  </div>
-                )}
-              </div>
             </div>
-          )
-        }
-      />
-    </div>
+            <div className="ios-hid-device-video">
+              <ScreenshotViewer
+                mode="screen-only"
+                serverOnline
+                isUserOperating={!ready}
+                getScreenshot={getScreenshot}
+              />
+              {!ready && item.connected && (
+                <div className="ios-hid-device-preview-error">
+                  <strong>
+                    {busy
+                      ? '正在恢复设备连接…'
+                      : item.screenError
+                        ? '画面已中断'
+                        : '设备连接已断开'}
+                  </strong>
+                  {!busy && <p>{error}</p>}
+                  <Button loading={busy} onClick={() => void refresh()}>
+                    刷新
+                  </Button>
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      }
+    />
   );
 }

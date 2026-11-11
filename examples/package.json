@@ -1,0 +1,17 @@
+{
+  "name": "@midscene/robotics-examples",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node mg400/run.mjs",
+    "check": "node --check mg400/run.mjs && node --check mg400/multi-device.mjs && node --check ios-hid/run.mjs",
+    "multi": "node mg400/multi-device.mjs"
+  },
+  "dependencies": {
+    "@midscene/arm-kit": "workspace:*",
+    "@midscene/arm-adapter-mg400": "workspace:*",
+    "@midscene/core": "1.17.5",
+    "@midscene/ios-hid": "workspace:*"
+  }
+}

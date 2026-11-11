@@ -64,32 +64,42 @@ See the [SDK example](./examples/mg400/run.mjs). `RobotArmDevice.perform(action)
 
 ## iOS HID (experimental)
 
-Requires macOS, Xcode Command Line Tools to compile the native helpers, and an iPhone. No phone app is required. After installation and build, launch the dedicated Playground:
+Requires macOS, Xcode Command Line Tools to compile the native helpers, and an iPhone. No phone app is required. Start the device service on the Mac connected to the phones and configure a device at `http://localhost:5801/`.
+
+```sh
+pnpm ios-hid:service install
+```
+
+Run `pnpm ios-hid:service token` in another terminal on that Mac to obtain the access credential. Start the task Playground on the computer running the Agent:
 
 ```sh
 pnpm dev:ios-hid
 ```
 
-For a script, use the workspace SDK (or its packed package):
+Open `http://localhost:5800/`, enter the service address and token, query the device list, then select one available phone. Disconnect in Playground to release control or switch phones. The task page uses the official UI bundled with `@midscene/playground`. Add devices and recover offline connections in the management page.
+
+To run an Agent in a local script, use the SDK with a phone connected in the device manager.
+
+Run the [iOS HID example](./examples/ios-hid/run.mjs) with `node examples/ios-hid/run.mjs` after building. It loads the repository root `.env`, including `IOS_HID_SERVICE_TOKEN` and your model settings. Set `IOS_HID_DEVICE_ID` when multiple phones are configured. `IOS_HID_SERVICE_URL` defaults to `http://localhost:5801`.
 
 ```js
-import { IOSHIDDevice, IOSHIDAgent } from '@midscene/ios-hid';
+import { agentFromIOSHID } from '@midscene/ios-hid';
 
-const phone = new IOSHIDDevice({ name: 'Test iPhone', screen: { source: 'usb' } });
+const agent = await agentFromIOSHID({
+  host: 'http://localhost:5801',
+  deviceId: 'your-device-id',
+});
+
 try {
-  await phone.connect();
-  const agent = new IOSHIDAgent(phone);
-  try {
-    await agent.aiAct('Open Settings');
-  } finally {
-    await agent.destroy();
-  }
+  await agent.aiAct('Open Settings');
 } finally {
-  await phone.destroy();
+  await agent.destroy();
 }
 ```
 
-Configure your Midscene model through its normal settings; credentials are not stored in device profiles. Playground keeps source selection, pairing guidance and camera correction inside its own window. AirPlay setup keeps Bluetooth selection on the first page. Starting the receiver shows its name and PIN in the preview area; waiting for mirroring is a normal state, not a screenshot timeout. The first received frame enables verification. Receiver setup states use SSE without status polling. Receiver health uses client statistics and disconnect events to distinguish a static picture from missing video; new video restores the preview. Stop releases the receiver, and startup failures can be retried. Scripts guide USB and AirPlay setup in the terminal; only camera correction opens a browser. An interactive terminal is required for first-time device selection and binding; unattended scripts can reuse a profile configured in Playground. Trust the Mac over USB, pair with this Mac in iPhone Bluetooth settings (using the Mac name displayed in Playground), enable AssistiveTouch, preview the screen, and confirm the Bluetooth peer belongs to that phone. Keep a static, bright screen visible while pointer orientation is measured. Device IDs are generated internally; `name` selects a saved profile. Subsequent scripts can omit `screen` to reuse the saved source.
+Set `IOS_HID_SERVICE_TOKEN` to the output of `hid-service token`, or pass `token` in the options. Omit `deviceId` when only one phone is configured. `agent.destroy()` releases control of the phone.
+
+Configure your Midscene model through its normal settings; credentials are not stored in device profiles. The device manager keeps source selection, pairing guidance and camera correction inside its own window. AirPlay setup keeps Bluetooth selection on the first page. Starting the receiver shows its name and PIN in the preview area; waiting for mirroring is a normal state, not a screenshot timeout. The first received frame enables verification. Receiver setup states use SSE without status polling. Receiver health uses client statistics and disconnect events to distinguish a static picture from missing video; new video restores the preview. Stop releases the receiver, and startup failures can be retried. Scripts guide USB and AirPlay setup in the terminal; only camera correction opens a browser. An interactive terminal is required for first-time device selection and binding; unattended scripts can reuse a profile configured in Playground. Trust the Mac over USB, pair with this Mac in iPhone Bluetooth settings (using the Mac name displayed in Playground), enable AssistiveTouch, preview the screen, and confirm the Bluetooth peer belongs to that phone. Keep a static, bright screen visible while pointer orientation is measured. Device IDs are generated internally; `name` selects a saved profile. Subsequent scripts can omit `screen` to reuse the saved source.
 
 Pointer calibration waits for a stable start and endpoint in fresh video. Each movement is measured three times; a consistent majority is required before using the median trial. Repeated samples are saved with the motion profile, and predicted versus observed validation errors are logged to `midscene_run/log/ios-hid-pointer.log`. The accuracy threshold remains unchanged.
 
@@ -115,9 +125,33 @@ One local Host owns all iOS capture and Bluetooth sessions, independently of scr
 
 USB capture, BLE taps, measured swipes, English text input and input cancellation were exercised before the classic migration. Classic HID absolute pointer movement and independent routing to two connected iPhones have been verified. On one iPhone, connection-time orientation, relative movement measurement and independent axis/diagonal validation also passed and the profile was saved; taps, dragging, scrolling and keyboard input over the new transport still require hardware verification. Keyboard text currently supports the US ASCII layout and requires an English input method; unsupported text is rejected before typing. Pointer measurements use frame differences and may fail on animated or low-contrast screens. AirPlay integration and multi-phone concurrency still require real-device verification. The Host reserves each device's capture source and Bluetooth peer independently; the current AirPlay backend permits one receiver at a time.
 
-Camera input shares the arm calibration phone helper, marker detection and screen editor. The React connection panel uses the upstream Playground shell. Each device has an independent upstream Playground session, Agent, task/cancellation state, report store and UI history. Device tabs switch views without disconnecting other phones or stopping their tasks. Add Device opens `#/connect/<workspace-id>`; each workspace uses `#/workspace/<workspace-id>`. Refresh restores the selected workspace and setup progress while the Playground server is running. Connecting keeps the form visible with a loading button; errors appear as global notifications. Connection progress and workspace status share one SSE stream, including a full snapshot after refresh or reconnection; the connection panel does not poll. The server retains picture-health checks. A Bluetooth status icon beside the preview opens device details. Native Bluetooth subscription changes are pushed to the workspace through SSE; picture health is checked separately. The Host checks picture health before each input action. After input it waits for visible motion to quiet (320 ms quiet window, 2.5 s observation deadline) before returning the next screenshot; this does not replace application-specific `aiWaitFor` conditions. AirPlay may reuse its last picture while recent client statistics explicitly confirm an idle sender, but not after a disconnect or a decoding stall. Bluetooth or picture failures disable execution while keeping the workspace and history; the preview mask offers Refresh to restore the same saved configuration and verify input and fresh video before enabling execution. Recovery preserves the device tab, Agent and task history without replaying tasks. Stop active tasks before refreshing. Scripts can call `device.refreshConnection()` on the same Device object. Choose the source when adding a device; remove and add again to use another source. Removal affects only that device. Used Bluetooth peers stay visible but disabled in new setup. USB and camera lists retain all discovered devices, including occupied entries marked as in use and disabled. Counts include occupied entries; when none are available, the selector explains that all devices are in use; choose one unassigned phone to bind. Sources remain reserved by the Host. Browser model settings are shared; prompt and task histories are scoped to each workspace. Choose USB to list connected iPhones, AirPlay to start its receiver, or camera to select a camera before connecting. Selecting a camera immediately shows its live preview in the connection panel; connecting goes straight to the shared QR pairing and correction flow; use the full-page Scan Phone and Camera Correction flow with a Back button and the same comparison view and detection toolbar as arm calibration. Marker detection and AI detection share the arm calibration implementation; AI model settings share the Playground task configuration form, including form/environment-variable editing and Verify connectivity checks; the arm calibration dialog uses the same component. The phone must reach the computer over the LAN. The temporary phone service exposes only token-protected helper pages and the phone protocol, never device controls. If page markers cannot locate the full display boundary, manual adjustment and mapping validation remain available.
+The device manager reuses the camera setup, marker detection and screen editor. It can preview multiple configured phones. A Playground control session is exclusive per phone and shares the manager's existing hardware connection. The manager can still preview a busy phone. Recovery and removal are available after control is released.
 
 Saved configurations are unique per Bluetooth peer and screen source (USB, AirPlay or camera). Connections reuse that pair automatically, and device names come from Bluetooth. Uncheck “使用已保存的校准配置” to repeat calibration and update the same record. Older duplicate records for a pair are consolidated on Host startup, retaining the last saved record.
+
+## iOS HID device service (experimental)
+
+The device service package is `@midscene/ios-hid-service`. Its two CLI names, `hid-service` and `midscene-hid-service`, run the same commands. To try the workspace build on the Mac connected to the phones:
+
+```sh
+pnpm build
+pnpm ios-hid:service install
+```
+
+Open the printed local setup URL, normally `http://localhost:5801/`. The manager provides multi-device setup, calibration, previews and recovery.
+
+```sh
+pnpm ios-hid:service status
+pnpm ios-hid:service stop
+pnpm ios-hid:service start
+pnpm ios-hid:service uninstall
+```
+
+`install` registers and starts a macOS LaunchAgent for the current user. The service starts at login and restarts after a crash. Closing the browser or terminal leaves it running. `stop` unloads it for the current login, and `uninstall` removes its login registration. The LaunchAgent references the current Node executable and built CLI, so reinstall it if those paths change. Logs are in `~/.midscene/ios-hid/service/service.log`. Use `install --port 5802` to choose another port. If you registered the earlier manager prototype, unload its `com.midscene.ios-hid-manager` LaunchAgent and remove the old plist from `~/Library/LaunchAgents` before installing.
+
+The service listens on `0.0.0.0:5801` by default. Open the local setup URL on the Mac to manage devices. For LAN clients, the CLI prints the Swagger UI URLs at `/api/docs`. The OpenAPI definition is at `/api/openapi.json`. To call `GET /api/v1/devices`, retrieve the credential on the Mac with `pnpm ios-hid:service token` and send it as `Authorization: Bearer <token>`. The response lists saved profile IDs, names and screen sources.
+
+The public API reports availability and supports exclusive device control sessions for phones connected in the manager. Sessions expire after 30 seconds without a heartbeat. After restarting the service, add the phones again to reuse their saved calibration. The local hardware backend runs separately from the LaunchAgent.
 
 ## Project Structure
 
@@ -129,9 +163,12 @@ packages/shared/            @midscene/robotics-shared: browser-safe contracts an
 packages/vision/            Shared camera capture, correction and setup UI
 packages/ios-hid/           iOS SDK, local Host and native HID/USB helpers
 packages/ios-hid-playground/ iOS Playground using upstream @midscene/playground
+packages/ios-hid-service/    iOS HID device service and macOS login CLI
 packages/playground/        Reusable Playground
 apps/playground/            MG400 Playground launcher
+examples/package.json       Shared dependencies for the examples
 examples/mg400/             SDK examples
+examples/ios-hid/           iOS HID service SDK example
 ```
 
 Calibration code is in `packages/arm-kit/src/calibration`: phone and camera setup, sample collection and fitting, and boundary verification.
@@ -146,4 +183,4 @@ The new iOS HID and vision packages use Rstest. After building, run their suites
 
 AirPlay logs use a small native terminal launcher so UxPlay connection events and client statistics arrive immediately, separately from JPEG video. Swipe planning may extend short requested durations up to 2 seconds to stay within measured steps; the requested duration is a target, not a hard deadline.
 
-Playground allows up to 3 minutes for USB/camera recovery because a rejected cached measurement may require full recalibration; AirPlay retains its 10-minute mirroring window.
+The device manager allows up to 3 minutes for USB/camera recovery because a rejected cached measurement may require full recalibration; AirPlay retains its 10-minute mirroring window.

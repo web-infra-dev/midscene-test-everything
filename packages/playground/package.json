@@ -57,6 +57,7 @@
       "import": "./dist/server/index.js"
     },
     "./shell": "./src/ui/vendor/playground-app/PlaygroundApp.tsx",
+    "./visualizer": "./src/ui/vendor/visualizer/shell.ts",
     "./shell/*": "./src/ui/vendor/playground-app/*"
   },
   "files": ["dist/server", "dist/ui", "src/ui"]

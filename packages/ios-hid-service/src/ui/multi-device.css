@@ -3,48 +3,19 @@
   place-items: center;
   height: 100vh;
 }
-.ios-hid-device-tabs {
-  padding: 0 20px;
-  flex: none;
-}
-.ios-hid-device-tabs .ant-tabs-nav {
-  margin: 0;
-}
-.ios-hid-device-tabs .ant-tabs-nav:before {
-  left: 0;
-  right: 0;
-}
-.ios-hid-device-tabs .ant-tabs-small > .ant-tabs-nav .ant-tabs-tab {
-  font-size: 12px;
-  line-height: 20px;
-  padding: 13px 0;
-}
-.ios-hid-device-tabs .ant-tabs-tab + .ant-tabs-tab {
-  margin-left: 20px;
-}
-.ios-hid-device-tabs .ant-tabs-extra-content {
-  padding-left: 12px;
-}
-.ios-hid-device-tabs .ant-tabs-extra-content .ant-btn {
-  font-size: 12px;
-  line-height: 20px;
-}
-.ios-hid-device-tabs .ant-tabs-content-holder {
-  display: none;
-}
-.ios-hid-tab-label {
+.ios-hid-device-option {
   display: inline-flex;
   align-items: center;
   gap: 7px;
 }
-.ios-hid-tab-dot {
+.ios-hid-device-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: #39a372;
   flex: none;
 }
-.ios-hid-tab-dot.warning {
+.ios-hid-device-dot.warning {
   background: #d89614;
 }
 .ios-hid-device-notice {
@@ -80,10 +51,26 @@
   border-bottom: 1px solid var(--midscene-border, #f0f0f0);
   flex: none;
 }
+.ios-hid-preview-device,
+.ios-hid-preview-actions {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.ios-hid-preview-device .ant-select {
+  min-width: 80px;
+  max-width: min(30vw, 230px);
+  font-size: 12px;
+}
+.ios-hid-preview-actions {
+  flex: none;
+  gap: 6px;
+}
 .ios-hid-device-preview-header small {
   font-size: 11px;
   color: var(--midscene-text-tertiary, #999);
   margin-left: 8px;
+  white-space: nowrap;
 }
 .ios-hid-status-icon {
   display: inline-flex;
@@ -165,4 +152,67 @@
 .ios-hid-device-preview-header .ant-btn:active {
   background: transparent;
   box-shadow: none;
+}
+
+.ios-hid-manager-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.ios-hid-manager-summary {
+  padding: 24px 20px;
+}
+.ios-hid-manager-summary-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.ios-hid-manager-summary h2 {
+  font-size: 14px;
+  font-weight: 500;
+  margin: 0;
+}
+.ios-hid-manager-status {
+  color: #ad6800;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.ios-hid-manager-status.ready {
+  color: #278255;
+}
+.ios-hid-manager-summary dl {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 20px 16px;
+  margin: 28px 0;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.ios-hid-manager-summary dt {
+  color: var(--midscene-text-tertiary, #999);
+}
+.ios-hid-manager-summary dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.ios-hid-manager-device-id {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.ios-hid-manager-device-id code {
+  min-width: 0;
+  font-size: 11px;
+  color: var(--midscene-text-secondary, #777);
+}
+.ios-hid-manager-device-id .ant-btn {
+  flex: none;
+  height: auto;
+  padding: 0 4px;
+  color: var(--midscene-brand, #1677ff);
+  font-size: 11px;
 }

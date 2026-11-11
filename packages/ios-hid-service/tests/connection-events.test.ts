@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import type { ConnectionState } from '@midscene/ios-hid';
 import { IOSHIDDevice } from '@midscene/ios-hid';
 import { rstest, test } from '@rstest/core';
-import { IOSHIDSessionManager } from '../dist/platform.js';
+import { DeviceConnection } from '../dist/device-connection.js';
 
 test('connection callbacks publish setup, ready, failure and teardown without state polling', async () => {
   let update!: (state: ConnectionState) => void;
@@ -19,12 +19,12 @@ test('connection callbacks publish setup, ready, failure and teardown without st
   rstest
     .spyOn(IOSHIDDevice.prototype, 'destroy')
     .mockImplementation(async () => {});
-  const manager = new IOSHIDSessionManager();
-  const snapshots: ReturnType<IOSHIDSessionManager['getSnapshot']>[] = [];
+  const manager = new DeviceConnection();
+  const snapshots: ReturnType<DeviceConnection['getSnapshot']>[] = [];
   const unsubscribe = manager.onStateChange(() =>
     snapshots.push(manager.getSnapshot()),
   );
-  const connecting = manager.createSession({
+  const connecting = manager.connect({
     source: 'camera',
     cameraId: 'camera',
     bluetoothPeerId: 'phone',
@@ -62,7 +62,7 @@ test('connection callbacks publish setup, ready, failure and teardown without st
   );
 });
 
-test('recovery retains the Agent and waits for a fresh frame; failure can be retried', async () => {
+test('recovery waits for a fresh frame; failure can be retried', async () => {
   const ready: ConnectionState = {
     id: 'lease',
     phase: 'ready',
@@ -93,13 +93,12 @@ test('recovery retains the Agent and waits for a fresh frame; failure can be ret
     .mockImplementation(async (options) => {
       options?.onState?.(ready);
     });
-  const manager = new IOSHIDSessionManager();
-  const session = await manager.createSession({
+  const manager = new DeviceConnection();
+  await manager.connect({
     source: 'usb',
     deviceId: 'usb',
     bluetoothPeerId: 'bt',
   });
-  const agent = session.agentFactory();
   manager.updateBluetoothStatus([]);
   const recovery = manager.refreshDevice();
   assert.equal(manager.refreshDevice(), recovery);
@@ -118,7 +117,6 @@ test('recovery retains the Agent and waits for a fresh frame; failure can be ret
   screenshot.mockResolvedValue('image');
   await manager.refreshDevice();
   assert.equal(manager.getConnectionState()!.phase, 'ready');
-  assert.ok(agent, 'original Agent survives both recovery attempts');
   await manager.destroySession();
   assert.equal(destroy.mock.calls.length, 1);
 });

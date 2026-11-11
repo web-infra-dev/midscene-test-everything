@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { IOSHIDDevice } from '@midscene/ios-hid';
 import { rstest, test } from '@rstest/core';
-import { IOSHIDSessionManager } from '../dist/platform.js';
+import { DeviceConnection } from '../dist/device-connection.js';
 test('screen health can fail and recover independently of Bluetooth state', async () => {
   let bad = false;
   rstest
@@ -30,8 +30,8 @@ test('screen health can fail and recover independently of Bluetooth state', asyn
   rstest
     .spyOn(IOSHIDDevice.prototype, 'destroy')
     .mockImplementation(async () => {});
-  const manager = new IOSHIDSessionManager();
-  await manager.createSession({
+  const manager = new DeviceConnection();
+  await manager.connect({
     source: 'usb',
     deviceId: 'usb',
     bluetoothPeerId: 'bt',

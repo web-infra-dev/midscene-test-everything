@@ -68,30 +68,42 @@ MG400 使用竖直向下的触笔时，「触笔长度」可以留空。确认�
 
 需要 macOS、用于编译原生辅助程序的 Xcode Command Line Tools，以及 iPhone。手机无需安装 App。安装依赖并构建后，启动专用工作台：
 
+在连接手机的 Mac 上先启动设备服务，在 `http://localhost:5801/` 添加并连接手机：
+
+```sh
+pnpm ios-hid:service install
+```
+
+在另一个终端运行 `pnpm ios-hid:service token` 获取访问凭证。运行任务的电脑启动 Playground：
+
 ```sh
 pnpm dev:ios-hid
 ```
 
-脚本可以使用 workspace SDK 或打包后的 SDK：
+打开 `http://localhost:5800/`，填写设备服务地址和凭证，查询后选一台可用手机。点击「断开设备」释放控制权，也可以再选另一台。 任务区直接使用 `@midscene/playground` 自带的官方界面。添加、校准和恢复连接都在设备管理台完成。
+
+本地脚本使用 SDK 连接已在管理台连好的手机。
+
+构建后运行 `node examples/ios-hid/run.mjs` 即可体验 [iOS HID 示例](./examples/ios-hid/run.mjs)。示例加载仓库根目录的 `.env`，读取 `IOS_HID_SERVICE_TOKEN` 和模型配置。配置多台手机时设置 `IOS_HID_DEVICE_ID`，`IOS_HID_SERVICE_URL` 默认是 `http://localhost:5801`。
 
 ```js
-import { IOSHIDDevice, IOSHIDAgent } from '@midscene/ios-hid';
+import { agentFromIOSHID } from '@midscene/ios-hid';
 
-const phone = new IOSHIDDevice({ name: '测试手机', screen: { source: 'usb' } });
+const agent = await agentFromIOSHID({
+  host: 'http://localhost:5801',
+  deviceId: 'your-device-id',
+});
+
 try {
-  await phone.connect();
-  const agent = new IOSHIDAgent(phone);
-  try {
-    await agent.aiAct('打开设置');
-  } finally {
-    await agent.destroy();
-  }
+  await agent.aiAct('打开设置');
 } finally {
-  await phone.destroy();
+  await agent.destroy();
 }
 ```
 
-模型使用 Midscene 的正常配置方式，凭据不写入设备配置。Playground 在自身界面内完成画面选择、配对引导和摄像头校正。 AirPlay 保留首页蓝牙选择；启动接收器后，右侧展示接收器名称与配对码，等待投屏不视为截图超时。收到首帧后才启用验证。接收器设置状态通过 SSE 推送，不轮询状态；通过 UxPlay 客户端统计和断开事件区分静止画面、连接中断与视频停滞，新画面到达后恢复预览。「停止接收器」释放会话，启动失败可重试。JS 脚本的 USB、AirPlay 设置通过终端引导，只有摄像头校正会打开浏览器；首次选择与绑定设备需要交互式终端，无人值守脚本可复用已在 Playground 配置的设备。连接时：通过 USB 信任 Mac，在 iPhone 蓝牙设置中配对这台 Mac（使用 Playground 提示的 Mac 名称），启用辅助触控（AssistiveTouch），预览画面并确认蓝牙连接属于同一台手机。检测指针方向时，保持静态、明亮画面。内部自动生成设备 ID，`name` 用于选择已保存配置；后续脚本省略 `screen` 即可复用画面来源。
+将 `hid-service token` 的输出设置为 `IOS_HID_SERVICE_TOKEN`，也可以通过 `token` 参数传入。只配置了一台手机时可以省略 `deviceId`。`agent.destroy()` 会释放手机控制权。
+
+模型使用 Midscene 的正常配置方式，凭据不写入设备配置。设备管理台在自身界面内完成画面选择、配对引导和摄像头校正。 AirPlay 保留首页蓝牙选择；启动接收器后，右侧展示接收器名称与配对码，等待投屏不视为截图超时。收到首帧后才启用验证。接收器设置状态通过 SSE 推送，不轮询状态；通过 UxPlay 客户端统计和断开事件区分静止画面、连接中断与视频停滞，新画面到达后恢复预览。「停止接收器」释放会话，启动失败可重试。JS 脚本的 USB、AirPlay 设置通过终端引导，只有摄像头校正会打开浏览器；首次选择与绑定设备需要交互式终端，无人值守脚本可复用已在 Playground 配置的设备。连接时：通过 USB 信任 Mac，在 iPhone 蓝牙设置中配对这台 Mac（使用 Playground 提示的 Mac 名称），启用辅助触控（AssistiveTouch），预览画面并确认蓝牙连接属于同一台手机。检测指针方向时，保持静态、明亮画面。内部自动生成设备 ID，`name` 用于选择已保存配置；后续脚本省略 `screen` 即可复用画面来源。
 
 指针测量会等待新画面中的起点和终点稳定。每组移动独立测量三次，至少两次一致才采用中间样本；重复样本随移动配置保存，预测与实际位移的复核误差记录在 `midscene_run/log/ios-hid-pointer.log`。精度门槛保持不变。
 
@@ -117,9 +129,33 @@ USB 画面来源列表以「手机名 - 手机型号」（例如「我的 iPhone
 
 迁移前已在一台 iPhone 上验证 USB 采集、BLE 点击、测量后的滑动、英文输入与中途取消输入。经典蓝牙已验证绝对指针移动和两台 iPhone 的独立路由；一台 iPhone 已通过连接时的方向检测、相对移动测量及横纵斜向独立复核，并保存曲线。新通道的点击、拖动、滚动和键盘输入仍需真机验证。键盘文本暂支持美式 ASCII 布局，需要切换到英文输入法，不支持的文本会在输入前拒绝。指针测量使用帧差，动画或低对比背景可能导致失败。AirPlay 集成和多手机并发仍需真机验证。Host 分别管理每台设备的画面来源与蓝牙连接占用；当前 AirPlay 后端同一时间只支持一个接收器。
 
-摄像头输入复用机械臂的扫码辅助页、屏幕标记检测和校正组件。React 连接面板沿用原版 Playground 布局。每台设备拥有独立的上游 Playground 会话、Agent、任务与取消状态、报告和界面历史。设备标签页只切换视图，不会断开其他手机或停止其任务。「添加设备」进入 `#/connect/<workspace-id>`，工作台使用 `#/workspace/<workspace-id>`；Playground 服务运行期间刷新会恢复选中的设备及设置进度。连接处理期间首页保留表单，连接按钮显示 loading；异常通过全局提示展示。连接进度与工作区状态共用 SSE 推送，刷新或重连时发送完整快照，连接面板不再轮询；服务端保留画面健康检查。右侧预览旁的蓝牙图标打开设备详情。蓝牙订阅变化通过 SSE 推送工作台，画面健康检查独立进行；Host 在每次输入前要求新画面。蓝牙或画面异常时禁用执行，保留工作区和记录；右侧遮罩只提供「刷新」：按原配置重建连接，确认输入和新画面均可用后恢复；保留当前设备标签、Agent 与任务记录，不自动重放任务。正在执行任务时须先停止再刷新。脚本可调用 `device.refreshConnection()` 恢复同一个设备对象。画面来源在添加设备时确定，需要更换时移除后重新添加。移除只影响当前设备。新增连接中已占用的蓝牙手机标注「使用中」并禁用；USB 和摄像头列表保留全部已发现设备，已占用项标注「使用中」并禁用，数量包含这些设备，全部占用时提示「设备均在使用中」。每次绑定一台尚未分配的手机即可，已有设备可以保持连接。Host 继续负责资源占用检查。浏览器模型配置共用，任务记录、提示词历史按设备隔离。先选画面来源：USB 列出已连接手机，AirPlay 启动接收器，独立摄像头先选择具体相机。选择相机后即在连接界面显示实时预览，点击连接直接进入共用的扫码和校正流程；在带返回按钮的完整页面内按「扫码连接 → 相机校正」操作，复用机械臂的画面对照、检测工具栏和模型设置交互。相机校正提供标记识别和与机械臂共用的 AI 检测；模型设置复用 Playground 任务设置表单，支持表单／环境变量编辑和 Verify 连通性检查，机械臂校正弹窗同步生效。核对屏幕边缘后保存。手机需要能访问电脑的局域网地址；临时手机服务仅开放带会话令牌的辅助页和连接协议，不开放设备控制。网页标记无法确定完整屏幕边界时，保留手动调整与映射校验。
+设备管理台复用摄像头扫码、标记检测和屏幕校正，可预览多台手机。Playground 独占一台手机的控制权，复用管理台维护的硬件连接。手机被占用时，管理台仍能预览，恢复和移除操作需先释放控制权。
 
 保存配置以「蓝牙设备 ID + 画面来源（USB、AirPlay 或摄像头）」唯一标识，连接时自动复用对应记录，设备名称使用蓝牙读取的手机名。取消勾选「使用已保存的校准配置」可重新校准并更新同一条记录。Host 启动时会合并相同组合的历史重复记录，保留最近保存的一条。
+
+## iOS HID 设备服务（实验中）
+
+服务包名为 `@midscene/ios-hid-service`，提供 `hid-service` 和 `midscene-hid-service` 两个等价命令。在连接手机的 Mac 上，可以从仓库根目录试用：
+
+```sh
+pnpm build
+pnpm ios-hid:service install
+```
+
+打开命令打印的本机配置页，默认是 `http://localhost:5801/`。管理台支持多设备添加、校准、预览和恢复。
+
+```sh
+pnpm ios-hid:service status
+pnpm ios-hid:service stop
+pnpm ios-hid:service start
+pnpm ios-hid:service uninstall
+```
+
+`install` 注册并启动当前用户的 macOS LaunchAgent。用户登录时服务自动启动，异常退出后重启。关闭网页或终端，服务继续运行。`stop` 停止本次登录中的服务，`uninstall` 移除登录启动配置。启动配置记录当前 Node 和编译后的 CLI 路径，移动后需重新安装。日志在 `~/.midscene/ios-hid/service/service.log`。可以用 `install --port 5802` 改端口。如果安装过旧版管理台原型，先卸载 `com.midscene.ios-hid-manager` LaunchAgent，并删除 `~/Library/LaunchAgents` 下对应的旧配置。
+
+服务默认监听 `0.0.0.0:5801`。配置手机请在 Mac 本机打开管理台。局域网其他电脑可以打开命令打印的 `/api/docs` 通过 Swagger UI 查看和试调接口，OpenAPI 定义在 `/api/openapi.json`。在 Mac 上运行 `pnpm ios-hid:service token` 获取凭证，调用 `GET /api/v1/devices` 时通过 `Authorization: Bearer <token>` 发送。接口返回已保存设备的 ID、名称和画面来源。
+
+设备 API 返回连接和占用状态，支持控制已在管理台连好的手机。控制会话连续 30 秒未收到心跳时释放。服务重启后需重新添加手机，可复用已保存校准。底层硬件进程独立于 LaunchAgent 运行。
 
 ## 目录结构
 
@@ -131,9 +167,12 @@ packages/shared/            @midscene/robotics-shared：浏览器安全的协议
 packages/vision/            共用摄像头采集、校正与辅助页面
 packages/ios-hid/           iOS SDK、Host 与原生 HID/USB 实现
 packages/ios-hid-playground/ 基于上游 @midscene/playground 的 iOS 工作台
+packages/ios-hid-service/    iOS HID 设备服务与 macOS 常驻命令
 packages/playground/        可复用工作台
 apps/playground/            MG400 工作台启动入口
+examples/package.json       示例共用的依赖配置
 examples/mg400/             SDK 示例
+examples/ios-hid/           iOS HID 设备服务 SDK 示例
 ```
 
 标定代码在 `packages/arm-kit/src/calibration`，包含手机与相机配置、采集拟合、边界验证。
@@ -148,4 +187,4 @@ examples/mg400/             SDK 示例
 
 Host 在每次输入前检查画面健康状态，输入后在返回下一张截图前等待可见动画稳定（320 ms 静止窗口，最长观察 2.5 秒）；业务加载完成仍需按需使用 `aiWaitFor`。AirPlay 在最近客户端统计明确表示没有发送新视频时可复用静止画面，断开或解码停滞后不能继续复用。一个小型原生终端启动器让 UxPlay 的连接事件和统计即时输出，JPEG 视频保持独立管道。滑动规划可将过短的请求时长延长至 2 秒，以保持实测步长限制；请求时长是目标，不是硬性截止时间。
 
-Playground 的 USB/摄像头恢复最多等待 3 分钟，避免复核失败后的完整重测被原有 60 秒上限取消；AirPlay 仍保留 10 分钟投屏等待时间。
+设备管理台的 USB/摄像头恢复最多等待 3 分钟，避免复核失败后的完整重测被原有 60 秒上限取消；AirPlay 仍保留 10 分钟投屏等待时间。

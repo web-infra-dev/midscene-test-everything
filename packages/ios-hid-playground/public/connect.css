@@ -1,0 +1,68 @@
+.session-setup-card > .session-setup-form:not(#hid-form) {
+  display: none;
+}
+#hid-form label {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 18px;
+  font-size: 12px;
+  color: var(--midscene-text-secondary, #777);
+}
+#hid-form input,
+#hid-form select {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 36px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--midscene-bg-secondary, #f0f2f5);
+  color: var(--midscene-text, #202124);
+  font: inherit;
+  font-size: 14px;
+}
+#hid-form input:focus-visible,
+#hid-form select:focus-visible {
+  outline: 2px solid var(--midscene-brand, #1677ff);
+  outline-offset: 1px;
+}
+.hid-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 24px;
+}
+.hid-actions button,
+.hid-device-toolbar button {
+  min-height: 32px;
+  padding: 4px 12px;
+  border: 1px solid var(--midscene-border, #d9d9d9);
+  border-radius: 8px;
+  background: var(--midscene-surface, #fff);
+  color: var(--midscene-text, #202124);
+  font: inherit;
+  cursor: pointer;
+}
+.hid-actions #connect {
+  flex: 1;
+  border-color: #1677ff;
+  background: #1677ff;
+  color: #fff;
+}
+.hid-actions button:disabled,
+.hid-device-toolbar button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+#hid-notice,
+.hid-device-toolbar span {
+  color: #ad6800;
+  font-size: 12px;
+}
+.hid-device-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  padding-bottom: 12px;
+}

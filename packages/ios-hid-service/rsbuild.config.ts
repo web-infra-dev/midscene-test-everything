@@ -25,5 +25,5 @@ export default defineConfig({
     },
   },
   output: { distPath: { root: 'dist/ui' }, externals: ['sharp'] },
-  html: { title: 'Midscene iOS HID Playground' },
+  html: { title: 'Midscene iOS HID Device Service' },
 });

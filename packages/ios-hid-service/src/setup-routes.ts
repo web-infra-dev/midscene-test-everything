@@ -1,35 +1,11 @@
-import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { HostClient } from '@midscene/ios-hid';
 import { connectIOSHIDHost } from '@midscene/ios-hid';
-import type { LaunchPlaygroundOptions } from '@midscene/playground';
-import type { IOSHIDSessionManager } from './platform.js';
+import type { DeviceConnection } from './device-connection.js';
 
-type PlaygroundServer = Parameters<
-  NonNullable<LaunchPlaygroundOptions['configureServer']>
->[0];
+import type { RequestHandler, Response, Router } from 'express';
 
-export type SetupRequest = IncomingMessage & {
-  path: string;
-  params: Record<string, string>;
-  query: Record<string, unknown>;
-};
-export type Response = ServerResponse & {
-  status(code: number): Response;
-  json(value: unknown): Response;
-  send(value: Buffer): Response;
-};
-export type Handler = (
-  req: SetupRequest,
-  res: Response,
-  next: () => void,
-) => void;
-export type Routes = {
-  use(path: string, handler: Handler): unknown;
-  delete(path: string, handler: Handler): unknown;
-  get(path: string, handler: Handler): unknown;
-  post(path: string, handler: Handler): unknown;
-  all(path: string, handler: Handler): unknown;
-};
+export type Handler = RequestHandler;
+export type Routes = Pick<Router, 'use' | 'delete' | 'get' | 'post' | 'all'>;
 
 /** Both setup and Bluetooth use the same streaming proxy and cancellation. */
 async function forwardEvents(
@@ -63,10 +39,9 @@ async function forwardEvents(
 
 /** The browser only talks to Playground; Host capability URLs stay on the server. */
 export function mountSetupRoutes(
-  server: PlaygroundServer,
-  manager: IOSHIDSessionManager,
+  app: Routes,
+  manager: Pick<DeviceConnection, 'getConnectionState' | 'destroySession'>,
 ) {
-  const app = server.app as Routes;
   app.get('/ios-hid/bluetooth/events', (req, res) => {
     const cancellation = new AbortController();
     res.once('close', () => cancellation.abort());

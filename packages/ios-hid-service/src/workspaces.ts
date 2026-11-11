@@ -1,22 +1,20 @@
 import { randomUUID } from 'node:crypto';
 import type { ServerResponse } from 'node:http';
 import { connectIOSHIDHost } from '@midscene/ios-hid';
-import {
-  type LaunchPlaygroundOptions,
-  PlaygroundServer,
-} from '@midscene/playground';
-import { IOSHIDSessionManager } from './platform.js';
-import { type Handler, type Routes, mountSetupRoutes } from './setup-routes.js';
+import express, { type Request, type Router } from 'express';
+import type { ControlledDevice } from './control-sessions.js';
+import { DeviceConnection } from './device-connection.js';
+import { mountSetupRoutes } from './setup-routes.js';
 
 type Entry = {
   id: string;
-  server: PlaygroundServer;
-  manager: IOSHIDSessionManager;
+  router: Router;
+  manager: DeviceConnection;
   connected: boolean;
-  activeRequests: number;
+  deviceId?: string;
   unsubscribe: () => void;
 };
-/** One upstream session/controller/report store per phone; all routes share the parent listener. */
+
 export class DeviceWorkspaces {
   private entries = new Map<string, Entry>();
   private closing = false;
@@ -83,112 +81,68 @@ export class DeviceWorkspaces {
     })();
   }
   constructor(
-    private staticPath: string,
-    private createManager = () => new IOSHIDSessionManager(),
+    private createManager = () => new DeviceConnection(),
     private watchNativeBluetooth = true,
   ) {}
+
   async create() {
-    if (this.closing) throw new Error('Playground is closing');
+    if (this.closing) throw new Error('Device service is closing');
     if (this.entries.size >= 32)
       throw new Error('最多支持 32 个设备工作区，请先移除不用的设备。');
     const id = randomUUID();
     const manager = this.createManager();
-    const server = new PlaygroundServer(
-      undefined,
-      this.staticPath,
-      `ios-hid-${id}`,
-    );
-    server.setPreparedPlatform({
-      platformId: 'ios-hid',
-      title: 'iOS HID Playground',
-      sessionManager: manager,
-      preview: { kind: 'screenshot' },
+    const router = express.Router();
+    mountSetupRoutes(router, manager);
+    router.post('/session', express.json({ limit: '64kb' }), (req, res) => {
+      if (req.get('x-midscene-playground') !== 'setup') {
+        res.status(403).end();
+        return;
+      }
+      if (
+        !req.body ||
+        typeof req.body !== 'object' ||
+        Array.isArray(req.body)
+      ) {
+        res.status(400).json({ error: 'Invalid device setup' });
+        return;
+      }
+      void manager
+        .connect(req.body)
+        .then(() => res.json(this.describe(entry)))
+        .catch((error: Error) =>
+          res.status(400).json({ error: error.message }),
+        );
     });
-    mountSetupRoutes(server, manager);
-    const guard: Handler = (req, res, next) => {
-      void (async () => {
-        if (
-          req.method === 'POST' &&
-          ['/execute', '/interact'].includes(req.path)
-        ) {
-          const entry = this.entries.get(id)!;
-          entry.activeRequests++;
-          let finished = false;
-          const finish = () => {
-            if (finished) return;
-            finished = true;
-            entry.activeRequests--;
-          };
-          res.once('finish', finish);
-          res.once('close', finish);
-          await manager.refreshConnectionState();
-          const snapshot = manager.getSnapshot();
-          if (
-            snapshot.state?.phase !== 'ready' ||
-            snapshot.screenError ||
-            snapshot.refreshing
-          ) {
-            res.status(409).json({
-              error:
-                snapshot.state?.error ??
-                snapshot.screenError ??
-                '设备未就绪，请检查连接后刷新。',
-            });
-            return;
-          }
-        }
-        const json = res.json.bind(res);
-        // The upstream report links are origin-relative. Scope them to the owning phone.
-        res.json = (value: unknown) => {
-          const entry = this.entries.get(id);
-          if (entry && manager.getConnectionState()?.phase === 'ready')
-            entry.connected = true;
-          this.publish();
-          return json(
-            JSON.parse(
-              JSON.stringify(value, (key, item) =>
-                ['url', 'replayUrl'].includes(key) &&
-                typeof item === 'string' &&
-                item.startsWith('/reports/')
-                  ? `/ios-hid/workspaces/${id}${item}`
-                  : item,
-              ),
-            ),
-          );
-        };
-        next();
-      })().catch((error: Error) => {
-        if (!res.headersSent) res.status(500).json({ error: error.message });
-      });
-    };
-    server.app.use(guard);
-    // The upstream public API initializes routes in launch(). Release its temporary
-    // loopback listener; the parent Express app mounts the initialized handler.
-    await server.launch(0);
-    const listener = server.server!;
-    await new Promise<void>((resolve, reject) =>
-      listener.close((error) => (error ? reject(error) : resolve())),
-    );
-    server.server = undefined;
-    if (this.closing) {
-      await server.close();
-      throw new Error('Playground is closing');
-    }
-    const unsubscribe = manager.onStateChange(() => this.publish());
-    this.entries.set(id, {
+    router.get('/screenshot', (_req, res) => {
+      void manager
+        .screenshot()
+        .then((frame) => {
+          res.set('Cache-Control', 'no-store').json({
+            screenshot: `data:image/jpeg;base64,${frame.jpeg.toString('base64')}`,
+            timestamp: frame.receivedAt,
+          });
+        })
+        .catch((error: Error) =>
+          res.status(409).json({ error: error.message }),
+        );
+    });
+    const entry = {
       id,
-      server,
+      router,
       manager,
       connected: false,
-      activeRequests: 0,
-      unsubscribe,
-    });
+      unsubscribe: manager.onStateChange(() => this.publish()),
+    };
+    this.entries.set(id, entry);
     this.publish();
-    return this.describe(this.entries.get(id)!);
+    return this.describe(entry);
   }
   private describe(entry: Entry) {
     const snapshot = entry.manager.getSnapshot();
-    if (snapshot.state?.phase === 'ready') entry.connected = true;
+    if (snapshot.state?.phase === 'ready') {
+      entry.connected = true;
+      entry.deviceId = snapshot.state.device?.id;
+    }
     return {
       id: entry.id,
       apiBase: `/ios-hid/workspaces/${entry.id}`,
@@ -202,8 +156,17 @@ export class DeviceWorkspaces {
       return this.describe(entry);
     });
   }
-  get(id: string) {
-    return this.entries.get(id);
+  readyDevice(id: string): ControlledDevice | undefined {
+    const entry = [...this.entries.values()].find((item) => {
+      const state = item.manager.getSnapshot();
+      return (
+        state.state?.device?.id === id &&
+        state.state.phase === 'ready' &&
+        !state.screenError &&
+        !state.refreshing
+      );
+    });
+    return entry?.manager;
   }
   async remove(id: string) {
     const entry = this.entries.get(id);
@@ -211,16 +174,11 @@ export class DeviceWorkspaces {
     entry.unsubscribe();
     this.entries.delete(id);
     this.publish();
-    await entry.server.close();
+    await entry.manager.destroySession();
   }
-  mount(
-    server: Parameters<
-      NonNullable<LaunchPlaygroundOptions['configureServer']>
-    >[0],
-  ) {
-    const app = server.app as Routes;
-    const allowed = (req: { headers: Record<string, unknown> }) =>
-      req.headers['x-midscene-playground'] === 'workspace';
+  mount(app: Router, inUse: (deviceId: string) => boolean = () => false) {
+    const allowed = (req: Request) =>
+      req.get('x-midscene-playground') === 'workspace';
     if (!this.healthTimer) {
       this.healthTimer = setInterval(() => {
         for (const entry of this.entries.values())
@@ -270,6 +228,13 @@ export class DeviceWorkspaces {
         res.status(403).end();
         return;
       }
+      const entry = this.entries.get(req.params.id);
+      if (entry?.deviceId && inUse(entry.deviceId)) {
+        res
+          .status(409)
+          .json({ error: '设备正在使用，请先在 Playground 断开连接。' });
+        return;
+      }
       void this.remove(req.params.id)
         .then(() => res.json({}))
         .catch((error: Error) =>
@@ -286,8 +251,10 @@ export class DeviceWorkspaces {
         res.status(404).json({ error: '设备工作区不存在。' });
         return;
       }
-      if (entry.activeRequests) {
-        res.status(409).json({ error: '请先停止当前任务，再刷新设备。' });
+      if (entry.deviceId && inUse(entry.deviceId)) {
+        res
+          .status(409)
+          .json({ error: '设备正在使用，请先在 Playground 断开连接。' });
         return;
       }
       void entry.manager
@@ -306,7 +273,7 @@ export class DeviceWorkspaces {
         res.status(404).json({ error: '设备工作区不存在，请返回首页。' });
         return;
       }
-      entry.server.app(req, res, next);
+      entry.router(req, res, next);
     });
   }
   async close() {

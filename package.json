@@ -22,6 +22,7 @@
     "commitlint": "commitlint",
     "lint:staged": "lint-staged",
     "dev:ios-hid": "pnpm --filter @midscene/ios-hid-playground start",
+    "ios-hid:service": "pnpm --filter @midscene/ios-hid-service start",
     "ios-hid:stop": "pnpm --filter @midscene/ios-hid stop:host"
   },
   "devDependencies": {

@@ -457,7 +457,13 @@ export function ConnectionPanel({
   initialSource = 'usb',
   onConnected,
 }: {
-  controller: PlaygroundControllerResult;
+  controller: {
+    state: Pick<
+      PlaygroundControllerResult['state'],
+      'form' | 'sessionMutating'
+    >;
+    actions: Pick<PlaygroundControllerResult['actions'], 'createSession'>;
+  };
   previewTarget: HTMLElement | null;
   apiBase?: string;
   connection?: Connection;
