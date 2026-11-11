@@ -57,7 +57,7 @@ interface ConnectionStore extends RuntimeSnapshot {
   phase: Phase;
   host: string;
   error?: string;
-  check: () => Promise<void>;
+  check: (fresh?: boolean) => Promise<void>;
   disconnect: () => Promise<void>;
 }
 let controlRevision = 0;
@@ -103,13 +103,14 @@ export const useConnection = create<ConnectionStore>((set, get) => ({
       if (revision === controlRevision) set({ controlPending: undefined });
     }
   },
-  check: () => {
-    if (checking) return checking;
+  check: (fresh = false) => {
+    if (checking)
+      return fresh ? checking.then(() => get().check(true)) : checking;
     checking = (async () => {
       const revision = controlRevision;
       if (get().controlPending) return;
       try {
-        const snapshot = await request('');
+        const snapshot = await request(fresh ? '?fresh=true' : '');
         if (get().controlPending || revision !== controlRevision) return;
         set({
           runtime: snapshot.runtime,

@@ -10,7 +10,7 @@ import { RobotArmDevice } from '../src/device.js';
 import { RobotDriverBoundary } from '../src/kernel/driver-boundary.js';
 import { fixture, pose } from './fixtures.js';
 
-async function setup() {
+async function setup(sharedObservation = false) {
   const f = await fixture(4, 30);
   await f.runtime.shutdown();
   const screenB = await f.store.putScreen({
@@ -25,7 +25,9 @@ async function setup() {
     screenGeometryRevision: screenB.geometryRevision,
     screenRevision: screenB.revision,
     origin: { ...f.calibration.origin, x: f.calibration.origin.x + 300 },
-    observationPose: pose(400, -50, 100),
+    observationPose: sharedObservation
+      ? f.calibration.observationPose
+      : pose(400, -50, 100),
   };
   await f.store.saveCalibration(calibrationB);
   const vision = (id: string) => ({
@@ -85,6 +87,63 @@ async function setup() {
     },
   };
 }
+
+it('switches a completed batch at the shared observation pose without separate transfer moves', async () => {
+  const f = await setup(true);
+  try {
+    controllerRuntime(f.arm).batchTransferContext = () => ({
+      id: 'batch',
+      revision: 1,
+      status: 'completed',
+      currentIndex: 0,
+      items: [],
+      sharedSafePosition: f.calibration.observationPose,
+      sharedSafePositionVerified: true,
+    });
+    await f.tap(f.a);
+    const beforeSwitch = f.adapter.movements.length;
+    await f.tap(f.b);
+    const afterSwitch = f.adapter.movements.length;
+    await f.tap(f.b);
+    expect(f.adapter.movements.slice(beforeSwitch, afterSwitch)).toEqual(
+      f.adapter.movements.slice(afterSwitch),
+    );
+  } finally {
+    await f.cleanup();
+  }
+});
+
+it('plans a lift and traverse inside a confirmed batch corridor', async () => {
+  const f = await setup();
+  try {
+    controllerRuntime(f.arm).batchTransferContext = () => ({
+      id: 'batch',
+      revision: 1,
+      status: 'completed',
+      currentIndex: 0,
+      items: [],
+      transfer: {
+        travelTipZMm: 120,
+        highestObstacleZMm: 100,
+        clearanceMm: 20,
+        corridor: { minX: 90, maxX: 410, minY: -60, maxY: -40 },
+        corridorConfirmed: true,
+        waypoints: [],
+      },
+    });
+    await f.tap(f.a);
+    const before = f.adapter.movements.length;
+    await f.tap(f.b);
+    expect(f.adapter.movements.slice(before, before + 4)).toEqual([
+      f.calibration.observationPose,
+      pose(100, -50, 120),
+      pose(400, -50, 120),
+      f.calibrationB.observationPose,
+    ]);
+  } finally {
+    await f.cleanup();
+  }
+});
 
 it('validates without moving and transfers before the destination action; reverse travel needs its own route', async () => {
   const f = await setup();

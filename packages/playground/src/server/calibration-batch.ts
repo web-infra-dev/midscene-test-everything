@@ -117,6 +117,30 @@ export class CalibrationBatch {
       )
       .digest('hex');
   }
+  transferContext(from: string, to: string): CalibrationBatchState | undefined {
+    const batch = this.runtime.profileStore.list().calibrationBatch;
+    if (
+      this.active ||
+      batch?.status !== 'completed' ||
+      !batch.cameraId ||
+      !batch.contextVersion ||
+      ![from, to].every((id) =>
+        batch.items.some(
+          (item) =>
+            item.status === 'completed' && item.calibrationProfileId === id,
+        ),
+      )
+    )
+      return undefined;
+    // Missing setup or a changed camera/geometry invalidates the saved corridor.
+    try {
+      if (this.contextVersion(batch.cameraId) === batch.contextVersion)
+        return batch;
+    } catch (error) {
+      if (!(error instanceof RobotArmError) || error.code !== 'SETUP_REQUIRED')
+        throw error;
+    }
+  }
   private async assertResumeContext() {
     const state = this.state!;
     await this.assertPerspectives(state.cameraId!);
@@ -129,27 +153,13 @@ export class CalibrationBatch {
         'Review the calibration plan again before starting.',
         409,
       );
-    const current = await this.runtime.state(state.toolProfileId, {
-      fresh: true,
-    });
-    if (
-      !current.state.pose ||
-      !current.state.connected ||
-      current.state.status?.quality.stale ||
-      current.state.moving ||
-      current.state.dragMode ||
-      current.recoveryRequired ||
-      current.state.faults.length
-    )
-      throw new RobotArmError(
-        'NOT_READY',
-        'Hold the robot still with current pose feedback before reviewing the calibration plan',
-        409,
-      );
+    const toolProfileId =
+      state.toolProfileId ?? this.selection(state.cameraId!).toolProfileId;
+    const pose = await this.runtime.assertCalibrationMotionReady(toolProfileId);
     if (state.transfer) {
       const tip = contactPoint(
-        current.state.pose,
-        this.runtime.profileStore.getTool(state.toolProfileId!).offsetMm,
+        pose,
+        this.runtime.profileStore.getTool(toolProfileId).offsetMm,
       );
       const box = state.transfer.corridor;
       if (
@@ -624,23 +634,7 @@ export class CalibrationBatch {
           409,
         );
       const selected = this.selection(input.cameraId);
-      const readiness = await this.runtime.state(selected.toolProfileId, {
-        fresh: true,
-      });
-      if (
-        readiness.recoveryRequired ||
-        readiness.softwarePaused ||
-        !readiness.state.connected ||
-        !readiness.state.enabled ||
-        readiness.state.dragMode ||
-        readiness.state.moving ||
-        readiness.state.faults.length
-      )
-        throw new RobotArmError(
-          'NOT_READY',
-          'Check controller readiness before starting batch calibration.',
-          409,
-        );
+      await this.runtime.assertCalibrationMotionReady(selected.toolProfileId);
       const contextVersion = this.contextVersion(input.cameraId);
       const sharedSafePosition = this.savedSharedPosition(input.cameraId);
       const tool = this.runtime.profileStore.getTool(selected.toolProfileId);
@@ -854,9 +848,13 @@ export class CalibrationBatch {
               (await this.runtime.state(selection.toolProfileId)).state.dragMode
             )
               await this.runtime.exitDragMode();
+            await this.runtime.assertCalibrationMotionReady(
+              selection.toolProfileId,
+            );
+            this.check(signal);
             await this.update(() => {
               state.status = 'running';
-              row.status = 'exploring';
+              row.status = 'preparing';
               row.runIds.push(session.id);
               row.note = undefined;
             });
@@ -939,6 +937,13 @@ export class CalibrationBatch {
                   });
               } else {
                 const capture = current.capture;
+                const status =
+                  current.stage === 'collecting' &&
+                  (!capture ||
+                    current.referenceTravel ||
+                    current.recheckingPayload)
+                    ? 'preparing'
+                    : 'exploring';
                 const progress = {
                   phase: current.stage,
                   message:
@@ -951,12 +956,12 @@ export class CalibrationBatch {
                   total: capture?.total ?? 1,
                 };
                 if (
-                  row.status !== 'exploring' ||
+                  row.status !== status ||
                   semanticJson(row.progress) !== semanticJson(progress)
                 )
                   await this.update(() => {
                     state.status = 'running';
-                    row.status = 'exploring';
+                    row.status = status;
                     row.progress = progress;
                   });
                 if (Date.now() > deadline)

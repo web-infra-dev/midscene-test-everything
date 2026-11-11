@@ -37,6 +37,8 @@ const teachingBoundaryZh: Record<string, string> = {
     '标定运动前未能重新确认机械臂连接和工具负载。',
   'The controller tool payload differs from the saved tool payload. Sync the saved payload before motion.':
     '控制器当前负载与已保存的工具负载不一致，请在运动前同步工具负载。',
+  'Tool payload is not confirmed for the saved tool. Apply it according to the adapter requirements before motion.':
+    '尚未确认已保存的工具负载。请在机械臂状态栏同步工具负载后再开始。',
   'Automatic acceptance requires complete contact and plane evidence for the selected sampling mode':
     '自动验收要求接触证据完整，并满足所选采样模式的平面质量要求。',
   'The shared Safe Position must clear the entire screen group at the confirmed travel height.':

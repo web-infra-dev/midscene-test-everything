@@ -1204,8 +1204,9 @@ export class Mg400Adapter implements RobotArmAdapter {
       // 30004 is a preferred source, never a prerequisite: the adapter opens it
       // best-effort and keeps working through dashboard polling without it.
       this.feedback.start();
+      let initialState: RobotState;
       try {
-        await this.getState();
+        initialState = await this.getState();
       } catch (error) {
         if (!isRobotArmError(error) || error.details?.vendorCode !== -1)
           throw error;
@@ -1227,12 +1228,23 @@ export class Mg400Adapter implements RobotArmAdapter {
         await this.motion.connect();
         check();
         this.feedback.start();
-        await this.getStateFresh();
+        initialState = await this.getStateFresh();
       }
       check();
       await this.negotiateKinematics(generation);
       check();
+      if (initialState.enabled && !this.feedback.current()) {
+        try {
+          await this.feedback.waitForFrame(1000);
+        } catch (error) {
+          if (!isRobotArmError(error) || error.code !== 'FEEDBACK_UNAVAILABLE')
+            throw error;
+        }
+        check();
+      }
       this.connectionReady = true;
+      this.payloadEvidence();
+      check();
       this.hasConnected = true;
       this.reconnectAttempt = 0;
       this.clearReconnect();

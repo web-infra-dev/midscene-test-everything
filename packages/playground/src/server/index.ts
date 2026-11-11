@@ -151,7 +151,7 @@ export async function startPlaygroundHost({
   let host: string | undefined;
   let connecting = false;
   let connectionError: string | undefined;
-  async function connectionStatus() {
+  async function connectionStatus(fresh = false) {
     if (connecting || setup.phase === 'connecting')
       return { phase: 'connecting', host, setupSession: setup.session };
     if (!arm)
@@ -162,7 +162,9 @@ export async function startPlaygroundHost({
         setupSession: setup.session,
       };
     try {
-      const status = await arm.getStatus();
+      const status = fresh
+        ? await controllerRuntime(arm).state(undefined, { fresh: true })
+        : await arm.getStatus();
       const state = status.state;
       return {
         phase: state.connected ? 'connected' : 'disconnected',
@@ -450,7 +452,10 @@ export async function startPlaygroundHost({
       return send(403, { error: 'Origin not allowed' });
     try {
       if (url.pathname === '/api/arm' && req.method === 'GET')
-        return send(200, await connectionStatus());
+        return send(
+          200,
+          await connectionStatus(url.searchParams.get('fresh') === 'true'),
+        );
       if (url.pathname === '/api/arm/stop' && req.method === 'POST') {
         if (!armControls || connecting)
           return send(409, { error: 'Connect the arm first' });

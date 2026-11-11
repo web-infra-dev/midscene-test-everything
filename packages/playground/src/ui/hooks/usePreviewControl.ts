@@ -24,17 +24,7 @@ export interface PreviewControlError {
 
 export interface UsePreviewControlOptions {
   contextKey?: string;
-  activeCalibrationId?: string;
-  /** Confirm a gesture that physically switches to another calibrated screen. */
-  confirmCrossScreen?: (
-    target: PreviewScreenProjection,
-    action: ScreenAction,
-  ) => Promise<boolean>;
-  onActionError?: (
-    error: PreviewControlError,
-    target: PreviewScreenProjection,
-  ) => void;
-  onCompleted?: () => void;
+  onCompleted?: () => Promise<void>;
 }
 
 const actionLabel = (action: ScreenAction) => {
@@ -51,9 +41,6 @@ const actionLabel = (action: ScreenAction) => {
 
 export function usePreviewControl({
   contextKey,
-  activeCalibrationId,
-  confirmCrossScreen,
-  onActionError,
   onCompleted,
 }: UsePreviewControlOptions = {}) {
   const [feedback, setFeedback] = useState<PreviewActionFeedback>();
@@ -107,23 +94,6 @@ export function usePreviewControl({
         });
       publish('preparing');
       try {
-        if (
-          confirmCrossScreen &&
-          activeCalibrationId &&
-          target.screen.calibrationId &&
-          activeCalibrationId !== target.screen.calibrationId
-        ) {
-          const confirmed = await confirmCrossScreen(target, action);
-          if (
-            !confirmed ||
-            !mounted.current ||
-            context.current !== contextKey
-          ) {
-            if (mounted.current && context.current === contextKey)
-              setFeedback(undefined);
-            return;
-          }
-        }
         publish('executing');
         const response = await fetch(
           `/api/devices/${encodeURIComponent(target.screen.id)}/actions`,
@@ -146,7 +116,7 @@ export function usePreviewControl({
         if (!mounted.current || context.current !== contextKey) return;
         publish('completed');
         scheduleClear('completed');
-        onCompleted?.();
+        await onCompleted?.();
       } catch (cause) {
         if (!mounted.current || context.current !== contextKey) return;
         const message = cause instanceof Error ? cause.message : String(cause);
@@ -155,7 +125,6 @@ export function usePreviewControl({
             ? String(cause.code)
             : undefined;
         setError({ message, code });
-        onActionError?.({ message, code }, target);
         publish('failed', `${actionLabel(action)} failed`);
         scheduleClear('failed');
       } finally {
@@ -163,15 +132,7 @@ export function usePreviewControl({
         if (mounted.current) setBusy(false);
       }
     },
-    [
-      activeCalibrationId,
-      contextKey,
-      busy,
-      confirmCrossScreen,
-      onActionError,
-      onCompleted,
-      scheduleClear,
-    ],
+    [contextKey, busy, onCompleted, scheduleClear],
   );
   return {
     execute,

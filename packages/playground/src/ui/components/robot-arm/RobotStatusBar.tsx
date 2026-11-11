@@ -171,6 +171,15 @@ export function RobotStatusBar({
   const faults = state?.faults ?? [];
   const paused = Boolean(state?.paused || data?.state.softwarePaused);
   const has = (id: string) => capabilities?.controls.includes(id);
+  const payloadStatus = data?.state.payloadApplication?.status;
+  const needsPayloadSync =
+    payloadStatus === 'pending' || payloadStatus === 'unconfirmed';
+  const showPayloadStatus = Boolean(
+    data?.tool &&
+      state?.enabled &&
+      payloadStatus !== 'applied' &&
+      payloadStatus !== 'not-required',
+  );
   const enableBlocked =
     locked ||
     !data?.tool?.payload ||
@@ -480,7 +489,7 @@ export function RobotStatusBar({
             </Button>
           )}
         </Space>
-        {!data?.tool && !preparing && (
+        {(showPayloadStatus || (!data?.tool && !preparing)) && (
           <Typography.Text className="robot-tool-status" type="secondary">
             {data?.tool
               ? `${data.tool.name} · ${zh ? '负载状态' : 'Payload'}: ${zh ? { 'not-required': '无需配置', missing: '未配置', pending: '待应用', applied: '已应用', unconfirmed: '未确认', applying: '应用中' }[data.state.payloadApplication?.status ?? 'unconfirmed'] : (data.state.payloadApplication?.status ?? 'unknown')}`
@@ -495,15 +504,17 @@ export function RobotStatusBar({
               {zh ? '配置工具' : 'Configure tool'}
             </Button>
           )}
-          {has('control.apply-payload') && state?.enabled && (
-            <Button
-              size="small"
-              disabled={enableBlocked}
-              onClick={() => choose('payload')}
-            >
-              {zh ? '同步工具负载' : 'Apply tool payload'}
-            </Button>
-          )}
+          {has('control.apply-payload') &&
+            state?.enabled &&
+            needsPayloadSync && (
+              <Button
+                size="small"
+                disabled={enableBlocked}
+                onClick={() => choose('payload')}
+              >
+                {zh ? '同步工具负载' : 'Apply tool payload'}
+              </Button>
+            )}
         </Space>
       </fieldset>
       <Drawer

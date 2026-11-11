@@ -19,7 +19,6 @@ import {
 import './PreviewControl.less';
 
 export interface PreviewControlProps {
-  cameraId: string;
   view: 'raw' | 'corrected';
   screens: readonly PreviewScreenGeometry[];
   activeScreenId?: string;
@@ -31,12 +30,10 @@ export interface PreviewControlProps {
   available: boolean;
   longPressEnabled?: boolean;
   enabled: boolean;
-  onEnabledChange: (enabled: boolean) => void;
   control: ReturnType<typeof usePreviewControl>;
 }
 
 export function PreviewControl({
-  cameraId,
   view,
   screens,
   activeScreenId,
@@ -48,7 +45,6 @@ export function PreviewControl({
   available,
   longPressEnabled = false,
   enabled,
-  onEnabledChange,
   control,
 }: PreviewControlProps) {
   const zh = useLanguage() === 'zh';
@@ -77,18 +73,6 @@ export function PreviewControl({
     }
     return createScreenProjections(screens, natural.width, natural.height);
   }, [activeScreenId, natural, screens, view]);
-  const projectionsKey = useMemo(
-    () =>
-      JSON.stringify(
-        projections.map((projection) => [
-          projection.screen.id,
-          projection.screen.calibrationId,
-          projection.width,
-          projection.height,
-        ]),
-      ),
-    [projections],
-  );
   const gesture = useMemo(
     () =>
       new PreviewGesture({
@@ -108,15 +92,6 @@ export function PreviewControl({
     setDraft(undefined);
     clearTimeout(longPressTimer.current);
   }, [enabled, available, gesture]);
-  useEffect(() => {
-    onEnabledChange(false);
-  }, [cameraId, view, projectionsKey, onEnabledChange]);
-  useEffect(() => {
-    if (available || busy) return;
-    onEnabledChange(false);
-    setDraft(undefined);
-    gesture.cancel();
-  }, [available, busy, gesture, onEnabledChange]);
   useEffect(() => {
     // A changed correction or target must not inherit an in-flight gesture.
     gesture.cancel();
@@ -280,8 +255,8 @@ export function PreviewControl({
             error.code === 'TRANSFER_REQUIRED' ||
             error.code === 'TRANSFER_STALE'
               ? zh
-                ? '需要先验证设备切换路径，再点击目标屏幕。'
-                : 'Validate the device transfer route before touching this screen.'
+                ? '这两块屏幕没有可用的跨屏路线。请检查多屏标定，或在机械臂配置中验证切换路径。'
+                : 'No usable route connects these screens. Check multi-screen calibration or verify a route in robot settings.'
               : error.code === 'POSITION_UNKNOWN'
                 ? zh
                   ? '机械臂位置未知，请先完成恢复或重新标定。'

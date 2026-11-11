@@ -1,4 +1,5 @@
 import type { ArmController } from '@midscene/arm-kit';
+import { RobotArmError } from '@midscene/arm-kit';
 import type { AssistedCalibrationState } from '@midscene/arm-kit-shared/assisted-contracts';
 import { ArmActionQueue } from '@midscene/arm-kit/internal/action-queue';
 import { registerControllerRuntime } from '@midscene/arm-kit/internal/controller-runtime';
@@ -156,6 +157,29 @@ async function setup() {
     entries,
   };
 }
+it('rejects an unconfirmed tool payload before creating a batch or starting sampling', async () => {
+  const f = await setup();
+  const check = rstest
+    .spyOn(f.runtime, 'assertCalibrationMotionReady')
+    .mockRejectedValueOnce(
+      new RobotArmError(
+        'TOOL_PAYLOAD_NOT_APPLIED',
+        'Tool payload is unconfirmed',
+        409,
+      ),
+    );
+  try {
+    await expect(f.start()).rejects.toMatchObject({
+      code: 'TOOL_PAYLOAD_NOT_APPLIED',
+    });
+    expect(f.batch.read()).toBeNull();
+    expect(f.starts).toHaveLength(0);
+    expect(f.adapter.movements).toHaveLength(0);
+  } finally {
+    check.mockRestore();
+  }
+});
+
 it('holds the shared queue while waiting for acceptance and retains completed screen results', async () => {
   const f = await setup();
   await f.start();

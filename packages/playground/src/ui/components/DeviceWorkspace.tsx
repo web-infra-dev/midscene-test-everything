@@ -3,12 +3,10 @@ import {
   type ScreenOutlineEntry,
   usePerspectiveValidity,
 } from '@midscene/arm-calibration-ui';
-import type { ScreenAction } from '@midscene/arm-kit-shared/contracts';
 import {
   Alert,
   Button,
   Empty,
-  Modal,
   Segmented,
   Select,
   Space,
@@ -39,10 +37,7 @@ import { usePreviewControl } from '../hooks/usePreviewControl';
 import { useRobotArm } from '../hooks/useRobotArm';
 import { usePreferences, useT } from '../i18n';
 import { PreviewControl } from '../preview/PreviewControl';
-import type {
-  PreviewScreenGeometry,
-  PreviewScreenProjection,
-} from '../preview/projection';
+import type { PreviewScreenGeometry } from '../preview/projection';
 import { useTasks } from '../tasks';
 import { CameraPerspectiveActions } from './CameraPerspectiveActions';
 import { CameraRail } from './CameraRail';
@@ -63,7 +58,7 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
   const t = useT();
   const { ConnectionForm } = useViews();
   const arm = useRobotArm();
-  const [controlEnabled, setControlEnabled] = useState(false);
+  const [enabledControlContext, setEnabledControlContext] = useState<string>();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [connectionOpen, setConnectionOpen] = useState(false);
   const language = usePreferences((state) => state.language);
@@ -76,7 +71,6 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
   }>();
   const [wizardScreen, setWizardScreen] = useState<string>();
   const [transferId, setTransferId] = useState<string>();
-  const [transferTargetId, setTransferTargetId] = useState<string>();
   const [preferredView, setCameraView] = useState<CameraView>('raw');
   const [previewError, setPreviewError] = useState<string>();
   const [previewRevision, setPreviewRevision] = useState(0);
@@ -124,7 +118,6 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
   useEffect(() => {
     setSettingsOpen(false);
     setTransferId(undefined);
-    setTransferTargetId(undefined);
     setWizardScreen(undefined);
     setWizard(undefined);
     setPausedCamera(undefined);
@@ -314,6 +307,18 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
       : controlScreens;
   const controlAvailable =
     !activeWizard && robotControlReady && visibleControlScreens.length > 0;
+  const controlContext = JSON.stringify([
+    previewKey,
+    visibleControlScreens.map((screen) => [
+      screen.id,
+      screen.calibrationId,
+      screen.correction,
+      screen.target,
+      screen.pixelWidth,
+      screen.pixelHeight,
+    ]),
+  ]);
+  const controlEnabled = enabledControlContext === controlContext;
   const controlUnavailableReason = !connected
     ? language === 'zh'
       ? '连接机械臂后才能控制屏幕'
@@ -361,62 +366,23 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
                           ? '请先处理机械臂报警或恢复状态'
                           : 'Clear the robot fault or recovery state first'
                         : undefined;
-  const confirmCrossScreen = useCallback(
-    async (target: PreviewScreenProjection, action: ScreenAction) =>
-      new Promise<boolean>((resolve) => {
-        const name = target.screen.name ?? target.screen.id;
-        Modal.confirm({
-          title:
-            language === 'zh'
-              ? '切换到目标屏幕并执行动作？'
-              : 'Switch screens and execute this action?',
-          content:
-            language === 'zh'
-              ? `机械臂会先沿已验证的路线移动到「${name}」，然后执行 ${action.type}。如果该方向尚未验证路线，动作会被拒绝，机械臂不会移动。`
-              : `The arm will first move along the verified route to “${name}”, then execute ${action.type}. If that direction has no verified route, the action is refused without movement.`,
-          okText: language === 'zh' ? '继续' : 'Continue',
-          cancelText: language === 'zh' ? '取消' : 'Cancel',
-          onOk: () => resolve(true),
-          onCancel: () => resolve(false),
-        });
-      }),
-    [language],
-  );
-  const refreshAfterControl = useCallback(() => {
+  const refreshAfterControl = useCallback(async () => {
     setConfigurationRevision((value) => value + 1);
-    void refresh(false);
-    void check();
+    // A status poll already in flight may still describe the completed motion.
+    await Promise.all([refresh(false), check(true)]);
   }, [check, refresh]);
-  const openTransferFor = useCallback(
-    (targetId: string) => {
-      const current =
-        cameras
-          .flatMap((camera) => camera.screens ?? [])
-          .find(
-            (screen) =>
-              screen.control?.calibrationId &&
-              screen.control.calibrationId === control?.activeCalibrationId,
-          ) ?? activeScreen;
-      if (!current || current.id === targetId) return;
-      setTransferTargetId(targetId);
-      setTransferId(current.id);
-    },
-    [activeScreen, cameras, control?.activeCalibrationId],
-  );
   const previewControl = usePreviewControl({
-    contextKey: previewKey,
-    activeCalibrationId: control?.activeCalibrationId,
-    confirmCrossScreen,
+    contextKey: controlContext,
     onCompleted: refreshAfterControl,
-    onActionError: (error, target) => {
-      if (error.code === 'TRANSFER_REQUIRED' || error.code === 'TRANSFER_STALE')
-        openTransferFor(target.screen.id);
-    },
   });
   useEffect(() => {
-    if ((!controlAvailable && !previewControl.busy) || activeWizard)
-      setControlEnabled(false);
-  }, [controlAvailable, previewControl.busy, activeWizard]);
+    if (
+      !controlEnabled ||
+      activeWizard ||
+      (!controlAvailable && !previewControl.busy)
+    )
+      setEnabledControlContext(undefined);
+  }, [controlEnabled, controlAvailable, previewControl.busy, activeWizard]);
   /*
    * The raw view draws every screen the camera holds a perspective for, the way
    * the workstation stage did. The corrected view is already rectified, so an
@@ -470,7 +436,11 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
                   aria-label={language === 'zh' ? '控制屏幕' : 'Control screen'}
                   checked={controlEnabled}
                   disabled={!controlAvailable || previewControl.busy}
-                  onChange={setControlEnabled}
+                  onChange={(enabled) =>
+                    setEnabledControlContext(
+                      enabled ? controlContext : undefined,
+                    )
+                  }
                 />
               </Space>
             </Tooltip>
@@ -734,14 +704,12 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
                       : selected.name
                   }
                   available={controlAvailable}
-                  cameraId={selected.id}
                   longPressEnabled={Boolean(
                     arm.capabilities?.screenActions.includes('longPress'),
                   )}
                   className="stream-preview"
                   control={previewControl}
                   enabled={controlEnabled}
-                  onEnabledChange={setControlEnabled}
                   onError={() => setPreviewError(previewKey)}
                   onLoad={(event) => {
                     const { naturalWidth: width, naturalHeight: height } =
@@ -860,7 +828,6 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
                   <Button
                     icon={<ArrowRightLeft size={18} />}
                     onClick={() => {
-                      setTransferTargetId(undefined);
                       setTransferId(deviceId);
                     }}
                   >
@@ -904,10 +871,8 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
           key={transferId}
           id={transferId}
           cameras={transferTargets}
-          initialTargetId={transferTargetId}
           onClose={() => {
             setTransferId(undefined);
-            setTransferTargetId(undefined);
           }}
         />
       )}

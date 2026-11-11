@@ -4,7 +4,11 @@ import {
   assertCameraBoundary,
   cameraBoundaryExcessMm,
 } from './application/teaching-constraints.js';
-import type { AutomaticCaptureHost } from './assisted-contracts.js';
+import type {
+  AutomaticCaptureHost,
+  CalibrationBatchState,
+} from './assisted-contracts.js';
+import { assertParkingCorridor } from './calibration/camera-avoidance.js';
 import { screenPoseMm } from './calibration/geometry.js';
 import { contactDepthMm, surfaceClearanceMm } from './calibration/surface.js';
 import { moveToTaughtPosition } from './calibration/taught-position.js';
@@ -56,6 +60,7 @@ import {
   calibrationAccepted,
   evaluatePayloadApplication,
   isRobotArmError,
+  semanticJson,
 } from './contracts.js';
 import {
   assertOrientation,
@@ -65,6 +70,7 @@ import {
   distance,
   dot,
   flangePose,
+  quaternionDistance,
   rotate,
   scale,
   sub,
@@ -76,6 +82,7 @@ import type {
   LinearSequenceTarget,
 } from './kernel/contracts.js';
 import { MotionExecutor } from './kernel/motion-executor.js';
+import { evaluateReadiness } from './kernel/readiness.js';
 import { checkRecovery } from './kernel/recovery.js';
 import { RobotKernel } from './kernel/robot-kernel.js';
 import { ProfileStore, validateScreen } from './runtime/profile-store.js';
@@ -722,6 +729,10 @@ export class RobotArmRuntime extends RobotKernel {
     }
   }
   screenActionGuard?: (request: ActionRequest) => Promise<void>;
+  batchTransferContext?: (
+    from: string,
+    to: string,
+  ) => CalibrationBatchState | undefined;
   private aiTaskRequestId?: string;
   beginAiTask(requestId: string): void {
     if (this.aiTaskRequestId || this.leased || this.stopInProgress)
@@ -947,7 +958,8 @@ export class RobotArmRuntime extends RobotKernel {
     try {
       await this.adapter.connect();
       this.connectionEstablished = true;
-      const state = await this.adapter.getState();
+      const state = await this.adapter.getState(true);
+      this.recordPayloadEvidence();
       if (state.moving || state.dragMode || state.paused || state.faults.length)
         this.recoveryRequired = true;
     } catch (error) {
@@ -1080,6 +1092,30 @@ export class RobotArmRuntime extends RobotKernel {
   private payloadCurrent() {
     return ['not-required', 'applied'].includes(this.payloadState().status);
   }
+  /** Read-only admission check for calibration before any sampling is queued. */
+  async assertCalibrationMotionReady(
+    toolProfileId: string,
+  ): Promise<CartesianPose> {
+    const tool = this.profileStore.getTool(toolProfileId);
+    const snapshot = await this.state(toolProfileId, { fresh: true });
+    const { pose, status } = snapshot.state;
+    const readiness =
+      status && evaluateReadiness(status, this.adapter.adapter.readinessPolicy);
+    if (
+      snapshot.recoveryRequired ||
+      snapshot.softwarePaused ||
+      !pose ||
+      !readiness?.ready
+    )
+      throw new RobotArmError(
+        'NOT_READY',
+        'Check controller readiness before starting batch calibration.',
+        409,
+        { reasons: readiness?.reasons },
+      );
+    this.assertAppliedPayload(tool, snapshot.state);
+    return pose;
+  }
   async readiness() {
     const readiness = await this.adapter.readiness().catch((error) => {
       this.requireRecovery(
@@ -1205,11 +1241,11 @@ export class RobotArmRuntime extends RobotKernel {
     if (this.adapter.capabilities.workspace)
       assertTarget(p, this.adapter.capabilities.workspace);
   }
-  private assertAppliedPayload(tool: ToolProfile) {
+  private assertAppliedPayload(tool: ToolProfile, state?: RobotState) {
     const limits = this.describeCapabilities().payload;
     if (!limits) return;
     assertToolPayload(tool.payload, limits);
-    const payloadApplication = this.payloadState(tool.id);
+    const payloadApplication = this.payloadState(tool.id, state);
     if (payloadApplication.status !== 'applied')
       throw new RobotArmError(
         'TOOL_PAYLOAD_NOT_APPLIED',
@@ -1712,37 +1748,152 @@ export class RobotArmRuntime extends RobotKernel {
     });
   }
   private async executeTransfer(
-    route: PreparedTransferRoute,
+    fromCalibrationId: string,
+    route: PreparedTransferRoute | undefined,
     destination: CalibrationProfile,
     phase: (phase: 'moving' | 'arrived') => void,
   ): Promise<void> {
+    const batch = this.batchTransferContext?.(
+      fromCalibrationId,
+      destination.id,
+    );
+    const corridor = batch?.transfer;
+    if (!route && !batch)
+      throw new RobotArmError(
+        'TRANSFER_REQUIRED',
+        'No current confirmed corridor or verified route connects these screens',
+        409,
+      );
     const screens = this.transferScreens();
-    if (
-      route.toCalibrationId !== destination.id ||
-      route.contextKey !== transferContextKey(screens)
-    )
+    const contextKey = transferContextKey(screens);
+    const from = screens.find(
+      (entry) => entry.calibration.id === fromCalibrationId,
+    );
+    if (!from)
       throw new RobotArmError(
         'TRANSFER_STALE',
-        'Verify the transfer route again after device configuration changes',
+        'The source screen calibration changed',
+        409,
       );
-    const from = screens.find(
-      (entry) => entry.calibration.id === route.fromCalibrationId,
-    )!;
     const ctx = this.context(from.calibration);
-    // Rebuild from immutable input; do not trust cached generated poses alone.
-    const current = prepareTransferRoute(route, screens);
+    const start = from.calibration.observationPose;
+    const end = destination.observationPose;
+    const shared = batch?.sharedSafePosition;
+    const usesSharedPose = Boolean(
+      batch?.sharedSafePositionVerified &&
+        shared &&
+        semanticJson(start) === semanticJson(shared) &&
+        semanticJson(end) === semanticJson(shared) &&
+        from.calibration.robotProfileId === destination.robotProfileId &&
+        from.calibration.toolProfileId === destination.toolProfileId &&
+        semanticJson(atTravelHeight(start, ctx)) ===
+          semanticJson(atTravelHeight(end, this.context(destination))),
+    );
+    const usesCorridor = Boolean(
+      !usesSharedPose &&
+        corridor?.corridorConfirmed &&
+        (!route || route.contextKey !== contextKey),
+    );
+    const assertCurrent = () => {
+      const currentBatch =
+        usesSharedPose || usesCorridor
+          ? this.batchTransferContext?.(fromCalibrationId, destination.id)
+          : undefined;
+      if (
+        contextKey !== transferContextKey(this.transferScreens()) ||
+        ((usesSharedPose || usesCorridor) &&
+          (currentBatch?.id !== batch?.id ||
+            currentBatch?.revision !== batch?.revision))
+      )
+        throw new RobotArmError(
+          'TRANSFER_STALE',
+          'Device calibration or the confirmed batch corridor changed while checking the transfer',
+          409,
+        );
+      this.check();
+    };
+    let input: TransferRouteInput | undefined = route;
+    if (usesCorridor && corridor) {
+      const height = corridor.travelTipZMm;
+      const sourceTip = contactPoint(start, ctx.tool.offsetMm);
+      const targetTip = contactPoint(end, ctx.tool.offsetMm);
+      if (
+        ![
+          height,
+          corridor.highestObstacleZMm,
+          corridor.clearanceMm,
+          ...Object.values(corridor.corridor),
+        ].every(Number.isFinite) ||
+        corridor.clearanceMm <= 0 ||
+        height < corridor.highestObstacleZMm + corridor.clearanceMm ||
+        height < Math.max(sourceTip.z, targetTip.z)
+      )
+        throw new RobotArmError(
+          'UNSAFE_OBSERVATION',
+          'The confirmed travel height does not cover both observation positions',
+          409,
+        );
+      assertParkingCorridor(sourceTip, corridor.corridor);
+      assertParkingCorridor(targetTip, corridor.corridor);
+      input = {
+        fromCalibrationId,
+        toCalibrationId: destination.id,
+        confirmed: true,
+        waypoints: [sourceTip, targetTip].map((tip) =>
+          flangePose(
+            { ...tip, z: height },
+            start.orientation,
+            ctx.tool.offsetMm,
+          ),
+        ),
+      };
+    }
+    let current: PreparedTransferRoute | undefined;
+    if (!usesSharedPose) {
+      if (!input)
+        throw new RobotArmError(
+          'TRANSFER_REQUIRED',
+          'These screens have no current common safe position or confirmed travel corridor',
+          409,
+        );
+      if (
+        !usesCorridor &&
+        (route?.toCalibrationId !== destination.id ||
+          route.fromCalibrationId !== fromCalibrationId ||
+          route.contextKey !== contextKey)
+      )
+        throw new RobotArmError(
+          'TRANSFER_STALE',
+          'Verify the transfer route again after device configuration changes',
+          409,
+        );
+      current = prepareTransferRoute(input, screens);
+    }
+    const expected = current?.poses[0] ?? atTravelHeight(start, ctx);
     await this.stable(await this.adapter.getPose(), ctx);
+    const actual = this.lastStablePose!;
     this.check();
     if (
-      distance(this.lastStablePose!.positionMm, current.poses[0].positionMm) >
-      0.5
+      distance(actual.positionMm, expected.positionMm) > 0.5 ||
+      quaternionDistance(actual.orientation, expected.orientation) > 0.01
     )
       throw new RobotArmError(
         'TRANSFER_START_CHANGED',
-        'Arm is no longer at the source observation position; recalibrate before transfer',
+        'Arm is no longer at the source observation position; recover before transfer',
         409,
       );
-    const poses = [this.lastStablePose!, ...current.poses];
+    if (!current) {
+      assertTransferClearance([actual], screens, ctx.tool);
+      assertCurrent();
+      phase('arrived');
+      return;
+    }
+    const poses = [actual, ...current.poses];
+    if (usesCorridor)
+      assertParkingCorridor(
+        contactPoint(actual, ctx.tool.offsetMm),
+        corridor?.corridor,
+      );
     assertTransferClearance(poses, screens, ctx.tool);
     const options = this.transferOptions(ctx.screen);
     await this.preflight(
@@ -1753,12 +1904,7 @@ export class RobotArmRuntime extends RobotKernel {
       })),
       ctx,
     );
-    if (route.contextKey !== transferContextKey(this.transferScreens()))
-      throw new RobotArmError(
-        'TRANSFER_STALE',
-        'Device calibration changed while checking the transfer',
-      );
-    this.check();
+    assertCurrent();
     phase('moving');
     for (const pose of current.poses) {
       this.check();
@@ -1773,7 +1919,8 @@ export class RobotArmRuntime extends RobotKernel {
     aiTaskRequestId?: string,
     deviceVision?: VisionBinding,
     transfer?: {
-      route: PreparedTransferRoute;
+      fromCalibrationId: string;
+      route?: PreparedTransferRoute;
       phase: (phase: 'moving' | 'arrived') => void;
     },
   ): Promise<ActionResult> {
@@ -1850,10 +1997,15 @@ export class RobotArmRuntime extends RobotKernel {
           ctx,
           c.observationPose,
         );
-        await this.executeTransfer(transfer.route, c, (phase) => {
-          transferring = phase === 'moving';
-          transfer.phase(phase);
-        });
+        await this.executeTransfer(
+          transfer.fromCalibrationId,
+          transfer.route,
+          c,
+          (phase) => {
+            transferring = phase === 'moving';
+            transfer.phase(phase);
+          },
+        );
       }
       const result = await executeScreenAction.call(
         this.screenMotionHost(),

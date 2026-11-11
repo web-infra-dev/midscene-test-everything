@@ -112,24 +112,10 @@ export class ArmController {
             'Arm position changed during calibration or transfer; complete calibration before executing more screen actions',
             409,
           );
-        let route: PreparedTransferRoute | undefined;
-        if (
-          this.lastCalibrationId &&
+        const fromCalibrationId =
           this.lastCalibrationId !== action.calibrationProfileId
-        ) {
-          route = this.transfers.get(
-            JSON.stringify([
-              this.lastCalibrationId,
-              action.calibrationProfileId,
-            ]),
-          );
-          if (!route)
-            throw new RobotArmError(
-              'TRANSFER_REQUIRED',
-              'Configure a verified transfer route before switching physical screens',
-              409,
-            );
-        }
+            ? this.lastCalibrationId
+            : undefined;
         let cancelling: Promise<void> | undefined;
         const cancel = () => {
           if (
@@ -153,9 +139,15 @@ export class ArmController {
             action,
             undefined,
             vision,
-            route
+            fromCalibrationId
               ? {
-                  route,
+                  fromCalibrationId,
+                  route: this.transfers.get(
+                    JSON.stringify([
+                      fromCalibrationId,
+                      action.calibrationProfileId,
+                    ]),
+                  ),
                   phase: (phase) => {
                     this.positionUnknown = phase === 'moving';
                     if (phase === 'arrived')
@@ -170,7 +162,7 @@ export class ArmController {
           if (isRobotArmError(error)) {
             if (error.code === 'TRANSFER_START_CHANGED')
               this.positionUnknown = true;
-            if (!route && error.details?.motionOccurred)
+            if (!fromCalibrationId && error.details?.motionOccurred)
               this.lastCalibrationId = action.calibrationProfileId;
             if (error.details?.recoveryRequired) this.deviceActions.stop(error);
           }

@@ -77,6 +77,8 @@ export class PlaygroundDevices {
     this.phoneLinks = phoneLinks;
     this.phoneEntryAtRoot = phoneEntryAtRoot;
     this.pairings = pairings;
+    controllerRuntime(this.arm).batchTransferContext = (from, to) =>
+      this.batch.transferContext(from, to);
   }
   screens(includePreviewPositions = false) {
     const saved =
