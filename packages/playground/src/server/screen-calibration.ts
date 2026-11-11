@@ -422,8 +422,6 @@ export class ScreenCalibration {
     });
   }
   private pairing(cameraId: string) {
-    if (!this.devices.screens().some((screen) => screen.cameraId === cameraId))
-      throw new RobotArmError('INVALID_ARGUMENT', 'Camera not found');
     for (const [token, value] of this.connectionTickets) {
       if (value.expiresAt <= Date.now()) this.connectionTickets.delete(token);
       else if (value.cameraId === cameraId)

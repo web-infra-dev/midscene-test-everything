@@ -56,6 +56,7 @@ export interface PhoneConnectCamera {
 export function PhoneConnectDialog({
   open,
   onClose,
+  onContinue,
   readiness,
   cameras = [],
   onConnect,
@@ -70,6 +71,8 @@ export function PhoneConnectDialog({
 }: {
   open: boolean;
   onClose: () => void;
+  /** Continues from a first-screen Add Screen into the marker pass. */
+  onContinue?: () => void;
   readiness?: CameraPhoneReadiness;
   /** Cameras a page can be bound to; the current camera is the default. */
   cameras?: readonly PhoneConnectCamera[];
@@ -687,6 +690,16 @@ export function PhoneConnectDialog({
           type={connectionNotice.tone}
           message={connectionNotice.message}
         />
+        {onContinue && (
+          <Button
+            block
+            disabled={!phonesConnected}
+            onClick={onContinue}
+            type="primary"
+          >
+            {t('Continue to Calibration')}
+          </Button>
+        )}
         {publicUrl && (
           <details className="robot-device-pairing">
             <summary>{t('Phone page address')}</summary>

@@ -1,6 +1,6 @@
 import { expect, it } from '@rstest/core';
 import {
-  screensWithoutDraft,
+  needsPhoneConnectionBeforeAddScreen,
   selectableScreens,
 } from '../src/screen-selection';
 
@@ -20,10 +20,42 @@ it('keeps a newly added screen selectable before its first calibration', () => {
   ).toEqual(['calibrated', 'new']);
 });
 
-it('does not mount the Add Screen draft until it is committed', () => {
-  const screens = [{ id: 'existing' }, { id: 'draft' }];
+it('connects phone pages before creating the first screen targets', () => {
+  expect(needsPhoneConnectionBeforeAddScreen([], 'camera')).toBe(true);
   expect(
-    screensWithoutDraft(screens, 'draft').map((screen) => screen.id),
-  ).toEqual(['existing']);
-  expect(screensWithoutDraft(screens, undefined)).toHaveLength(2);
+    needsPhoneConnectionBeforeAddScreen(
+      [{ id: 'screen-1', cameraId: 'camera', markerSlot: 1 }],
+      'camera',
+    ),
+  ).toBe(true);
+  expect(
+    needsPhoneConnectionBeforeAddScreen(
+      [
+        { id: 'screen-1', cameraId: 'camera', hasCorrection: true },
+        { id: 'screen-2', cameraId: 'camera' },
+      ],
+      'camera',
+    ),
+  ).toBe(false);
+  expect(
+    needsPhoneConnectionBeforeAddScreen(
+      [{ id: 'screen-1', cameraId: 'camera', hasCorrection: true }],
+      'camera',
+      [{ cameraId: 'camera' }],
+    ),
+  ).toBe(true);
+  expect(
+    needsPhoneConnectionBeforeAddScreen(
+      [{ id: 'screen-1', cameraId: 'camera', hasCorrection: true }],
+      'camera',
+      [{ cameraId: 'camera', screenId: 'deleted-screen' }],
+    ),
+  ).toBe(true);
+  expect(
+    needsPhoneConnectionBeforeAddScreen(
+      [{ id: 'screen-1', cameraId: 'camera', hasCorrection: true }],
+      'camera',
+      [{ cameraId: 'other-camera' }],
+    ),
+  ).toBe(false);
 });

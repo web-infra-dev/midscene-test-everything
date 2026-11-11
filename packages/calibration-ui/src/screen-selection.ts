@@ -1,7 +1,13 @@
 export interface ScreenSelectionLike {
+  id: string;
   cameraId: string;
   hasCorrection?: boolean;
   markerSlot?: number;
+}
+
+export interface ScreenPageSelectionLike {
+  cameraId?: string;
+  screenId?: string;
 }
 
 /**
@@ -16,12 +22,24 @@ export function selectableScreens<T extends ScreenSelectionLike>(
   return screens.filter((screen) => screen.cameraId === cameraId);
 }
 
-/** Add Screen calibrates a draft target; it is not mounted until committed. */
-export function screensWithoutDraft<T extends { id: string }>(
-  screens: readonly T[],
-  draftId: string | undefined,
-): T[] {
-  return draftId
-    ? screens.filter((screen) => screen.id !== draftId)
-    : [...screens];
+/**
+ * The first calibration starts from the phone pages, not a screen target:
+ * connect every page for this camera, then create and detect the screens in
+ * one pass.
+ */
+export function needsPhoneConnectionBeforeAddScreen(
+  screens: readonly ScreenSelectionLike[],
+  cameraId: string,
+  pages: readonly ScreenPageSelectionLike[] = [],
+): boolean {
+  const cameraScreens = selectableScreens(screens, cameraId);
+  return (
+    !cameraScreens.some((screen) => screen.hasCorrection) ||
+    pages.some(
+      (page) =>
+        page.cameraId === cameraId &&
+        (!page.screenId ||
+          !cameraScreens.some((screen) => screen.id === page.screenId)),
+    )
+  );
 }
