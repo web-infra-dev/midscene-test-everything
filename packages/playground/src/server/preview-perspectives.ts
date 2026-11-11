@@ -36,19 +36,22 @@ export class PreviewPerspectives {
     target: PerspectiveTarget,
     phones: string[],
     check: () => void,
+    allowMismatch = false,
   ) {
     const previous = await this.get(cameraId);
     const scope = `marker-preview:${randomUUID()}`;
     const file = this.file(cameraId);
     const tmp = `${file}.${randomUUID()}`;
+    let validity;
     try {
-      await saveStandaloneCorrection(
+      validity = await saveStandaloneCorrection(
         this.cameras,
         cameraId,
         correction,
         target,
         scope,
         check,
+        allowMismatch,
       );
       await mkdir(this.cameras.dataDirectory, { recursive: true });
       await writeFile(tmp, JSON.stringify({ scope, phones }), { mode: 0o600 });
@@ -61,6 +64,7 @@ export class PreviewPerspectives {
       await rm(tmp, { force: true });
     }
     if (previous) await this.cameras.clearPerspective(cameraId, previous.scope);
+    return validity;
   }
   async clear(cameraId: string, pending: PreviewPerspective) {
     await rm(this.file(cameraId), { force: true });

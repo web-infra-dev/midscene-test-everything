@@ -27,6 +27,10 @@ export const usePreferences = create<{
 }));
 const messages = {
   correctionSaved: ['透视校正已保存', 'Perspective correction saved'],
+  correctionSavedWithWarning: [
+    '透视校正已保存，但轮廓与当前画面偏差较大。机械臂移动前请重新校验或再次标定。',
+    'Perspective correction saved, but its outline differs from the live view. Recheck or recalibrate before moving the robot.',
+  ],
   correctionCleared: ['透视校正已清除', 'Perspective correction cleared'],
   clearCorrection: ['清除透视校正', 'Clear perspective correction'],
   clearCorrectionTitle: ['清除透视校正？', 'Clear perspective correction?'],

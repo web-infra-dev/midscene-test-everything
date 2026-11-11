@@ -1080,37 +1080,44 @@ export async function startPlaygroundHost({
             );
           preview.assertCaptured(evidence.pageKey);
         };
-        await setup.mutate({ session: setup.session }, async () => {
-          check();
-          const pairing = markerPreviews.get(evidence?.token)?.activePairing;
-          const phones = pairing
-            ? [
-                pairing.newToken,
-                ...(pairing.savedToken ? [pairing.savedToken] : []),
-              ].map(phoneFingerprint)
-            : (await pendingPerspectives.get(input.id))?.phones;
-          if (phones) {
-            if (!input.perspectiveTarget)
-              throw Object.assign(
-                new Error('A marker perspective requires an output size.'),
-                { status: 400 },
+        const validity = await setup.mutate(
+          { session: setup.session },
+          async () => {
+            check();
+            const pairing = markerPreviews.get(evidence?.token)?.activePairing;
+            const phones = pairing
+              ? [
+                  pairing.newToken,
+                  ...(pairing.savedToken ? [pairing.savedToken] : []),
+                ].map(phoneFingerprint)
+              : (await pendingPerspectives.get(input.id))?.phones;
+            if (phones) {
+              if (!input.perspectiveTarget)
+                throw Object.assign(
+                  new Error('A marker perspective requires an output size.'),
+                  { status: 400 },
+                );
+              return pendingPerspectives.save(
+                input.id,
+                input.correction,
+                input.perspectiveTarget,
+                phones,
+                check,
+                true,
               );
-            await pendingPerspectives.save(
-              input.id,
-              input.correction,
-              input.perspectiveTarget,
-              phones,
-              check,
-            );
-          } else
-            await saveStandaloneCorrection(
+            }
+            return saveStandaloneCorrection(
               cameraManager,
               input.id,
               input.correction,
               input.perspectiveTarget,
+              undefined,
+              undefined,
+              true,
             );
-        });
-        return send(200, { ok: true });
+          },
+        );
+        return send(200, { ok: true, validity });
       }
       if (url.pathname === '/api/cameras/stop' && req.method === 'POST') {
         const input = await readBody(req);

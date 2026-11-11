@@ -115,7 +115,9 @@ export function CameraPerspectiveActions({
     if (scope.current.signal.aborted) return;
     await onChanged('corrected');
     setDraft(undefined);
-    message.success(t('correctionSaved'));
+    if (result.validity?.state === 'invalid')
+      message.warning(t('correctionSavedWithWarning'));
+    else message.success(t('correctionSaved'));
     if (result.mappingError) message.warning(result.mappingError);
   };
   return (

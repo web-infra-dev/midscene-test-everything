@@ -171,14 +171,23 @@ export async function saveStandaloneCorrection(
   target?: PerspectiveTarget,
   screenId?: string,
   checkCapture?: () => void,
+  allowMismatch = false,
 ) {
   const owner = randomUUID();
   const camera = await cameras.acquire(id, owner, screenId);
   try {
-    await camera.checkCorrection(correction);
+    // Camera-only editing is an explicit operator action. Let it persist even
+    // when the edited outline no longer aligns with this live frame; the result
+    // is returned so the UI can warn and robot movement still revalidates it.
+    const validity = await camera.checkCorrection(
+      correction,
+      undefined,
+      allowMismatch,
+    );
     checkCapture?.();
     if (target) await camera.setPerspective(correction, target);
     else await camera.setCorrection(correction);
+    return validity;
   } finally {
     await cameras.release(id, owner);
   }
