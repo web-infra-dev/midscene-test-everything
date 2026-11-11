@@ -1,5 +1,8 @@
 import { expect, it } from '@rstest/core';
-import { selectableScreens } from '../src/screen-selection';
+import {
+  needsPhoneConnectionBeforeAddScreen,
+  selectableScreens,
+} from '../src/screen-selection';
 
 it('keeps a newly added screen selectable before its first calibration', () => {
   const screens = [
@@ -15,4 +18,20 @@ it('keeps a newly added screen selectable before its first calibration', () => {
   expect(
     selectableScreens(screens, 'camera').map((screen) => screen.id),
   ).toEqual(['calibrated', 'new']);
+});
+
+it('connects phone pages before creating the first screen targets', () => {
+  expect(needsPhoneConnectionBeforeAddScreen([], 'camera')).toBe(true);
+  expect(
+    needsPhoneConnectionBeforeAddScreen(
+      [{ cameraId: 'camera', markerSlot: 1 }],
+      'camera',
+    ),
+  ).toBe(true);
+  expect(
+    needsPhoneConnectionBeforeAddScreen(
+      [{ cameraId: 'camera', hasCorrection: true }, { cameraId: 'camera' }],
+      'camera',
+    ),
+  ).toBe(false);
 });

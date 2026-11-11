@@ -74,7 +74,10 @@ import {
   markerRequest,
 } from './marker-client';
 import { cameraPreviewUrl } from './preview-url';
-import { selectableScreens } from './screen-selection';
+import {
+  needsPhoneConnectionBeforeAddScreen,
+  selectableScreens,
+} from './screen-selection';
 import { TeachingClient } from './teaching-client';
 import { isRequiredPhonePage } from './utils/phone-readiness';
 import './styles.less';
@@ -162,7 +165,12 @@ function GuidedContent({
     useState<HTMLDivElement | null>(null);
   const [footer, setFooter] = useState<HTMLDivElement | null>(null);
   const [phonesOpen, setPhonesOpen] = useState(false);
+  /** Add Screen starts from phone pairing until the camera has a mapping. */
+  const [phoneConnectionForAddScreen, setPhoneConnectionForAddScreen] =
+    useState(false);
   const [markerOpen, setMarkerOpen] = useState(initialStep === 1);
+  /** The marker session was opened for a newly created Add Screen target. */
+  const [markerAdd, setMarkerAdd] = useState(false);
   /** The manual corner editor, handed over from a failed marker pass. */
   const [perspectiveEditor, setPerspectiveEditor] = useState(false);
   const [retryId, setRetryId] = useState<string>();
@@ -310,6 +318,8 @@ function GuidedContent({
     setRetryId(undefined);
     setMarkerSession(undefined);
     setMarkerOpen(false);
+    setPhoneConnectionForAddScreen(false);
+    setMarkerAdd(false);
     setPerspectiveEditor(false);
     setApplying(false);
     setSingleFailure(undefined);
@@ -678,6 +688,7 @@ function GuidedContent({
       setRetryId(undefined);
       setPerspectiveEditor(false);
       setStep(1);
+      setMarkerAdd(false);
       setMarkerOpen(true);
     } catch (cause) {
       if (currentBase.current === base)
@@ -700,6 +711,7 @@ function GuidedContent({
       // Closing the wizard is a cancel for a screen that was only added and
       // never calibrated; a calibrated one was already cleared by `detected`.
       if (pending) await discardPendingAddedScreen(pending);
+      setMarkerAdd(false);
       onClose(selectedId);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -755,6 +767,7 @@ function GuidedContent({
         setReview(undefined);
         setReviewOpen(false);
         setMarkerOpen(false);
+        setMarkerAdd(false);
       } catch (cause) {
         if (currentBase.current !== base) return;
         setReview({ ...result, token });
@@ -812,6 +825,7 @@ function GuidedContent({
     const pending = pendingAddedScreen.current;
     pendingAddedScreen.current = undefined;
     if (currentBase.current === base) setMarkerOpen(false);
+    setMarkerAdd(false);
     if (pending) void discardPendingAddedScreen(pending);
   }, [base, discardPendingAddedScreen]);
   /**
@@ -878,6 +892,7 @@ function GuidedContent({
     if (!phoneConnected || !phoneFullscreen) return;
     if (autoDetectStarted.current === selectedId) return;
     autoDetectStarted.current = selectedId;
+    setMarkerAdd(false);
     setMarkerOpen(true);
   }, [
     step,
@@ -1040,6 +1055,7 @@ function GuidedContent({
                   ? undefined
                   : () => {
                       setStep(1);
+                      setMarkerAdd(false);
                       setMarkerOpen(true);
                     }
               }
@@ -1100,9 +1116,13 @@ function GuidedContent({
                       autoAddTarget={false}
                       firstScreenCalibration={!savedScreens.length}
                       key={selectedId}
-                      existingScreens={retryId ? undefined : existing}
-                      focusTargetId={retryId}
-                      resumeSession={retryId ? markerSession : undefined}
+                      existingScreens={
+                        markerAdd ? [] : retryId ? undefined : existing
+                      }
+                      focusTargetId={markerAdd ? undefined : retryId}
+                      resumeSession={
+                        markerAdd || retryId ? markerSession : undefined
+                      }
                       includeSucceededTargets={Boolean(retryId)}
                       keepSessionOnClose
                       onAdjustManually={() => {
@@ -1255,29 +1275,61 @@ function GuidedContent({
                       key={selectedId}
                       onSelectScreen={selectScreen}
                       onAddScreen={async () => {
+                        if (
+                          needsPhoneConnectionBeforeAddScreen(screens, cameraId)
+                        ) {
+                          setPhoneConnectionForAddScreen(true);
+                          setPhonesOpen(true);
+                          return;
+                        }
                         if (addingScreen.current) return;
                         addingScreen.current = true;
                         keepPendingAddedScreen.current = false;
+                        let createdTarget: string | undefined;
                         try {
                           const knownIds = screens
                             .filter((s) => s.cameraId === cameraId)
                             .map((s) => s.id);
+                          const name = `Screen ${screens.filter((s) => s.cameraId === cameraId).length + 1}`;
+                          // Create a real new target first. Asking the marker
+                          // service to allocate by name reuses a calibrated /
+                          // bound screen, which made Add Screen reopen the old one.
+                          createdTarget = (
+                            await markerRequest<{ id: string }>(
+                              '/api/screens',
+                              {
+                                cameraId,
+                                name,
+                              },
+                            )
+                          ).id;
                           const created =
                             await markerClient.createMarkerCalibration(
                               cameraId,
-                              [
-                                `Screen ${screens.filter((s) => s.cameraId === cameraId).length + 1}`,
-                              ],
+                              undefined,
+                              undefined,
+                              [createdTarget],
                             );
-                          if (currentBase.current !== base) return;
+                          if (currentBase.current !== base) {
+                            await pageClient
+                              .deleteScreen(cameraId, createdTarget)
+                              .catch(() => undefined);
+                            createdTarget = undefined;
+                            return;
+                          }
+                          setMarkerAdd(true);
                           setMarkerSession(created);
-                          setRetryId(created.targets[0]?.id);
+                          setRetryId(undefined);
                           pendingAddedScreen.current = {
                             previous: selectedId,
                             knownIds,
                           };
                           setMarkerOpen(true);
                         } catch (cause) {
+                          if (createdTarget)
+                            await pageClient
+                              .deleteScreen(cameraId, createdTarget)
+                              .catch(() => undefined);
                           setError(
                             cause instanceof Error
                               ? cause.message
@@ -1290,6 +1342,7 @@ function GuidedContent({
                       onPair={() => setPhonesOpen(true)}
                       onDetect={() => {
                         setRetryId(undefined);
+                        setMarkerAdd(false);
                         setMarkerOpen(true);
                       }}
                       onApply={applyCorrection}
@@ -1591,7 +1644,21 @@ function GuidedContent({
       </footer>
       <PhoneConnectDialog
         open={phonesOpen}
-        onClose={() => setPhonesOpen(false)}
+        onClose={() => {
+          setPhonesOpen(false);
+          setPhoneConnectionForAddScreen(false);
+        }}
+        onContinue={
+          phoneConnectionForAddScreen
+            ? () => {
+                setPhonesOpen(false);
+                setPhoneConnectionForAddScreen(false);
+                setRetryId(undefined);
+                setMarkerAdd(false);
+                setMarkerOpen(true);
+              }
+            : undefined
+        }
         readiness={phoneReadiness}
         cameras={phoneCameras}
         connectingDeviceId={connectingPage}
@@ -1628,6 +1695,7 @@ function GuidedContent({
         onRetry={(target) => {
           setReviewOpen(false);
           setRetryId(target.id);
+          setMarkerAdd(false);
           setMarkerOpen(true);
         }}
         onApply={() => {

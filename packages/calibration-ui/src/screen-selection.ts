@@ -15,3 +15,17 @@ export function selectableScreens<T extends ScreenSelectionLike>(
 ): T[] {
   return screens.filter((screen) => screen.cameraId === cameraId);
 }
+
+/**
+ * The first calibration starts from the phone pages, not a screen target:
+ * connect every page for this camera, then create and detect the screens in
+ * one pass.
+ */
+export function needsPhoneConnectionBeforeAddScreen(
+  screens: readonly ScreenSelectionLike[],
+  cameraId: string,
+): boolean {
+  return !selectableScreens(screens, cameraId).some(
+    (screen) => screen.hasCorrection,
+  );
+}

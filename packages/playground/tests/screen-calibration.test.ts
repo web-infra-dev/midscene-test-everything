@@ -782,3 +782,13 @@ it('does not expose a stored perspective after the applied correction is cleared
     f.store.list().screenTargets?.find((entry) => entry.id === 'fresh'),
   ).toEqual({ id: 'fresh', cameraId: 'cam', name: 'Fresh' });
 });
+
+it('starts a marker session for the explicitly created Add Screen target', async () => {
+  const f = await fixture();
+  const created = await f.devices.addScreen('cam', 'Fresh');
+  const session = await f.service.create('cam', undefined, [created.id]);
+  expect(session.targets.map((target) => target.id)).toEqual([created.id]);
+  expect(f.devices.screens().some((screen) => screen.id === created.id)).toBe(
+    true,
+  );
+});
