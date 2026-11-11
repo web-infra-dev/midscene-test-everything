@@ -1,4 +1,6 @@
+import { join } from 'node:path';
 import { CameraStreamManager, cameraBackend } from '@midscene/robotics-vision';
+import { directory } from '../../settings.js';
 import { HIDInputManager, type HIDInputSession } from '../input/session.js';
 import { AirPlayScreenSession } from '../screen/airplay.js';
 import { CameraScreenSession } from '../screen/camera.js';
@@ -9,7 +11,9 @@ import { DeviceSession } from './device-session.js';
 
 /** All native resources, including first-time setup previews, belong to this runtime. */
 export class IOSHIDRuntime {
-  readonly cameras = new CameraStreamManager(cameraBackend());
+  readonly cameras = new CameraStreamManager(
+    cameraBackend({ cameraAppDirectory: join(directory, 'camera-app') }),
+  );
   readonly input = new HIDInputManager();
   private owners = new Set<string>();
   private sessions = new Set<DeviceSession>();

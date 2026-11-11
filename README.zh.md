@@ -144,6 +144,8 @@ pnpm ios-hid:service install
 
 打开命令打印的本机配置页，默认是 `http://localhost:5801/`。管理台支持多设备添加、校准、预览和恢复。
 
+首次选择独立摄像头时，macOS 可能会提示为 **Midscene Camera** 授权。请在运行服务的 Mac 上允许访问。如果之前拒绝过，在「系统设置 → 隐私与安全性 → 摄像头」启用 Midscene Camera，再重新选择摄像头。
+
 ```sh
 pnpm ios-hid:service status
 pnpm ios-hid:service stop

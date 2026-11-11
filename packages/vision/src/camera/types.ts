@@ -53,7 +53,10 @@ export interface CameraSource extends EventEmitter {
 
 export interface CameraBackend {
   listDevices(): Promise<CameraDevice[]>;
-  openStream(options: ResolvedCameraStreamOptions): Promise<CameraSource>;
+  openStream(
+    options: ResolvedCameraStreamOptions,
+    signal?: AbortSignal,
+  ): Promise<CameraSource>;
 }
 
 export type CameraStreamState = 'starting' | 'running' | 'failed' | 'stopped';

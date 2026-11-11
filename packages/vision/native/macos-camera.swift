@@ -1,6 +1,8 @@
+import AppKit
 import AVFoundation
 import CoreImage
 import CoreMedia
+import Darwin
 import Foundation
 import ImageIO
 
@@ -22,7 +24,63 @@ func cameras() -> [AVCaptureDevice] {
     AVCaptureDevice.devices(for: .video)
 }
 
+var frameOutput = FileHandle.standardOutput
+var appConnection: FileHandle?
+var appDisconnect: DispatchSourceRead?
+var appReady = false
+
+func connectToService(_ path: String) {
+    let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+    guard fd >= 0 else { fail("Cannot create camera connection") }
+    var address = sockaddr_un()
+    let bytes = Array(path.utf8CString)
+    guard bytes.count <= MemoryLayout.size(ofValue: address.sun_path) else {
+        fail("Camera socket path is too long")
+    }
+    address.sun_family = sa_family_t(AF_UNIX)
+    withUnsafeMutableBytes(of: &address.sun_path) { target in
+        bytes.withUnsafeBytes { target.copyBytes(from: $0) }
+    }
+    let status = withUnsafePointer(to: &address) { pointer in
+        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+        }
+    }
+    guard status == 0 else { fail("Cannot connect to the device service") }
+    signal(SIGPIPE, SIG_IGN)
+    let connection = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+    appConnection = connection
+    frameOutput = connection
+    let disconnect = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .global())
+    disconnect.setEventHandler { exit(0) }
+    appDisconnect = disconnect
+    disconnect.resume()
+}
+
+func authorizeCamera() {
+    _ = NSApplication.shared
+    switch AVCaptureDevice.authorizationStatus(for: .video) {
+    case .authorized: return
+    case .notDetermined:
+        AVCaptureDevice.requestAccess(for: .video) { granted in
+            DispatchQueue.main.async {
+                if !granted { fail("Camera access was denied. Allow Midscene Camera in System Settings > Privacy & Security > Camera.") }
+                CFRunLoopStop(CFRunLoopGetMain())
+            }
+        }
+        CFRunLoopRun()
+    case .denied, .restricted:
+        fail("Camera access is blocked. Allow Midscene Camera in System Settings > Privacy & Security > Camera.")
+    @unknown default:
+        fail("Unable to determine camera authorization")
+    }
+}
+
 func fail(_ message: String) -> Never {
+    if let connection = appConnection, !appReady {
+        let line = message.replacingOccurrences(of: "\n", with: " ")
+        try? connection.write(contentsOf: Data(("error " + line + "\n").utf8))
+    }
     FileHandle.standardError.write(Data((message + "\n").utf8))
     exit(1)
 }
@@ -70,10 +128,12 @@ final class JpegReceiver: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
     private let colorSpace = CGColorSpaceCreateDeviceRGB()
     private let horizontalFlip: Bool
     private let verticalFlip: Bool
+    private let output: FileHandle
 
-    init(horizontalFlip: Bool, verticalFlip: Bool) {
+    init(horizontalFlip: Bool, verticalFlip: Bool, output: FileHandle) {
         self.horizontalFlip = horizontalFlip
         self.verticalFlip = verticalFlip
+        self.output = output
     }
 
     func captureOutput(
@@ -97,7 +157,11 @@ final class JpegReceiver: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
             colorSpace: colorSpace,
             options: [CIImageRepresentationOption(rawValue: kCGImageDestinationLossyCompressionQuality as String): 0.85]
         ) else { fail("Failed to encode camera frame") }
-        FileHandle.standardOutput.write(jpeg)
+        do {
+            try self.output.write(contentsOf: jpeg)
+        } catch {
+            fail("Failed to send camera frame: \(error)")
+        }
     }
 }
 
@@ -123,8 +187,13 @@ if args.count == 2 && args[1] == "list" {
     }
 }
 
-guard args.count == 8, args[1] == "capture" else {
+let appCapture = args.count == 10 && args[8] == "--socket"
+guard (args.count == 8 || appCapture), args[1] == "capture" else {
     fail("Usage: macos-camera list | capture <uid> <width> <height> <fps> <horizontalFlip> <verticalFlip>")
+}
+if appCapture {
+    connectToService(args[9])
+    authorizeCamera()
 }
 let uid = args[2]
 guard let width = Int32(args[3]), let height = Int32(args[4]),
@@ -151,7 +220,7 @@ do {
         kCVPixelBufferPixelFormatTypeKey as String:
             kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
     ]
-    let receiver = JpegReceiver(horizontalFlip: horizontalFlip, verticalFlip: verticalFlip)
+    let receiver = JpegReceiver(horizontalFlip: horizontalFlip, verticalFlip: verticalFlip, output: frameOutput)
     let queue = DispatchQueue(label: "midscene.robot-vision.camera")
     guard session.canAddOutput(output) else { fail("Cannot add camera output") }
     session.addOutput(output)
@@ -168,6 +237,10 @@ do {
     device.activeVideoMinFrameDuration = duration
     device.activeVideoMaxFrameDuration = duration
     device.unlockForConfiguration()
+    if appCapture {
+        try frameOutput.write(contentsOf: Data("ready\n".utf8))
+        appReady = true
+    }
     // Drop any frames from the session's temporary start-up format.
     output.setSampleBufferDelegate(receiver, queue: queue)
     RunLoop.current.run()

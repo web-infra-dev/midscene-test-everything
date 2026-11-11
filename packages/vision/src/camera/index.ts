@@ -1,13 +1,18 @@
 import { DeviceRegistry } from './device-registry.js';
 import { FfmpegCameraBackend } from './ffmpeg-camera-backend.js';
-import { MacosCameraBackend } from './macos-camera-backend.js';
+import {
+  MacosCameraBackend,
+  type MacosCameraBackendOptions,
+} from './macos-camera-backend.js';
 import type { CameraDevice } from './types.js';
 
 let registry: DeviceRegistry | undefined;
-export function cameraBackend(): DeviceRegistry {
+export function cameraBackend(
+  options?: MacosCameraBackendOptions,
+): DeviceRegistry {
   registry ??= new DeviceRegistry(
     process.platform === 'darwin'
-      ? new MacosCameraBackend()
+      ? new MacosCameraBackend(options)
       : new FfmpegCameraBackend(),
   );
   return registry;

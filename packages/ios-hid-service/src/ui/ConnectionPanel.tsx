@@ -49,7 +49,7 @@ type Binding = {
   bluetooth: { hosts: Choice[] };
   airplay?: AirPlaySetupInfo;
 };
-async function request(url: string, body?: unknown) {
+async function request(url: string, body?: unknown, timeoutMs = 30000) {
   const id = /\/setup\/([^/]+)/.exec(url)?.[1];
   const response = await fetch(url, {
     method: body === undefined ? 'GET' : 'POST',
@@ -62,7 +62,7 @@ async function request(url: string, body?: unknown) {
             'X-Midscene-Playground': 'setup',
           },
     body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(30000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok)
     throw new Error((await response.json()).error ?? '请求失败，请重试');
@@ -91,6 +91,7 @@ function useCameraPreview(
           await request(
             `${apiBase}/ios-hid/camera-preview/${encodeURIComponent(cameraId)}`,
             {},
+            210_000,
           )
         ).json()) as { id: string };
       });

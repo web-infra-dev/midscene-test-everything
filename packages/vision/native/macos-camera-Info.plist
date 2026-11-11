@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>com.midscene.robotics.camera</string>
+  <key>CFBundleExecutable</key><string>MidsceneCamera</string>
+  <key>CFBundleName</key><string>Midscene Camera</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>LSUIElement</key><true/>
+  <key>NSCameraUsageDescription</key><string>Midscene uses the selected camera to view and calibrate the connected phone screen.</string>
+</dict>
+</plist>

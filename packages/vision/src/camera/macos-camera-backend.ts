@@ -7,9 +7,11 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { RobotVisionError } from './errors.js';
 import { JpegProcessCameraSource } from './jpeg-process-camera-source.js';
+import { buildCameraApp, openCameraApp } from './macos-camera-app.js';
 import type {
   CameraBackend,
   CameraDevice,
+  CameraSource,
   ResolvedCameraStreamOptions,
 } from './types.js';
 import { filterPhysicalCameras } from './virtual-camera-filter.js';
@@ -66,6 +68,7 @@ export interface MacosCameraBackendOptions {
   /** Precompiled helper, primarily for deployments without a Swift compiler. */
   helperPath?: string;
   includeVirtualDevices?: boolean;
+  cameraAppDirectory?: string;
 }
 
 /**
@@ -76,10 +79,13 @@ export interface MacosCameraBackendOptions {
 export class MacosCameraBackend implements CameraBackend {
   private readonly includeVirtualDevices: boolean;
   private readonly helperPath?: string;
+  private readonly cameraAppDirectory?: string;
+  private appPromise?: Promise<string>;
   private helperPromise?: Promise<string>;
   private deviceCache = new Map<string, Pick<NativeDevice, 'uid' | 'name'>>();
 
   constructor(options: MacosCameraBackendOptions = {}) {
+    this.cameraAppDirectory = options.cameraAppDirectory;
     this.helperPath =
       options.helperPath || process.env.ROBOT_VISION_MACOS_CAMERA_HELPER_PATH;
     this.includeVirtualDevices =
@@ -184,7 +190,8 @@ export class MacosCameraBackend implements CameraBackend {
 
   async openStream(
     options: ResolvedCameraStreamOptions,
-  ): Promise<JpegProcessCameraSource> {
+    signal?: AbortSignal,
+  ): Promise<CameraSource> {
     let device = this.deviceCache.get(options.deviceId);
     if (!device) {
       await this.listDevices();
@@ -196,20 +203,28 @@ export class MacosCameraBackend implements CameraBackend {
         `Camera device not found: ${options.deviceId}`,
       );
     }
-    const helper = await this.getHelper();
-    const child = spawn(
-      helper,
-      [
-        'capture',
-        device.uid,
-        String(options.width),
-        String(options.height),
-        String(options.fps),
-        String(options.horizontalFlip),
-        String(options.verticalFlip),
-      ],
-      { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true },
-    );
+    const args = [
+      'capture',
+      device.uid,
+      String(options.width),
+      String(options.height),
+      String(options.fps),
+      String(options.horizontalFlip),
+      String(options.verticalFlip),
+    ];
+    if (this.cameraAppDirectory && !this.helperPath) {
+      this.appPromise ??= buildCameraApp(this.cameraAppDirectory).catch(
+        (error) => {
+          this.appPromise = undefined;
+          throw error;
+        },
+      );
+      return openCameraApp(await this.appPromise, args, signal);
+    }
+    const child = spawn(await this.getHelper(), args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
     return new JpegProcessCameraSource(child, 'macOS camera process');
   }
 

@@ -25,6 +25,7 @@ export class CameraStream extends EventEmitter {
   private error?: string;
   private readonly frameTimes: number[] = [];
   private startupTimer?: NodeJS.Timeout;
+  private starting?: AbortController;
 
   constructor(
     public readonly id: string,
@@ -78,9 +79,15 @@ export class CameraStream extends EventEmitter {
   }
 
   async start(): Promise<void> {
+    const starting = new AbortController();
+    this.starting = starting;
     try {
       const capture = this.getOptions();
-      const source = await this.backend.openStream(capture);
+      const source = await this.backend.openStream(capture, starting.signal);
+      if (starting.signal.aborted) {
+        await source.close();
+        starting.signal.throwIfAborted();
+      }
       this.source = source;
       source.on('frame', (jpeg: Buffer) => {
         if (this.source !== source || this.state === 'stopped') return;
@@ -126,8 +133,11 @@ export class CameraStream extends EventEmitter {
         this.startupTimer.unref?.();
       }
     } catch (error) {
-      this.fail(error instanceof Error ? error : new Error(String(error)));
+      if (!starting.signal.aborted)
+        this.fail(error instanceof Error ? error : new Error(String(error)));
       throw error;
+    } finally {
+      if (this.starting === starting) this.starting = undefined;
     }
   }
 
@@ -216,6 +226,7 @@ export class CameraStream extends EventEmitter {
    */
   private async releaseSource(): Promise<void> {
     this.clearStartupTimer();
+    this.starting?.abort(new Error('Camera stream closed'));
     const source = this.source;
     this.source = undefined;
     if (source) await source.close();
