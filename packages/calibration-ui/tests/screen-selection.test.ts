@@ -24,14 +24,38 @@ it('connects phone pages before creating the first screen targets', () => {
   expect(needsPhoneConnectionBeforeAddScreen([], 'camera')).toBe(true);
   expect(
     needsPhoneConnectionBeforeAddScreen(
-      [{ cameraId: 'camera', markerSlot: 1 }],
+      [{ id: 'screen-1', cameraId: 'camera', markerSlot: 1 }],
       'camera',
     ),
   ).toBe(true);
   expect(
     needsPhoneConnectionBeforeAddScreen(
-      [{ cameraId: 'camera', hasCorrection: true }, { cameraId: 'camera' }],
+      [
+        { id: 'screen-1', cameraId: 'camera', hasCorrection: true },
+        { id: 'screen-2', cameraId: 'camera' },
+      ],
       'camera',
+    ),
+  ).toBe(false);
+  expect(
+    needsPhoneConnectionBeforeAddScreen(
+      [{ id: 'screen-1', cameraId: 'camera', hasCorrection: true }],
+      'camera',
+      [{ cameraId: 'camera' }],
+    ),
+  ).toBe(true);
+  expect(
+    needsPhoneConnectionBeforeAddScreen(
+      [{ id: 'screen-1', cameraId: 'camera', hasCorrection: true }],
+      'camera',
+      [{ cameraId: 'camera', screenId: 'deleted-screen' }],
+    ),
+  ).toBe(true);
+  expect(
+    needsPhoneConnectionBeforeAddScreen(
+      [{ id: 'screen-1', cameraId: 'camera', hasCorrection: true }],
+      'camera',
+      [{ cameraId: 'other-camera' }],
     ),
   ).toBe(false);
 });

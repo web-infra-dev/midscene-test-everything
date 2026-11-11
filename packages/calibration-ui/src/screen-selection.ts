@@ -1,7 +1,13 @@
 export interface ScreenSelectionLike {
+  id: string;
   cameraId: string;
   hasCorrection?: boolean;
   markerSlot?: number;
+}
+
+export interface ScreenPageSelectionLike {
+  cameraId?: string;
+  screenId?: string;
 }
 
 /**
@@ -24,8 +30,16 @@ export function selectableScreens<T extends ScreenSelectionLike>(
 export function needsPhoneConnectionBeforeAddScreen(
   screens: readonly ScreenSelectionLike[],
   cameraId: string,
+  pages: readonly ScreenPageSelectionLike[] = [],
 ): boolean {
-  return !selectableScreens(screens, cameraId).some(
-    (screen) => screen.hasCorrection,
+  const cameraScreens = selectableScreens(screens, cameraId);
+  return (
+    !cameraScreens.some((screen) => screen.hasCorrection) ||
+    pages.some(
+      (page) =>
+        page.cameraId === cameraId &&
+        (!page.screenId ||
+          !cameraScreens.some((screen) => screen.id === page.screenId)),
+    )
   );
 }

@@ -168,6 +168,11 @@ function GuidedContent({
   /** Add Screen starts from phone pairing until the camera has a mapping. */
   const [phoneConnectionForAddScreen, setPhoneConnectionForAddScreen] =
     useState(false);
+  /** Auto-create every connected page only for an explicit initial setup. */
+  const [
+    firstScreenCalibrationForConnection,
+    setFirstScreenCalibrationForConnection,
+  ] = useState(false);
   const [markerOpen, setMarkerOpen] = useState(initialStep === 1);
   /** The marker session was opened for a newly created Add Screen target. */
   const [markerAdd, setMarkerAdd] = useState(false);
@@ -319,6 +324,7 @@ function GuidedContent({
     setMarkerSession(undefined);
     setMarkerOpen(false);
     setPhoneConnectionForAddScreen(false);
+    setFirstScreenCalibrationForConnection(false);
     setMarkerAdd(false);
     setPerspectiveEditor(false);
     setApplying(false);
@@ -688,6 +694,7 @@ function GuidedContent({
       setRetryId(undefined);
       setPerspectiveEditor(false);
       setStep(1);
+      setFirstScreenCalibrationForConnection(false);
       setMarkerAdd(false);
       setMarkerOpen(true);
     } catch (cause) {
@@ -711,6 +718,7 @@ function GuidedContent({
       // Closing the wizard is a cancel for a screen that was only added and
       // never calibrated; a calibrated one was already cleared by `detected`.
       if (pending) await discardPendingAddedScreen(pending);
+      setFirstScreenCalibrationForConnection(false);
       setMarkerAdd(false);
       onClose(selectedId);
     } catch (cause) {
@@ -767,6 +775,7 @@ function GuidedContent({
         setReview(undefined);
         setReviewOpen(false);
         setMarkerOpen(false);
+        setFirstScreenCalibrationForConnection(false);
         setMarkerAdd(false);
       } catch (cause) {
         if (currentBase.current !== base) return;
@@ -825,6 +834,7 @@ function GuidedContent({
     const pending = pendingAddedScreen.current;
     pendingAddedScreen.current = undefined;
     if (currentBase.current === base) setMarkerOpen(false);
+    setFirstScreenCalibrationForConnection(false);
     setMarkerAdd(false);
     if (pending) void discardPendingAddedScreen(pending);
   }, [base, discardPendingAddedScreen]);
@@ -892,6 +902,7 @@ function GuidedContent({
     if (!phoneConnected || !phoneFullscreen) return;
     if (autoDetectStarted.current === selectedId) return;
     autoDetectStarted.current = selectedId;
+    setFirstScreenCalibrationForConnection(false);
     setMarkerAdd(false);
     setMarkerOpen(true);
   }, [
@@ -1055,6 +1066,7 @@ function GuidedContent({
                   ? undefined
                   : () => {
                       setStep(1);
+                      setFirstScreenCalibrationForConnection(false);
                       setMarkerAdd(false);
                       setMarkerOpen(true);
                     }
@@ -1114,7 +1126,9 @@ function GuidedContent({
                       displayName={config.camera.name}
                       autoCreateScreen
                       autoAddTarget={false}
-                      firstScreenCalibration={!savedScreens.length}
+                      firstScreenCalibration={
+                        firstScreenCalibrationForConnection
+                      }
                       key={selectedId}
                       existingScreens={
                         markerAdd ? [] : retryId ? undefined : existing
@@ -1276,7 +1290,11 @@ function GuidedContent({
                       onSelectScreen={selectScreen}
                       onAddScreen={async () => {
                         if (
-                          needsPhoneConnectionBeforeAddScreen(screens, cameraId)
+                          needsPhoneConnectionBeforeAddScreen(
+                            screens,
+                            cameraId,
+                            phoneReadiness.connection?.devices,
+                          )
                         ) {
                           setPhoneConnectionForAddScreen(true);
                           setPhonesOpen(true);
@@ -1317,6 +1335,7 @@ function GuidedContent({
                             createdTarget = undefined;
                             return;
                           }
+                          setFirstScreenCalibrationForConnection(false);
                           setMarkerAdd(true);
                           setMarkerSession(created);
                           setRetryId(undefined);
@@ -1341,7 +1360,13 @@ function GuidedContent({
                       }}
                       onPair={() => setPhonesOpen(true)}
                       onDetect={() => {
+                        if (!knownScreens.length) {
+                          setPhoneConnectionForAddScreen(true);
+                          setPhonesOpen(true);
+                          return;
+                        }
                         setRetryId(undefined);
+                        setFirstScreenCalibrationForConnection(false);
                         setMarkerAdd(false);
                         setMarkerOpen(true);
                       }}
@@ -1654,7 +1679,10 @@ function GuidedContent({
                 setPhonesOpen(false);
                 setPhoneConnectionForAddScreen(false);
                 setRetryId(undefined);
-                setMarkerAdd(false);
+                setFirstScreenCalibrationForConnection(
+                  knownScreens.length === 0,
+                );
+                setMarkerAdd(knownScreens.length > 0);
                 setMarkerOpen(true);
               }
             : undefined
@@ -1695,6 +1723,7 @@ function GuidedContent({
         onRetry={(target) => {
           setReviewOpen(false);
           setRetryId(target.id);
+          setFirstScreenCalibrationForConnection(false);
           setMarkerAdd(false);
           setMarkerOpen(true);
         }}

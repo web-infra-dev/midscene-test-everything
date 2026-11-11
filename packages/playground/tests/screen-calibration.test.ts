@@ -339,6 +339,83 @@ it('keeps saved identity when restoring home, and permits explicit release and r
   expect(first.page.saved.token).toBe(first.token);
   expect(f.adapter.movements).toHaveLength(0);
 });
+it('keeps a deleted screen page available without reactivating its target', async () => {
+  const f = await fixture();
+  const first = await f.connect();
+  await f.connect();
+  await f.service.pageAction({
+    action: 'delete-screen',
+    cameraId: 'cam',
+    id: first.targetId,
+  });
+  const listed = (await f.service.pageAction({
+    action: 'list',
+    cameraId: 'cam',
+  })) as {
+    devices: Array<{ id: string; mode: string; screenId?: string }>;
+  };
+  expect(
+    listed.devices.find((device) => device.id === first.page.saved.id),
+  ).toMatchObject({ mode: 'waiting', screenId: undefined });
+  expect(
+    f.store.list().screenPages?.find((page) => page.id === first.page.saved.id),
+  ).toMatchObject({
+    cameraId: 'cam',
+    pageKey: first.pageKey,
+    targetId: undefined,
+  });
+  expect(
+    f.devices.screens().some((screen) => screen.id === first.targetId),
+  ).toBe(false);
+  const replacement = await f.service.create('cam', ['Replacement']);
+  expect(replacement.targets.map((target) => target.id)).not.toContain(
+    first.targetId,
+  );
+  const afterCreate = (await f.service.pageAction({
+    action: 'list',
+    cameraId: 'cam',
+  })) as {
+    devices: Array<{ id: string; screenId?: string }>;
+  };
+  expect(
+    afterCreate.devices.find((device) => device.id === first.page.saved.id)
+      ?.screenId,
+  ).toBeUndefined();
+});
+it('lists online phone pages after deleting every screen for a camera', async () => {
+  const f = await fixture();
+  const first = await f.connect();
+  const second = await f.connect();
+  for (const targetId of [first.targetId, second.targetId])
+    await f.service.pageAction({
+      action: 'delete-screen',
+      cameraId: 'cam',
+      id: targetId,
+    });
+  await f.devices.stop('cam');
+  expect(f.devices.entries.has('cam')).toBe(false);
+  const listed = (await f.service.pageAction({
+    action: 'list',
+    cameraId: 'cam',
+  })) as {
+    devices: Array<{ id: string; mode: string; screenId?: string }>;
+    pairing: unknown;
+  };
+  const ids = [first.page.saved.id, second.page.saved.id];
+  expect(listed.devices.filter((device) => ids.includes(device.id))).toEqual([
+    expect.objectContaining({
+      id: first.page.saved.id,
+      mode: 'waiting',
+      screenId: undefined,
+    }),
+    expect.objectContaining({
+      id: second.page.saved.id,
+      mode: 'waiting',
+      screenId: undefined,
+    }),
+  ]);
+  expect(listed.pairing).toBeDefined();
+});
 it('rejects applying captured results after either phone changed layout', async () => {
   const f = await fixture();
   await f.connect();
