@@ -9,6 +9,7 @@ import {
 } from 'node:fs/promises';
 import path from 'node:path';
 import { assertSurface } from '../calibration/surface.js';
+import { assertSafeObservation } from '../calibration/verification/safe-position.js';
 import {
   calibrationSessionStatus,
   verificationContextKey,
@@ -16,6 +17,7 @@ import {
 import {
   type CalibrationProfile,
   type CalibrationSession,
+  type CartesianPose,
   type DeviceBinding,
   type ProfileBinding,
   type ProfileData,
@@ -23,6 +25,7 @@ import {
   RobotArmError,
   type RobotArmProfile,
   type ScreenProfile,
+  type SharedParkingEvidence,
   type ToolProfile,
   type VersionedProfile,
   type VisionBinding,
@@ -319,7 +322,10 @@ export class ProfileStore {
     for (const c of parsed.calibrations) {
       if (
         c.acceptanceStatus === 'accepted' &&
-        !calibrationAccepted({ ...c, geometryStatus: 'valid' })
+        !calibrationAccepted(
+          { ...c, geometryStatus: 'valid' },
+          c.pendingParkingBatchId,
+        )
       )
         throw new RobotArmError(
           'INVALID_PROFILE_FILE',
@@ -824,6 +830,26 @@ export class ProfileStore {
       ];
     });
   }
+  calibrationMapping(deviceId: string) {
+    const entry = this.data.calibrationMappings?.[deviceId];
+    return entry && structuredClone(entry);
+  }
+  saveCalibrationMapping(
+    deviceId: string,
+    entry?: NonNullable<ProfileData['calibrationMappings']>[string],
+  ) {
+    if (!entry && !this.calibrationMapping(deviceId)) return Promise.resolve();
+    return this.transaction((draft) => {
+      draft.calibrationMappings ??= {};
+      if (entry) draft.calibrationMappings[deviceId] = structuredClone(entry);
+      else
+        draft.calibrationMappings = Object.fromEntries(
+          Object.entries(draft.calibrationMappings).filter(
+            ([id]) => id !== deviceId,
+          ),
+        );
+    });
+  }
   deviceBinding(deviceId: string): DeviceBinding | undefined {
     const binding = this.data.devices?.find(
       (entry) => entry.deviceId === deviceId,
@@ -837,7 +863,11 @@ export class ProfileStore {
       this.bindAcceptedDevice(draft, candidate),
     );
   }
-  private bindAcceptedDevice(draft: ProfileData, candidate: DeviceBinding) {
+  private bindAcceptedDevice(
+    draft: ProfileData,
+    candidate: DeviceBinding,
+    parkingBatchId?: string,
+  ) {
     if (!candidate.deviceId?.trim())
       throw new RobotArmError('INVALID_DEVICE', 'Device ID is required');
     const current = draft.devices?.find(
@@ -863,7 +893,7 @@ export class ProfileStore {
     );
     if (
       !calibration ||
-      !calibrationAccepted(calibration) ||
+      !calibrationAccepted(calibration, parkingBatchId) ||
       !robot ||
       !tool ||
       !screen ||
@@ -1186,6 +1216,81 @@ export class ProfileStore {
       return c;
     }, guard);
   }
+  saveBatchParking(
+    batchId: string,
+    profiles: ReadonlyArray<{ id: string; revision: number }>,
+    pose: CartesianPose,
+    evidence: SharedParkingEvidence,
+    guard: () => void,
+  ) {
+    assertPose(pose);
+    return this.transaction((data) => {
+      const batch = data.calibrationBatch;
+      const manual = 'operatorConfirmedAt' in evidence;
+      if (
+        !batch ||
+        batch.id !== batchId ||
+        !profiles.length ||
+        (!manual &&
+          (!evidence.clear ||
+            batch.items.some(
+              (item) =>
+                !evidence.screens.some((screen) => screen.id === item.deviceId),
+            )))
+      )
+        throw new RobotArmError(
+          'STALE_CONTEXT',
+          'The batch changed before the shared Safe Position was saved.',
+          409,
+        );
+      const now = new Date().toISOString();
+      for (const expected of profiles) {
+        const calibration = data.calibrations.find(
+          (profile) => profile.id === expected.id,
+        );
+        if (
+          !calibration ||
+          calibration.revision !== expected.revision ||
+          !calibrationAccepted(calibration, batchId) ||
+          calibration.robotProfileId !== batch.robotProfileId ||
+          calibration.toolProfileId !== batch.toolProfileId
+        )
+          throw new RobotArmError(
+            'STALE_CONTEXT',
+            'A screen calibration changed before the shared Safe Position was saved.',
+            409,
+          );
+        const screen = data.screens.find(
+          (profile) => profile.id === calibration.screenProfileId,
+        )!;
+        const tool = data.tools.find(
+          (profile) => profile.id === calibration.toolProfileId,
+        )!;
+        assertSafeObservation(
+          calibration,
+          pose,
+          tool.offsetMm,
+          screen.safeHeightMm,
+        );
+        if (
+          calibration.pendingParkingBatchId ||
+          semanticJson(calibration.observationPose) !== semanticJson(pose)
+        ) {
+          calibration.observationPose = structuredClone(pose);
+          calibration.pendingParkingBatchId = undefined;
+          calibration.revision++;
+          calibration.updatedAt = now;
+        }
+      }
+      batch.sharedSafePosition = structuredClone(pose);
+      batch.sharedVisibility = manual ? undefined : structuredClone(evidence);
+      batch.sharedParkingOperatorConfirmedAt = manual
+        ? evidence.operatorConfirmedAt
+        : undefined;
+      batch.sharedSafePositionVerified = true;
+    }, guard);
+  }
+
   saveSession(
     s: CalibrationSession,
     releaseOperation = false,
@@ -1228,13 +1333,27 @@ export class ProfileStore {
   ): Promise<void> {
     const c = s.candidate;
     const context = s.context;
-    if (!c || !context || !calibrationAccepted(c) || s.status !== 'completed')
+    if (
+      !c ||
+      !context ||
+      !calibrationAccepted(c, s.auto?.deferParkingBatchId) ||
+      s.status !== 'completed'
+    )
       throw new RobotArmError(
         'NOT_VERIFIED',
         'Complete both verification groups and human confirmations first',
         409,
       );
     return this.transaction((d) => {
+      if (
+        c.pendingParkingBatchId &&
+        d.calibrationBatch?.id !== c.pendingParkingBatchId
+      )
+        throw new RobotArmError(
+          'STALE_CONTEXT',
+          'The calibration batch changed before saving this screen.',
+          409,
+        );
       const current = d.workstation;
       if (
         (current?.revision ?? 0) !== s.context?.workstationRevision ||
@@ -1311,7 +1430,7 @@ export class ProfileStore {
             'Device does not match this calibration',
             409,
           );
-        this.bindAcceptedDevice(d, binding);
+        this.bindAcceptedDevice(d, binding, s.auto?.deferParkingBatchId);
       }
       d.sessions ??= [];
       const j = d.sessions.findIndex((p) => p.id === s.id);

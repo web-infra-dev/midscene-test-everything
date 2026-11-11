@@ -87,6 +87,29 @@ it('exposes screenshots and real queued touch primitives through the public Devi
     await f.dispose();
   }
 });
+it('performs a bounded screen action through the public Device', async () => {
+  const f = await setup();
+  try {
+    const device = f.create();
+    await device.connect();
+    await expect(
+      device.perform({ type: 'tap', point: { x: 500, y: 250 } }),
+    ).resolves.toMatchObject({ action: 'tap' });
+    await expect(
+      device.perform({ type: 'tap', point: { x: 1001, y: 250 } }),
+    ).rejects.toMatchObject({ code: 'INVALID_ACTION' });
+    await expect(
+      device.perform({
+        type: 'swipe',
+        from: { x: 200, y: 200 },
+        to: { x: 200, y: 200 },
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_ACTION' });
+    expect(f.adapter.movements.length).toBeGreaterThan(0);
+  } finally {
+    await f.dispose();
+  }
+});
 it('releasing one Device leaves the shared arm and another Device usable', async () => {
   const f = await setup();
   try {

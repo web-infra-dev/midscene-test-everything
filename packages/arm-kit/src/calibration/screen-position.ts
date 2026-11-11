@@ -63,6 +63,24 @@ export const SCREEN_OVERLAP_INSET_MM = 2;
  */
 export const SCREEN_ESTIMATE_TOLERANCE_MM = 25;
 
+/** Conservative XY exclusion area for a screen estimated from camera geometry. */
+export function estimatedScreenExclusion(quad: ScreenQuad): ScreenQuad {
+  const minX =
+    Math.min(...quad.map((point) => point.x)) - SCREEN_ESTIMATE_TOLERANCE_MM;
+  const maxX =
+    Math.max(...quad.map((point) => point.x)) + SCREEN_ESTIMATE_TOLERANCE_MM;
+  const minY =
+    Math.min(...quad.map((point) => point.y)) - SCREEN_ESTIMATE_TOLERANCE_MM;
+  const maxY =
+    Math.max(...quad.map((point) => point.y)) + SCREEN_ESTIMATE_TOLERANCE_MM;
+  return [
+    { x: minX, y: minY },
+    { x: maxX, y: minY },
+    { x: maxX, y: maxY },
+    { x: minX, y: maxY },
+  ];
+}
+
 export function screenRotationOffset(rotation?: number): number {
   if (rotation === 90) return 1;
   if (rotation === 180) return 2;
@@ -488,7 +506,8 @@ export function knownScreenTravelHeight(
       (c) => c.id === device.calibrationProfileId,
     );
     const screen = data.screens.find((s) => s.id === device.screenProfileId);
-    if (!c || !screen || !calibrationAccepted(c)) continue;
+    if (!c || !screen || !calibrationAccepted(c, c.pendingParkingBatchId))
+      continue;
     for (const [x, y] of [
       [0, 0],
       [screen.physicalWidthMm, 0],

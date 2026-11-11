@@ -35,6 +35,7 @@ const FAST_SEARCH_WAIT_MS = 30;
 const FAST_LOCAL_STEP_MM = 0.25;
 // Allow 1.5 mm of local recovery; the shared floor still reserves press depth.
 const FAST_LOCAL_STEPS = 6;
+const FIRST_GRID_RETRY_INSET_MM = 3;
 const FAST_RUN_RECOVERY_STEPS = 12;
 const CONTACT_BRACKET_MM = 0.25;
 // Release hysteresis can exceed 2 mm on compliant tools. Clearance is only a
@@ -741,16 +742,41 @@ export async function runAutoExploration(
           usedSlide = false;
         }
       }
-      touch ??= await touchAt(
-        robot.x,
-        robot.y,
-        gridZ,
-        `Grid ${target.id}`,
-        TOUCH_DESCENT_MM,
-        false,
-        safetyFloorZ,
-        fast ? predictPressZ(robot.x, robot.y) : undefined,
-      );
+      if (!touch) {
+        const probeGrid = (point: ScreenPoint2, label: string) =>
+          touchAt(
+            point.x,
+            point.y,
+            gridZ,
+            label,
+            TOUCH_DESCENT_MM,
+            false,
+            safetyFloorZ,
+            fast ? predictPressZ(point.x, point.y) : undefined,
+          );
+        try {
+          touch = await probeGrid(robot, `Grid ${target.id}`);
+        } catch (error) {
+          if (
+            !fast ||
+            index !== 0 ||
+            !(error instanceof RobotArmError) ||
+            error.code !== 'TOUCH_NOT_FOUND'
+          )
+            throw error;
+          // Three nearby touches estimate the remote corner. Correct a small
+          // lateral miss without increasing the measured descent budget.
+          const dx = first.contact.x - robot.x;
+          const dy = first.contact.y - robot.y;
+          const distance = Math.hypot(dx, dy);
+          if (distance <= FIRST_GRID_RETRY_INSET_MM) throw error;
+          const fraction = FIRST_GRID_RETRY_INSET_MM / distance;
+          touch = await probeGrid(
+            { x: robot.x + dx * fraction, y: robot.y + dy * fraction },
+            `Grid ${target.id} inset retry`,
+          );
+        }
+      }
       if (touch.recovered && target.role === 'fit') heightAnchors.push(touch);
       grid.push({ ...touch, target });
       await recordSample(

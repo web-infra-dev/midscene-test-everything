@@ -319,7 +319,19 @@ export class PlaygroundDevices {
         'Start the camera before checking calibration',
         409,
       );
-    return entry.device.configuration();
+    try {
+      return await entry.device.configuration();
+    } catch (error) {
+      if (
+        !(error instanceof RobotArmError) ||
+        error.code !== 'EXECUTION_CONTEXT_CHANGED' ||
+        this.entries.get(id) !== entry ||
+        this.stopping.has(id)
+      )
+        throw error;
+      entry.device.refreshCalibrationContext();
+      return entry.device.configuration();
+    }
   }
   async updateConfiguration(
     id: string,

@@ -40,6 +40,7 @@ import {
   phoneFingerprint,
 } from './preview-perspectives.js';
 import { screenConnectPage } from './screen-connect-page.js';
+import { ScreenControl } from './screen-control.js';
 import type {
   PlaygroundSession,
   SessionContext,
@@ -144,6 +145,7 @@ export async function startPlaygroundHost({
   let adapterName: string | undefined;
   let devices: PlaygroundDevices | undefined;
   let tasks: PlaygroundTasks | undefined;
+  let screenControl: ScreenControl | undefined;
   let arm: ArmController | undefined;
   let armControls: PlaygroundArmControls | undefined;
   let host: string | undefined;
@@ -175,6 +177,7 @@ export async function startPlaygroundHost({
         setupSession: setup.session,
         recoveryRequired: status.recoveryRequired,
         softwarePaused: status.softwarePaused,
+        ...(screenControl ? { control: screenControl.controlState() } : {}),
       };
     } catch (error) {
       return {
@@ -225,6 +228,7 @@ export async function startPlaygroundHost({
           phoneEntryAtRoot: developmentOrigins.length > 0,
         });
         tasks = new PlaygroundTasks(devices);
+        screenControl = new ScreenControl(devices, () => tasks);
         armControls = new PlaygroundArmControls(arm, tasks);
         await devices.startAll(listCameras, [
           ...cameraManager.activeCameraIds(),
@@ -276,6 +280,7 @@ export async function startPlaygroundHost({
     const activeDevices = devices;
     const controller = arm;
     armControls = undefined;
+    screenControl = undefined;
     tasks = undefined;
     devices = undefined;
     arm = undefined;
@@ -510,7 +515,7 @@ export async function startPlaygroundHost({
         });
       }
       if (url.pathname === '/api/arm/disconnect' && req.method === 'POST') {
-        if (setup.busy)
+        if (setup.busy || screenControl?.busy)
           return send(409, {
             error: 'Wait for the current robot control to finish',
           });
@@ -536,6 +541,7 @@ export async function startPlaygroundHost({
         if (!tasks) return send(409, { error: 'Connect the arm first' });
         if (req.method === 'GET') return send(200, { tasks: tasks.list() });
         if (req.method === 'POST') {
+          screenControl?.assertNoManualAction();
           const input = await readBody(req);
           if (
             typeof input.cameraId !== 'string' ||
@@ -559,8 +565,32 @@ export async function startPlaygroundHost({
           await tasks!.configure(id, (await readBody(req)).aiConfig);
           return send(200, { status: 'ok' });
         }
+        if (
+          screenControl?.busy &&
+          req.method !== 'GET' &&
+          !taskRoute[2]?.startsWith('/cancel')
+        )
+          throw new RobotArmError(
+            'BUSY',
+            'Wait for the manual screen gesture to finish.',
+            409,
+          );
         req.url = `${taskRoute[2] || '/'}${url.search}`;
         return entry.server.app(req, res);
+      }
+      const actionRoute = /^\/api\/devices\/([^/]+)\/actions$/.exec(
+        url.pathname,
+      );
+      if (actionRoute) {
+        if (!devices || !screenControl || connecting)
+          return send(409, { error: 'Connect the arm first' });
+        if (req.method !== 'POST')
+          return send(405, { error: 'Method not allowed' });
+        const id = decodeURIComponent(actionRoute[1]);
+        const input = await readBody(req, 8192);
+        return send(200, {
+          result: await screenControl.perform(id, input.action),
+        });
       }
       if (url.pathname === '/api/audit/actions' && req.method === 'GET') {
         const store = arm && controllerRuntime(arm).auditStore;
@@ -678,6 +708,19 @@ export async function startPlaygroundHost({
         if (req.method !== 'POST')
           return send(405, { error: 'Method not allowed' });
         const input = await readBody(req, 16384);
+        const stop =
+          input.action === 'stop' ||
+          (input.action === 'command' && input.command === 'stop');
+        if (
+          screenControl?.busy &&
+          !stop &&
+          !['read', 'screens', 'clear', 'delete-calibration'].includes(
+            input.action,
+          )
+        )
+          return send(409, {
+            error: 'Wait for the manual screen gesture to finish',
+          });
         const batch = devices.batch;
         const current = batch.read();
         const otherCamera = current && current.cameraId !== input.cameraId;
@@ -717,6 +760,10 @@ export async function startPlaygroundHost({
         if (req.method === 'GET')
           return send(200, { screens: devices.screens(true) });
         if (req.method === 'POST') {
+          if (screenControl?.busy)
+            return send(409, {
+              error: 'Wait for the manual screen gesture to finish',
+            });
           const input = await readBody(req, 16384);
           if (
             typeof input.cameraId !== 'string' ||
@@ -735,6 +782,12 @@ export async function startPlaygroundHost({
         if (!devices) return send(409, { error: 'Connect the arm first' });
         const id = decodeURIComponent(calibrationRoute[1]);
         const action = calibrationRoute[2];
+        if (screenControl?.busy && req.method === 'POST' && action !== 'cancel')
+          throw new RobotArmError(
+            'BUSY',
+            'Wait for the manual screen gesture to finish.',
+            409,
+          );
         if (action === 'open' && req.method === 'POST') {
           const registry = devices;
           const host = await registry.ensureHost(id);
@@ -907,6 +960,7 @@ export async function startPlaygroundHost({
         const registry = devices;
         const deviceSession = registry ? setup.session : null;
         const screens = registry?.screens(true);
+        const controlScreens = screenControl?.screens();
         const entries = await Promise.all(
           cameras.map(async (camera) => {
             const entry = registry?.entries.get(camera.id);
@@ -925,7 +979,12 @@ export async function startPlaygroundHost({
               previewScreenId: registry
                 ? previewScreens.get(camera.id)
                 : undefined,
-              screens: screens?.filter((s) => s.cameraId === camera.id),
+              screens: screens
+                ?.filter((s) => s.cameraId === camera.id)
+                .map((screen) => ({
+                  ...screen,
+                  control: controlScreens?.get(screen.id),
+                })),
               hasCorrection: Boolean(correction),
               correction,
               perspectiveTarget: entry
@@ -995,6 +1054,10 @@ export async function startPlaygroundHost({
         url.pathname === '/api/cameras/correction' &&
         req.method === 'DELETE'
       ) {
+        if (screenControl?.busy)
+          return send(409, {
+            error: 'Wait for the manual screen gesture to finish',
+          });
         const id = url.searchParams.get('id');
         if (!id) return send(400, { error: 'Camera id is required' });
         if (devices || url.searchParams.has('session')) {
@@ -1036,6 +1099,10 @@ export async function startPlaygroundHost({
         return send(200, { ok: true });
       }
       if (url.pathname === '/api/cameras/correction' && req.method === 'POST') {
+        if (screenControl?.busy)
+          return send(409, {
+            error: 'Wait for the manual screen gesture to finish',
+          });
         const input = await readBody(req, 65536);
         if (typeof input.id !== 'string' || !input.correction)
           return send(400, { error: 'Camera id and correction are required' });
@@ -1120,6 +1187,10 @@ export async function startPlaygroundHost({
         return send(200, { ok: true, validity });
       }
       if (url.pathname === '/api/cameras/stop' && req.method === 'POST') {
+        if (screenControl?.busy)
+          return send(409, {
+            error: 'Wait for the manual screen gesture to finish',
+          });
         const input = await readBody(req);
         await tasks?.closeCamera(input.id);
         await devices?.stop(input.id);

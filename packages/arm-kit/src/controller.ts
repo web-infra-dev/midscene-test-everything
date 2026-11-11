@@ -41,6 +41,13 @@ export class ArmController {
   current() {
     return this.#runtime.current();
   }
+  /** Read-only target context for hosts that offer manual screen control. */
+  controlState() {
+    return {
+      activeCalibrationId: this.lastCalibrationId,
+      positionUnknown: this.positionUnknown,
+    };
+  }
 
   private readonly deviceActions = new ArmActionQueue();
   private opening?: Promise<void>;

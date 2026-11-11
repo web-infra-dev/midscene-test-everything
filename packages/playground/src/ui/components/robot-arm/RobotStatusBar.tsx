@@ -68,11 +68,13 @@ export function RobotStatusBar({
   cameraId,
   onConfigure,
   settings,
+  control,
   preparing = false,
 }: {
   cameraId?: string;
   onConfigure: () => void;
   settings?: ReactNode;
+  control?: ReactNode;
   preparing?: boolean;
 }) {
   const {
@@ -419,6 +421,7 @@ export function RobotStatusBar({
           </Tag>
         </div>
         <Space wrap className="robot-status-main-actions">
+          {control && <div className="robot-status-bar-control">{control}</div>}
           {(has('control.enable') ||
             has('control.enable-with-payload') ||
             has('control.disable')) && (

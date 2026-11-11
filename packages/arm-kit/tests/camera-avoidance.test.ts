@@ -44,7 +44,9 @@ async function setup() {
     auto: { observationRecorded: false },
   } as CalibrationSession;
   let actual = pose(100, -50, 80);
-  const preflight = rstest.fn(async () => {});
+  const preflight = rstest.fn(
+    async (_targets: Parameters<CalibrationHost['preflight']>[0]) => {},
+  );
   const move = rstest.fn(async (target: ReturnType<typeof pose>) => {
     actual = target;
     return {} as never;
@@ -76,6 +78,31 @@ it('tries lateral exits first, respects the measured travel floor and records me
     expect(f.session.auto?.observationRecorded).toBe(true);
     expect(f.session.stage).toBe('verification');
     expect(f.session.candidate!.acceptanceStatus).toBe('accepted'); // avoidance itself never changes acceptance
+  } finally {
+    await f.cleanup();
+  }
+});
+it('tries the next exit after occlusion and replans from the measured current position', async () => {
+  const f = await setup();
+  try {
+    f.host.verifyCameraVisibility = rstest
+      .fn()
+      .mockResolvedValueOnce({
+        clear: false,
+        checkedAt: new Date().toISOString(),
+        screens: [],
+      })
+      .mockResolvedValueOnce({
+        clear: true,
+        checkedAt: new Date().toISOString(),
+        screens: [],
+      });
+    expect(await avoidCamera(f.host, f.session, f.ctx)).toBe(true);
+    expect(f.host.verifyCameraVisibility).toHaveBeenCalledTimes(2);
+    expect(f.preflight.mock.calls[1][0][0].pose).toEqual(
+      f.move.mock.calls[1][0],
+    );
+    expect(f.session.auto?.cameraVisibility?.clear).toBe(true);
   } finally {
     await f.cleanup();
   }

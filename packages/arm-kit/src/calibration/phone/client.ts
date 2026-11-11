@@ -540,6 +540,22 @@ export function mountCalibrationPhonePage(
     view.append(legend);
   }
   let paintedKey: string | undefined;
+  let visibilityPainted: string | undefined;
+  const visibilityPattern = document.createElement('div');
+  visibilityPattern.style.cssText =
+    'position:fixed;inset:0;z-index:100;display:none;pointer-events:none';
+  visibilityPattern.setAttribute('aria-hidden', 'true');
+  element('surface').append(visibilityPattern);
+  const visibilityTiles = Array.from(
+    {
+      length: policy.visibilityPattern.columns * policy.visibilityPattern.rows,
+    },
+    () => {
+      const tile = document.createElement('div');
+      visibilityPattern.append(tile);
+      return tile;
+    },
+  );
   let paintingKey: string | undefined;
   let lastGridKey: string | undefined;
   function renderCaptureGrid(capture?: CalibrationPageReply['capture']) {
@@ -576,6 +592,20 @@ export function mountCalibrationPhonePage(
     );
   }
   function paint(next: CalibrationPageReply) {
+    if (next.visibilityProbe?.id !== state?.visibilityProbe?.id) {
+      visibilityPainted = undefined;
+      const probe = next.visibilityProbe;
+      visibilityPattern.style.gridTemplateColumns = `repeat(${policy.visibilityPattern.columns},1fr)`;
+      visibilityPattern.style.gridTemplateRows = `repeat(${policy.visibilityPattern.rows},1fr)`;
+      if (probe) {
+        visibilityTiles.forEach((tile, index) => {
+          const column = index % policy.visibilityPattern.columns;
+          const row = Math.floor(index / policy.visibilityPattern.columns);
+          tile.style.background =
+            policy.visibilityPattern.colors[(column + row + probe.phase) % 2];
+        });
+      }
+    }
     if (next.pairingToken && /^[a-f0-9-]{36}$/.test(next.pairingToken)) {
       history.replaceState(
         null,
@@ -619,7 +649,8 @@ export function mountCalibrationPhonePage(
     state = next;
     if (
       previous?.view !== next.view ||
-      previous?.markerRequest !== next.markerRequest
+      previous?.markerRequest !== next.markerRequest ||
+      previous?.visibilityProbe?.id !== next.visibilityProbe?.id
     ) {
       paintedKey = undefined;
       paintingKey = undefined;
@@ -862,7 +893,9 @@ export function mountCalibrationPhonePage(
     const ready = fullscreenReady();
     document.body.dataset.displayReady = String(ready);
     if (!fullscreenButton || !fullscreenHelp) return;
-    const finished = displayFinished || state?.view === 'completed';
+    const finished =
+      !state?.visibilityProbe &&
+      (displayFinished || state?.view === 'completed');
     fullscreenButton.hidden =
       finished || switching || ready || platform === 'ios' || !enter;
     fullscreenHelp.hidden = finished || ready || switching;
@@ -884,7 +917,7 @@ export function mountCalibrationPhonePage(
     if (
       !fullscreenButton ||
       switching ||
-      displayFinished ||
+      (displayFinished && !state?.visibilityProbe) ||
       document.hidden ||
       platform === 'ios' ||
       (platform === 'android' && !fromGesture) ||
@@ -933,6 +966,30 @@ export function mountCalibrationPhonePage(
   function send() {
     const current = layout();
     displayControls();
+    const probeId =
+      !switching &&
+      !document.hidden &&
+      fullscreenReady() &&
+      (visualViewport?.scale || 1) === 1
+        ? state?.visibilityProbe?.id
+        : undefined;
+    const patternWasVisible = visibilityPattern.style.display === 'grid';
+    visibilityPattern.style.display = probeId ? 'grid' : 'none';
+    if (!probeId || !patternWasVisible) visibilityPainted = undefined;
+    if (probeId && visibilityPainted !== probeId) {
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          if (
+            state?.visibilityProbe?.id === probeId &&
+            visibilityPattern.style.display === 'grid' &&
+            visibilityPainted !== probeId
+          ) {
+            visibilityPainted = probeId;
+            send();
+          }
+        }),
+      );
+    }
     const key =
       state?.view === 'markers' &&
       !switching &&
@@ -980,6 +1037,7 @@ export function mountCalibrationPhonePage(
       view: state?.view,
       markersPainted,
       markerRequest: markersPainted ? state?.markerRequest : undefined,
+      visibilityProbeAck: visibilityPainted === probeId ? probeId : undefined,
       visible: !document.hidden && (visualViewport?.scale || 1) === 1,
       layout: current,
       targetReady: readyTarget,
@@ -1156,6 +1214,8 @@ export function mountCalibrationPhonePage(
       renderCaptureGrid();
       clearMappingTouch();
       state = undefined;
+      visibilityPainted = undefined;
+      visibilityPattern.style.display = 'none';
       hideGuidance();
       document.body.dataset.connectionError = 'true';
       const replaced = code === 4410;

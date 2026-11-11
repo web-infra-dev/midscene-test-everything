@@ -10,7 +10,7 @@ import {
   Typography,
 } from 'antd';
 import { ArrowDown, Plus, Trash2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { CameraEntry } from '../cameras';
 import { useT } from '../i18n';
 import { createTransferStore } from '../transfers';
@@ -19,15 +19,34 @@ import './DeviceTransfer.less';
 export function DeviceTransfer({
   id,
   cameras,
+  initialTargetId,
   onClose,
-}: { id: string; cameras: CameraEntry[]; onClose(): void }) {
+}: {
+  id: string;
+  cameras: CameraEntry[];
+  initialTargetId?: string;
+  onClose(): void;
+}) {
   const t = useT();
   const [useStore] = useState(() => createTransferStore(id));
   const state = useStore();
+  const prefill = useRef(initialTargetId);
   useEffect(() => {
     void useStore.getState().load();
     return () => useStore.getState().dispose();
   }, [useStore]);
+  useEffect(() => {
+    const target = prefill.current;
+    if (
+      !target ||
+      !state.source ||
+      state.targetId === target ||
+      !cameras.some((camera) => camera.id === target)
+    )
+      return;
+    prefill.current = undefined;
+    void state.select(target);
+  }, [cameras, state.select, state.source, state.targetId]);
   const route = state.source?.routes.find(
     (entry) => entry.toCalibrationId === state.target?.calibration.id,
   );

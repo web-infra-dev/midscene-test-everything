@@ -125,6 +125,7 @@ export class CalibrationHost {
     if (
       ref &&
       Date.now() - ref.seen < REFERENCE_REPORT_MAX_AGE_MS &&
+      !this.service.phoneView().visibilityProbe &&
       this.service.phoneView().view !== 'waiting'
     )
       return ref;
@@ -136,6 +137,7 @@ export class CalibrationHost {
       update?.view ?? (update?.markersPainted ? 'markers' : undefined);
     if (
       !update ||
+      view.visibilityProbe ||
       view.view === 'waiting' ||
       shown !== view.view ||
       (shown === 'markers' &&

@@ -1,4 +1,5 @@
 import {
+  type CalibrationBatchPlan,
   type CalibrationProfile,
   type CameraAvoidanceEstimate,
   type CameraCorrection,
@@ -21,7 +22,7 @@ function assertScreenPhysicalSize(screen: ScreenProfile) {
 import { screenPoseMm } from './geometry.js';
 type PlanePoint = { x: number; y: number };
 type VisionScreenQuad = CameraCorrection['points'];
-import { type ScreenQuad, calibrationQuad } from './screen-position.js';
+import { calibrationQuad } from './screen-position.js';
 
 /** Below this relative edge difference the quad cannot name a camera side. */
 export const CAMERA_AVOIDANCE_MIN_SKEW = 0.02;
@@ -39,6 +40,37 @@ const CAMERA_AVOIDANCE_OBSTACLE_STEP_MM = 20;
 const CAMERA_AVOIDANCE_OBSTACLE_LIMIT_MM = 300;
 /** Keep the parking pose this far outside the screens' combined footprint. */
 const CAMERA_AVOIDANCE_PARKING_MARGIN_MM = 10;
+
+export function insideCameraParkingFootprint(
+  tip: PlanePoint,
+  points: readonly PlanePoint[],
+): boolean {
+  const margin = CAMERA_AVOIDANCE_PARKING_MARGIN_MM;
+  return (
+    tip.x >= Math.min(...points.map((point) => point.x)) - margin &&
+    tip.x <= Math.max(...points.map((point) => point.x)) + margin &&
+    tip.y >= Math.min(...points.map((point) => point.y)) - margin &&
+    tip.y <= Math.max(...points.map((point) => point.y)) + margin
+  );
+}
+
+export function assertParkingCorridor(
+  tip: PlanePoint,
+  corridor?: NonNullable<CalibrationBatchPlan['transfer']>['corridor'],
+): void {
+  if (
+    corridor &&
+    (tip.x < corridor.minX ||
+      tip.x > corridor.maxX ||
+      tip.y < corridor.minY ||
+      tip.y > corridor.maxY)
+  )
+    throw new RobotArmError(
+      'UNSAFE_OBSERVATION',
+      'The route to the shared Safe Position is outside the confirmed corridor.',
+      409,
+    );
+}
 
 const distance = (
   left: { x: number; y: number },
@@ -232,7 +264,7 @@ export function cameraAvoidanceTarget(
   screen: ScreenProfile,
   tool: ToolProfile,
   estimate: CameraAvoidanceEstimate | undefined,
-  obstacles: readonly ScreenQuad[] = [],
+  obstacles: readonly (readonly PlanePoint[])[] = [],
 ): CartesianPose | undefined {
   if (
     !estimate ||
@@ -303,25 +335,7 @@ export function cameraAvoidanceTarget(
     const ownQuad = calibrationQuad(calibration, screen);
     if (!ownQuad) return undefined;
     const points = [ownQuad, ...obstacles].flat();
-    const minX =
-      Math.min(...points.map((entry) => entry.x)) -
-      CAMERA_AVOIDANCE_PARKING_MARGIN_MM;
-    const maxX =
-      Math.max(...points.map((entry) => entry.x)) +
-      CAMERA_AVOIDANCE_PARKING_MARGIN_MM;
-    const minY =
-      Math.min(...points.map((entry) => entry.y)) -
-      CAMERA_AVOIDANCE_PARKING_MARGIN_MM;
-    const maxY =
-      Math.max(...points.map((entry) => entry.y)) +
-      CAMERA_AVOIDANCE_PARKING_MARGIN_MM;
-    const insideFootprint = (value: PlanePoint) => {
-      const robot = robotPoint(value);
-      return (
-        robot.x >= minX && robot.x <= maxX && robot.y >= minY && robot.y <= maxY
-      );
-    };
-    while (insideFootprint(target)) {
+    while (insideCameraParkingFootprint(robotPoint(target), points)) {
       if (distance - baseDistance >= CAMERA_AVOIDANCE_OBSTACLE_LIMIT_MM)
         return undefined;
       distance += CAMERA_AVOIDANCE_OBSTACLE_STEP_MM;
@@ -377,7 +391,8 @@ export function cameraAvoidanceTargets(
   screen: ScreenProfile,
   tool: ToolProfile,
   estimate: CameraAvoidanceEstimate | undefined,
-  obstacles: readonly ScreenQuad[] = [],
+  obstacles: readonly (readonly PlanePoint[])[] = [],
+  retreat = false,
 ): CartesianPose[] {
   if (!estimate) return [];
   const opposite = cameraAvoidanceTarget(
@@ -406,8 +421,8 @@ export function cameraAvoidanceTargets(
       {
         ...estimate,
         direction: {
-          x: (sign * sideU) / screen.physicalWidthMm,
-          y: (sign * sideV) / screen.physicalHeightMm,
+          x: (sign * sideU + (retreat ? u : 0)) / screen.physicalWidthMm,
+          y: (sign * sideV + (retreat ? v : 0)) / screen.physicalHeightMm,
         },
       },
       obstacles,

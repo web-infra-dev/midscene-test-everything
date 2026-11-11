@@ -10,6 +10,14 @@ const teachingBoundaryZh: Record<string, string> = {
   'Camera mapping ready': '相机映射已就绪',
   'Multi-screen calibration': '多屏标定',
   'Calibration batch': '标定队列',
+  'Screen calibration results saved': '屏幕标定结果已保存',
+  'Finish calibration and return': '完成标定并返回',
+  'Shared Safe Position pending': '共用安全位待确认',
+  'Confirm current shared Safe Position': '人工确认当前共用安全位',
+  'Confirm the arm is stationary, clear of the camera and all screens, and does not block any screen in the live view.':
+    '请确认机械臂已静止，与相机和所有屏幕保持安全距离，且实时画面中没有遮挡任何屏幕。',
+  'The current position must clear the taught camera boundary by at least 20 mm.':
+    '当前位置必须与已示教的相机边界保持至少 20 毫米的避让距离。',
   'Batch screens': '队列屏幕',
   'Choose screens in calibration order': '按标定顺序选择屏幕',
   'Move screen up': '将屏幕前移',
@@ -23,6 +31,53 @@ const teachingBoundaryZh: Record<string, string> = {
     '所有屏幕均已水平固定，触控工具具有弹性缓冲，相机近侧对应原始画面下方。',
   'All screens are fixed horizontally and the tool has elastic compliance.':
     '所有屏幕均已水平固定，触控工具具有弹性缓冲。',
+  'Sampling mode': '采样模式',
+  'Reconfirming the tool payload…': '正在重新确认工具负载…',
+  'Could not reconfirm the robot connection and tool payload before calibration motion.':
+    '标定运动前未能重新确认机械臂连接和工具负载。',
+  'The controller tool payload differs from the saved tool payload. Sync the saved payload before motion.':
+    '控制器当前负载与已保存的工具负载不一致，请在运动前同步工具负载。',
+  'Automatic acceptance requires complete contact and plane evidence for the selected sampling mode':
+    '自动验收要求接触证据完整，并满足所选采样模式的平面质量要求。',
+  'The shared Safe Position must clear the entire screen group at the confirmed travel height.':
+    '共用安全位必须避开整组屏幕及屏间区域，并满足已确认的通行高度。',
+  'The route to the shared Safe Position is outside the confirmed corridor.':
+    '前往共用安全位的路线超出已确认的通行区域。',
+  'Installation teaching and motion settings are required for batch parking.':
+    '批量避让需要先完成安装示教并设置运动参数。',
+  'Teach one shared Safe Position clear of all screens and the space between them. Check clearance for the full arm.':
+    '请示教一个共用安全位，避开所有屏幕及屏间区域，并确认整条机械臂的避让空间。',
+  'Confirm and record shared Safe Position': '确认并记录共用安全位',
+  'Moving to the shared Safe Position': '正在前往共用安全位',
+  'Checking screen visibility': '正在检查屏幕是否被遮挡',
+  'Checking phone pages and finding the shared Safe Position':
+    '正在检查手机页面并寻找共用安全位',
+  'Check controller readiness before starting batch calibration.':
+    '请先检查机械臂控制器状态，再启动批量标定。',
+  'The robot is too close to the taught camera boundary for automatic parking. Check the camera installation and teaching.':
+    '机械臂离已示教的相机边界太近，无法自动避让。请检查相机安装和示教位置。',
+  'Keep all paired phone pages visible and fullscreen':
+    '请保持所有已配对的手机标定页在前台全屏显示。',
+  'A camera visibility check is required before recording the shared Safe Position.':
+    '记录共用安全位前需确认相机能看清各屏。',
+  'The camera view of one or more screens is still blocked.':
+    '相机画面中仍有屏幕被遮挡。',
+  'No reachable camera-clear Safe Position was found within the bounded search.':
+    '在限定范围内未找到相机视野清晰且可达的安全位。',
+  'The arm reached a candidate Safe Position, but the camera could not verify every screen.':
+    '机械臂已到达候选安全位，但相机未能确认所有屏幕清晰可见。括号内为各屏内部图案检出率。',
+  'Automatic camera avoidance could not clear every screen. Review the camera view or record a Safe Position manually.':
+    '自动避让后仍有屏幕被遮挡，请检查相机画面或手动记录安全位。',
+  'The screen visibility pattern could not be verified. Check the camera view and paired phone pages.':
+    '无法识别屏幕显示的可见性图案，请检查相机画面和已配对的手机页面。',
+  'The paired phones did not acknowledge the visibility pattern. Keep every page visible and fullscreen.':
+    '未收到手机显示图案的确认，请刷新手机标定页并保持所有页面前台全屏。',
+  'A phone page or display changed during visibility verification.':
+    '可见性检查期间，手机页面或显示状态发生变化。',
+  'The screen group changed during visibility verification.':
+    '可见性检查期间，屏幕组或相机映射发生变化。',
+  'Retry parking': '重试前往共用安全位',
+  'Unknown sampling mode': '未知的采样模式',
   'All screens are secured; the measured plane allows limited tilt. The tool has elastic compliance.':
     '所有屏幕已固定；实测平面允许有限倾斜，触控工具有弹性缓冲。',
   'Measured plane: screen secured, limited tilt accepted, compliant tip.':

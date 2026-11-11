@@ -69,6 +69,20 @@ test('code-configured arm connects, reports its own settings, retries and releas
     assert.equal((await connect()).status, 200);
     const arm = await (await fetch(`${server.url}/api/arm`)).json();
     assert.equal(arm.phase, 'connected');
+    assert.equal(arm.control?.manualBusy, false);
+    assert.equal(arm.control?.positionUnknown, false);
+    const unavailableAction = await fetch(
+      `${server.url}/api/devices/cam/actions`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: { type: 'tap', point: { x: 10, y: 10 } },
+        }),
+      },
+    );
+    assert.equal(unavailableAction.status, 409);
+    assert.equal((await unavailableAction.json()).code, 'VISION_UNAVAILABLE');
     const endpoint = `${server.url}/api/setup/motion-settings`;
     assert.deepEqual(await (await fetch(endpoint)).json(), settings);
     const updated = await fetch(endpoint, {

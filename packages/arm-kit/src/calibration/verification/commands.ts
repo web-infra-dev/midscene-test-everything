@@ -12,6 +12,7 @@ import {
   type MotionResult,
   type MotionSpeed,
   RobotArmError,
+  type ScreenVisibilityEvidence,
 } from '../../contracts.js';
 import { assertPose, contactPoint, dot } from '../../domain.js';
 import type { RobotDriverBoundary } from '../../kernel/driver-boundary.js';
@@ -24,11 +25,12 @@ import {
 import { explorationQualityWarnings } from '../exploration/quality.js';
 import { phonePointMm, screenPoseMm } from '../geometry.js';
 import { runBoundaryVerification } from './boundary.js';
-import { avoidCamera } from './camera-avoidance.js';
+import { assertBatchParking, avoidCamera } from './camera-avoidance.js';
 import { returnToObservation } from './safe-position.js';
 import { resetCalibrationVerification } from './session-state.js';
 
 export interface CalibrationHost {
+  verifyCameraVisibility?(): Promise<ScreenVisibilityEvidence>;
   progress?(s: CalibrationSession): void;
   adapter: RobotDriverBoundary;
   profileStore: ProfileStore;
@@ -109,7 +111,11 @@ export async function applyCalibrationCommand(
         returnPose: s.auto.startPose,
         fast,
       });
-      if (!(await avoidCamera(this, s, ctx))) {
+      if (s.auto.deferParkingBatchId) {
+        s.stage = 'verification';
+        break;
+      }
+      if (!(await avoidCamera(this, s, ctx, () => this.progress?.(s)))) {
         s.stage = 'observation';
         s.auto.observationRecorded = false;
       }
@@ -147,6 +153,19 @@ export async function applyCalibrationCommand(
           'UNSAFE_OBSERVATION',
           'Observation pose must be at least the safe clearance away from the screen',
         );
+      assertBatchParking(s, ctx, pose);
+      if (this.verifyCameraVisibility) {
+        const visibility = await this.verifyCameraVisibility();
+        await this.stable(pose, ctx);
+        this.check();
+        if (!visibility.clear)
+          throw new RobotArmError(
+            'CAMERA_OCCLUDED',
+            'The camera view of one or more screens is still blocked.',
+            409,
+          );
+        if (s.auto) s.auto.cameraVisibility = visibility;
+      }
       s.candidate.observationPose = pose;
       if (s.auto) s.auto.observationRecorded = true;
       s.stage = 'verification';

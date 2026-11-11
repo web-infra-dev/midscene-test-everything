@@ -1,6 +1,7 @@
 import type {
   CalibrationBatchCommand,
   CalibrationBatchPlan,
+  CalibrationBatchSamplingMode,
   CalibrationBatchState,
   WorkstationScreenState,
 } from '@midscene/arm-kit-shared/assisted-contracts';
@@ -10,6 +11,7 @@ import {
   Checkbox,
   Modal,
   Popconfirm,
+  Radio,
   Space,
   Tag,
   Typography,
@@ -102,6 +104,8 @@ export const CalibrationBatchPanel = forwardRef<
   const [plan, setPlan] = useState<CalibrationBatchPlan>();
   const [previewPlan, setPreviewPlan] = useState<CalibrationBatchPlan>();
   const [deletedCalibrations, setDeletedCalibrations] = useState<string[]>([]);
+  const [samplingMode, setSamplingMode] =
+    useState<CalibrationBatchSamplingMode>('standard');
   const [horizontalConfirmed, setHorizontalConfirmed] = useState(false);
   const [manualAcceptance, setManualAcceptance] = useState(false);
   const [corridorConfirmed, setCorridorConfirmed] = useState(false);
@@ -195,6 +199,7 @@ export const CalibrationBatchPanel = forwardRef<
       setPlan(next);
       speakCalibration('batchClearance', 2);
       setHorizontalConfirmed(false);
+      setSamplingMode('standard');
       setManualAcceptance(false);
       setCorridorConfirmed(false);
     });
@@ -220,6 +225,7 @@ export const CalibrationBatchPanel = forwardRef<
         cameraId,
         auto: true,
         horizontalConfirmed: true,
+        samplingMode,
         ...(manualAcceptance ? { acceptance: 'manual' as const } : {}),
         ...(plan.transfer ? { corridorConfirmed: true as const } : {}),
       });
@@ -249,6 +255,13 @@ export const CalibrationBatchPanel = forwardRef<
     });
   };
   const row = batch?.items[batch.currentIndex];
+  const parkingOnly = Boolean(
+    batch?.usesSharedSafePosition &&
+      batch.items.some((item) => item.status === 'completed') &&
+      batch.items.every((item) =>
+        ['completed', 'skipped'].includes(item.status),
+      ),
+  );
   const isActive = active(batch);
   const showQueue = Boolean(
     batch &&
@@ -371,7 +384,12 @@ export const CalibrationBatchPanel = forwardRef<
         <div className="robot-calibration-batch-queue">
           <Typography.Text strong>
             {t('Calibration batch')} ·{' '}
-            {t(itemLabels[batch.status] ?? batch.status)}
+            {t(batch.samplingMode === 'slide' ? 'Fast' : 'Regular')} ·{' '}
+            {t(
+              parkingOnly && batch.status === 'failed'
+                ? 'Screen calibration results saved'
+                : (itemLabels[batch.status] ?? batch.status),
+            )}
           </Typography.Text>
           <ol>
             {batch.items.map((item, index) => (
@@ -414,10 +432,24 @@ export const CalibrationBatchPanel = forwardRef<
               </li>
             ))}
           </ol>
+          {parkingOnly && batch.status === 'running' && (
+            <output>
+              {t('Checking phone pages and finding the shared Safe Position')}
+            </output>
+          )}
           {batch.error &&
             !batch.items.some((item) => item.error === batch.error) && (
-              <Typography.Paragraph type="danger">
+              <Typography.Paragraph type={parkingOnly ? 'warning' : 'danger'}>
+                {parkingOnly && (
+                  <>
+                    <strong>{t('Shared Safe Position pending')}</strong>
+                    <br />
+                  </>
+                )}
                 {t(batch.error)}
+                {batch.visibilityMissingScreens?.length
+                  ? ` (${batch.visibilityMissingScreens.join(' · ')})`
+                  : null}
               </Typography.Paragraph>
             )}
           <Space wrap>
@@ -471,12 +503,25 @@ export const CalibrationBatchPanel = forwardRef<
               row?.status === 'awaiting-acceptance' && (
                 <>
                   {row.progress?.phase === 'awaiting-safe-position' && (
-                    <Button
-                      disabled={working}
-                      onClick={() => command('record-safe-position')}
-                    >
-                      {t('Record current safe position')}
-                    </Button>
+                    <>
+                      {batch.usesSharedSafePosition && (
+                        <Typography.Text>
+                          {t(
+                            'Teach one shared Safe Position clear of all screens and the space between them. Check clearance for the full arm.',
+                          )}
+                        </Typography.Text>
+                      )}
+                      <Button
+                        disabled={working}
+                        onClick={() => command('record-safe-position')}
+                      >
+                        {t(
+                          batch.usesSharedSafePosition
+                            ? 'Confirm and record shared Safe Position'
+                            : 'Record current safe position',
+                        )}
+                      </Button>
+                    </>
                   )}
                   <Button
                     type="primary"
@@ -497,14 +542,33 @@ export const CalibrationBatchPanel = forwardRef<
                     disabled={working || disabled}
                     onClick={() => command('retry')}
                   >
-                    {t('Retry This Screen')}
+                    {t(parkingOnly ? 'Retry parking' : 'Retry This Screen')}
                   </Button>
-                  <Button
-                    disabled={working || disabled}
-                    onClick={() => command('skip')}
-                  >
-                    {t('Skip This Screen')}
-                  </Button>
+                  {parkingOnly &&
+                    !batch.sharedSafePositionVerified &&
+                    ['failed', 'stopped'].includes(batch.status) && (
+                      <Popconfirm
+                        title={t('Confirm current shared Safe Position')}
+                        description={t(
+                          'Confirm the arm is stationary, clear of the camera and all screens, and does not block any screen in the live view.',
+                        )}
+                        okText={t('Confirm')}
+                        cancelText={t('Cancel')}
+                        onConfirm={() => command('confirm-shared-parking')}
+                      >
+                        <Button type="primary" disabled={working || disabled}>
+                          {t('Confirm current shared Safe Position')}
+                        </Button>
+                      </Popconfirm>
+                    )}
+                  {!parkingOnly && (
+                    <Button
+                      disabled={working || disabled}
+                      onClick={() => command('skip')}
+                    >
+                      {t('Skip This Screen')}
+                    </Button>
+                  )}
                 </>
               )}
           </Space>
@@ -566,12 +630,25 @@ export const CalibrationBatchPanel = forwardRef<
               </li>
             ))}
           </ol>
+          <Radio.Group
+            aria-label={t('Sampling mode')}
+            value={samplingMode}
+            onChange={(event) => {
+              setSamplingMode(event.target.value);
+              setHorizontalConfirmed(false);
+            }}
+          >
+            <Radio.Button value="standard">{t('Regular')}</Radio.Button>
+            <Radio.Button value="slide">{t('Fast')}</Radio.Button>
+          </Radio.Group>
           <Checkbox
             checked={horizontalConfirmed}
             onChange={(event) => setHorizontalConfirmed(event.target.checked)}
           >
             {t(
-              'All screens are secured; the measured plane allows limited tilt. The tool has elastic compliance.',
+              samplingMode === 'slide'
+                ? 'All screens are fixed horizontally and the tool has elastic compliance.'
+                : 'All screens are secured; the measured plane allows limited tilt. The tool has elastic compliance.',
             )}
           </Checkbox>
           <Checkbox

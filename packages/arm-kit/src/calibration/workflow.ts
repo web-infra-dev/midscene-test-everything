@@ -8,6 +8,7 @@ import type {
   AssistedCalibrationSetup,
   AssistedCalibrationState,
   AssistedMappingInput,
+  AutomaticCaptureHost,
   AutomaticExplorationMode,
   CalibrationPageReply,
   CalibrationPageUpdate,
@@ -33,13 +34,14 @@ import {
   unit,
 } from '../domain.js';
 import type { RobotArmRuntime } from '../runtime.js';
+import { verifyScreenVisibility } from './camera/visibility.js';
 import type { CalibrationVision } from './camera/vision.js';
 import { AutomaticCapture } from './exploration/capture.js';
 import { fitExploration } from './exploration/fit.js';
 import { explorationQualityWarnings } from './exploration/quality.js';
 import { invertMapping, pointDistance, project } from './phone/geometry.js';
 import { CalibrationPhoneSession, sameLayout } from './phone/session.js';
-import { knownScreenTravelHeight } from './screen-position.js';
+import { knownScreenTravelHeight, pageOrderedQuad } from './screen-position.js';
 import { CalibrationSetup, calibrationGeometryKey } from './setup.js';
 import { SAMPLED_SURFACE_LIMIT_MM } from './surface.js';
 import { moveToTaughtPosition } from './taught-position.js';
@@ -187,6 +189,7 @@ export class CalibrationWorkflow {
     this.receipt = undefined;
     this.receivingTarget = undefined;
     this.batchTravelTipZMm = undefined;
+    this.batchParking = undefined;
     this.phoneHome = false;
     this.changed();
   }
@@ -631,7 +634,50 @@ export class CalibrationWorkflow {
     this.phoneHome = false;
     this.changed();
   }
+  private visibilityProbe?: CalibrationPageReply['visibilityProbe'];
+  private visibilityContext?: CalibrationPageUpdate;
+  showVisibilityProbe(phase: 0 | 1) {
+    if (this.visibilityProbe)
+      throw new RobotArmError(
+        'BUSY',
+        'A screen visibility check is already active',
+        409,
+      );
+    if (this.phone.presence() !== 'connected') this.phone.assertConnected();
+    this.visibilityContext = structuredClone(this.phone.update!);
+    const id = randomUUID();
+    this.visibilityProbe = { id, phase };
+    this.options.onPhoneObservation?.(undefined);
+    this.changed();
+    return id;
+  }
+  visibilityObservation(id: string) {
+    const update = this.phone.update;
+    return this.visibilityProbe?.id === id &&
+      this.phone.connected() &&
+      update &&
+      this.visibilityContext &&
+      update?.pageId === this.visibilityContext?.pageId &&
+      update?.browserInstanceId === this.visibilityContext?.browserInstanceId &&
+      (this.visibilityContext.displayMode === 'browser' ||
+        sameLayout(update.layout, this.visibilityContext.layout)) &&
+      update?.visibilityProbeAck === id
+      ? update
+      : undefined;
+  }
+  clearVisibilityProbe(id: string) {
+    if (this.visibilityProbe?.id !== id) return;
+    this.visibilityProbe = undefined;
+    this.visibilityContext = undefined;
+    this.changed();
+  }
   phoneView(): CalibrationPageReply {
+    const view = this.normalPhoneView();
+    return this.visibilityProbe
+      ? { ...view, visibilityProbe: this.visibilityProbe }
+      : view;
+  }
+  private normalPhoneView(): CalibrationPageReply {
     if (this.phoneHome) return { view: 'waiting', anchors: [] };
     const s = this.state;
     if (
@@ -1346,7 +1392,10 @@ export class CalibrationWorkflow {
             409,
           );
       } else if (action === 'position-safe' && s.calibration?.auto) {
-        if (s.stage !== 'return-ready' || !confirmed)
+        if (
+          !['return-ready', 'positioning-safe'].includes(s.stage) ||
+          !confirmed
+        )
           throw new RobotArmError(
             'INVALID_STAGE',
             'Complete boundary verification before recording the Safe Position',
@@ -1375,9 +1424,13 @@ export class CalibrationWorkflow {
             commandId: randomUUID(),
             expectedRevision: s.calibration.revision,
           },
+          undefined,
+          this.changed,
+          this.visibilityVerifier(),
         );
         s.safePosition = s.calibration.candidate!.observationPose;
         s.stage = 'review';
+        s.error = undefined;
       } else if (action === 'position-safe') {
         if (!['ready', 'return-ready'].includes(s.stage) || this.capture)
           throw new RobotArmError(
@@ -1682,7 +1735,19 @@ export class CalibrationWorkflow {
         s.explorationMode,
       );
     this.measurements = measurements;
-    const task = this.runtime.collectAutomaticPoints(input, async (host) => {
+    const collectionInput = {
+      ...input,
+      onPayloadRecheck: (waiting: boolean) => {
+        s.recheckingPayload = waiting || undefined;
+        this.changed();
+      },
+    };
+    const collect = async (
+      host: AutomaticCaptureHost &
+        Required<Pick<AutomaticCaptureHost, 'preflight'>>,
+    ) => {
+      await this.assertMechanicalFrame(true);
+      host.check();
       const teaching = this.runtime.profileStore.installationTeaching(input);
       if (s.teachingId && teaching?.id !== s.teachingId)
         throw new RobotArmError(
@@ -1789,7 +1854,8 @@ export class CalibrationWorkflow {
       // reference before waiting for a review of the new geometry.
       if (lastMoveConfirmed && s.explorationQuality?.warnings?.length)
         await travelToReference('return');
-    });
+    };
+    const task = this.runtime.collectAutomaticPoints(collectionInput, collect);
     this.captureOperationId = this.runtime.current()?.requestId;
     let outlineCheck: Promise<void> | undefined;
     let nextOutlineCheck = 0;
@@ -1849,14 +1915,24 @@ export class CalibrationWorkflow {
       },
       () => this.assertMechanicalFrame(true),
       this.changed,
+      this.visibilityVerifier(),
     );
     if (s.stage !== 'safety') return;
-    if (s.calibration.auto?.observationRecorded) {
-      s.safePosition = s.calibration.candidate!.observationPose;
+    if (
+      s.calibration.auto?.deferParkingBatchId ||
+      s.calibration.auto?.observationRecorded
+    ) {
+      s.safePosition = s.calibration.auto.observationRecorded
+        ? s.calibration.candidate!.observationPose
+        : undefined;
       s.stage = 'review';
     } else {
       s.safePosition = undefined;
       s.stage = 'return-ready';
+      s.error =
+        s.calibration.auto?.cameraVisibility?.clear === false
+          ? 'Automatic camera avoidance could not clear every screen. Review the camera view or record a Safe Position manually.'
+          : 'No reachable camera-clear Safe Position was found within the bounded search.';
     }
     this.changed();
   }
@@ -2092,12 +2168,20 @@ export class CalibrationWorkflow {
     };
     checkReturning();
     const previousOperationId = this.runtime.current()?.requestId;
+    let travelTipZMm = this.batchTravelTipZMm;
+    if (this.batchParking) {
+      const store = this.runtime.profileStore;
+      const knownHeight = knownScreenTravelHeight(store.list(), s.binding!);
+      if (Number.isFinite(knownHeight))
+        travelTipZMm = Math.max(travelTipZMm ?? knownHeight, knownHeight);
+    }
     const starting = this.runtime.startCalibration(s.binding!, profileId, {
       reuseObservation: !returnToSafe,
       auto: this.automaticEvidence
         ? {
             evidence: this.automaticEvidence,
-            minimumTravelTipZMm: this.batchTravelTipZMm,
+            deferParkingBatchId: this.batchParking,
+            minimumTravelTipZMm: travelTipZMm,
             startPose: s.referencePosition!,
             fast:
               s.explorationMode !== 'standard' &&
@@ -2188,6 +2272,44 @@ export class CalibrationWorkflow {
     this.changed();
   }
   private batchTravelTipZMm?: number;
+  private batchParking?: string;
+  setBatchParking(batchId?: string) {
+    this.batchParking = batchId;
+  }
+  private visibilityVerifier() {
+    if (this.batchParking) return undefined;
+    const vision = this.options.vision;
+    const correction = vision.getCorrection?.();
+    if (!correction || !vision.rawFrame) return undefined;
+    return (signal: AbortSignal) =>
+      verifyScreenVisibility(
+        [
+          {
+            id: this.options.deviceId ?? 'screen',
+            points: pageOrderedQuad(correction.points, correction.rotation),
+            sourceWidth: correction.sourceWidth,
+            sourceHeight: correction.sourceHeight,
+            show: (phase) => this.showVisibilityProbe(phase),
+            observation: (id) => this.visibilityObservation(id),
+            clear: (id) => this.clearVisibilityProbe(id),
+          },
+        ],
+        () => vision.rawFrame!(),
+        signal,
+        () => {
+          this.runtime.assertStopRevision(this.captureStopRevision!);
+          if (
+            semanticJson(vision.getCorrection?.()) !== semanticJson(correction)
+          )
+            throw new RobotArmError(
+              'VISION_BINDING_CHANGED',
+              'The screen mapping changed during visibility verification.',
+              409,
+            );
+        },
+      );
+  }
+
   setBatchTravelHeight(value?: number) {
     if (value !== undefined && !Number.isFinite(value))
       throw new RobotArmError('INVALID_ARGUMENT', 'Invalid travel height');
@@ -2200,11 +2322,12 @@ export class CalibrationWorkflow {
     const state = this.status();
     const c = state?.calibration;
     const evidence = c?.auto?.evidence;
+    const fast = state?.explorationMode === 'slide';
     const reasons: string[] = [];
     if (
       state?.stage !== 'review' ||
-      !c?.auto?.cameraAvoidanceRecorded ||
-      !c.auto.observationRecorded
+      (!c?.auto?.deferParkingBatchId &&
+        (!c?.auto?.observationRecorded || !c.auto.cameraAvoidanceRecorded))
     )
       reasons.push('The camera-avoidance Safe Position is missing');
     if (
@@ -2223,18 +2346,23 @@ export class CalibrationWorkflow {
       quality.inliers > quality.total ||
       !Array.isArray(evidence.samples) ||
       evidence.samples.length < 7 ||
-      evidence.planeSource !== 'measured' ||
+      evidence.planeSource !== (fast ? 'assumed-horizontal' : 'measured') ||
       !Number.isFinite(evidence.surfaceMaxMm ?? 0) ||
       (evidence.surfaceMaxMm ?? 0) > SAMPLED_SURFACE_LIMIT_MM
     )
       reasons.push(
-        'Automatic acceptance requires a measured plane and complete contact evidence',
+        'Automatic acceptance requires complete contact and plane evidence for the selected sampling mode',
       );
     else {
       const screen = this.runtime.profileStore.getScreen(
         c.candidate!.screenProfileId,
       );
-      const warnings = explorationQualityWarnings(screen, quality, evidence);
+      const warnings = explorationQualityWarnings(
+        screen,
+        quality,
+        evidence,
+        fast,
+      );
       if (state?.mapping)
         warnings.push(
           ...mappingQualityWarnings(

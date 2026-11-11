@@ -1,0 +1,147 @@
+.preview-action-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  overflow: hidden;
+  color: #60c7ff;
+  pointer-events: none;
+
+  svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  circle,
+  line,
+  .preview-action-result {
+    vector-effect: non-scaling-stroke;
+  }
+
+  .preview-action-path-shadow {
+    stroke: rgb(0 0 0 / 65%);
+    stroke-width: 6;
+  }
+
+  .preview-action-path {
+    stroke: currentColor;
+    stroke-width: 3;
+    stroke-dasharray: 7 5;
+  }
+
+  .preview-action-origin {
+    fill: currentColor;
+    stroke: #fff;
+    stroke-width: 2;
+  }
+
+  .preview-action-ring {
+    fill: rgb(0 0 0 / 30%);
+    stroke: currentColor;
+    stroke-width: 3;
+  }
+
+  .preview-action-dot {
+    fill: currentColor;
+  }
+
+  .preview-action-result {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+}
+
+.preview-action-status {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  max-width: calc(100% - 24px);
+  padding: 7px 11px;
+  background: rgb(10 20 32 / 90%);
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  box-shadow: 0 2px 12px rgb(0 0 0 / 30%);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.preview-action-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.preview-action-target {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.8;
+}
+
+.preview-action-preparing,
+.preview-action-executing {
+  .preview-action-ring,
+  .preview-action-status-dot {
+    animation: preview-action-pulse 1s ease-in-out infinite alternate;
+  }
+
+  .preview-action-path {
+    animation: preview-action-travel 0.7s linear infinite;
+  }
+}
+
+.preview-action-completed {
+  color: #65e3a2;
+  animation: preview-action-dismiss 1.8s ease forwards;
+}
+
+.preview-action-failed {
+  color: #ff8585;
+  animation: preview-action-dismiss 5s ease forwards;
+}
+
+.preview-action-completed,
+.preview-action-failed {
+  .preview-action-dot {
+    display: none;
+  }
+}
+
+@keyframes preview-action-dismiss {
+  0%,
+  75% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes preview-action-pulse {
+  to {
+    opacity: 0.4;
+  }
+}
+
+@keyframes preview-action-travel {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preview-action-overlay,
+  .preview-action-overlay * {
+    animation: none !important;
+  }
+}

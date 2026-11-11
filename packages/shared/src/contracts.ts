@@ -542,6 +542,7 @@ export interface CalibrationProfile extends ProfileBinding {
   plane: { normal: Vector3; offset: number };
   surface?: ScreenSurfaceCompensation;
   observationPose: CartesianPose;
+  pendingParkingBatchId?: string;
   quality: PlaneQuality;
   invalidReason?: string;
   verification?: CalibrationVerification;
@@ -669,6 +670,13 @@ export interface ProfileData {
     autoOutput: boolean;
     motion?: ScreenMotionSettings;
   }[];
+  calibrationMappings?: Record<
+    string,
+    {
+      geometryKey: string;
+      mapping: import('./assisted-contracts.js').WebCalibrationMapping;
+    }
+  >;
 }
 export interface WorkstationBinding extends ProfileBinding {
   revision: number;
@@ -704,7 +712,10 @@ export interface WorkstationState {
 /** Accept only the current phone-frame workflow; historical formats require recalibration. */
 export function calibrationAccepted(
   c: CalibrationProfile | undefined,
+  parkingBatchId?: string,
 ): boolean {
+  if (c?.pendingParkingBatchId && c.pendingParkingBatchId !== parkingBatchId)
+    return false;
   const v = c?.verification;
   if (v?.protocol === 'auto-boundary-v1') {
     const b = v.boundary;
@@ -928,15 +939,42 @@ export interface RobotActionAuditStatus {
   maxBytes: number;
 }
 /** Active verification of an already fitted phone coordinate frame. */
+export interface ScreenVisibilityEvidence {
+  clear: boolean;
+  checkedAt: string;
+  screens: Array<{
+    id: string;
+    visibleFraction: number;
+    interiorVisibleFraction?: number;
+    minimumTileFraction: number;
+  }>;
+}
+
+export type SharedParkingEvidence =
+  | ScreenVisibilityEvidence
+  | { operatorConfirmedAt: string };
+
 export interface CalibrationSession extends ProfileBinding {
   auto?: {
     evidence: AutoCalibrationEvidence;
+    deferParkingBatchId?: string;
     startPose: CartesianPose;
     fast: boolean;
     observationRecorded?: boolean;
     cameraAvoidanceRecorded?: boolean;
     minimumTravelTipZMm?: number;
     avoidingCamera?: boolean;
+    checkingVisibility?: boolean;
+    cameraVisibility?: ScreenVisibilityEvidence;
+    batchParking?: {
+      pose?: CartesianPose;
+      obstacles: Array<Array<Pick<Vector3, 'x' | 'y'>>>;
+      estimatedObstacles?: Array<Array<Pick<Vector3, 'x' | 'y'>>>;
+      complete: boolean;
+      corridor?: NonNullable<
+        import('./assisted-contracts.js').CalibrationBatchPlan['transfer']
+      >['corridor'];
+    };
   };
   verificationRuns?: Array<{
     group: 'hover' | 'contact';

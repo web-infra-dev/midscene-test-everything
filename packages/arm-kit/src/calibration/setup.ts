@@ -115,8 +115,10 @@ export class CalibrationSetup {
    * applies. The camera and output size stay selected, so mapping the same
    * screen again needs no setup changes.
    */
-  clearMapping() {
+  async clearMapping() {
     this.mapping = undefined;
+    if (this.deviceId)
+      await this.runtime.profileStore.saveCalibrationMapping(this.deviceId);
     return this.status();
   }
   prepare(input: AssistedCalibrationInput) {
@@ -275,19 +277,36 @@ export class CalibrationSetup {
       this.input!.height = output.height;
     }
     const layout = structuredClone(this.phone!.assertAvailable().layout);
+    let reusable = this.mapping;
+    if (!reusable && this.deviceId) {
+      const saved = this.runtime.profileStore.calibrationMapping(this.deviceId);
+      if (
+        saved &&
+        saved.geometryKey === this.geometryKey &&
+        sameLayoutGeometry(saved.mapping.layout, layout)
+      ) {
+        try {
+          checkedMappingAccuracy(saved.mapping);
+          reusable = { ...saved.mapping, layout };
+        } catch {
+          // Rebuild the page mapping using the current corrected image.
+        }
+      }
+    }
     // Camera-step entry may ensure the mapping again. Reuse verified
     // geometry without another marker scan. Each collection starts fresh.
     if (
-      this.mapping &&
-      sameLayout(layout, this.mapping.layout) &&
+      reusable &&
+      sameLayout(layout, reusable.layout) &&
       this.geometryKey === calibrationGeometryKey(this.runtime, this.input!) &&
-      this.mapping.vision.width === this.input!.width &&
-      this.mapping.vision.height === this.input!.height &&
+      reusable.vision.width === this.input!.width &&
+      reusable.vision.height === this.input!.height &&
       sameVisionMapping(
         await this.vision.binding(this.visionOptions()),
-        this.mapping.vision,
+        reusable.vision,
       )
     ) {
+      if (!this.mapping) await this.vision.assertPerspectiveCurrent?.();
       this.phone!.assertAvailable();
       if (
         !sameLayout(layout, this.phone!.update!.layout) ||
@@ -298,6 +317,7 @@ export class CalibrationSetup {
           'Phone layout, robot or tool changed during camera mapping',
           409,
         );
+      this.mapping = reusable;
       await this.updateSavedCameraMapping();
       return this.status()!;
     }
@@ -368,6 +388,16 @@ export class CalibrationSetup {
     };
     try {
       await this.updateSavedCameraMapping();
+      if (
+        this.deviceId &&
+        this.geometryKey &&
+        !mappingQualityWarnings(this.mapping.accuracy, this.mapping.layout)
+          .length
+      )
+        await this.runtime.profileStore.saveCalibrationMapping(this.deviceId, {
+          geometryKey: this.geometryKey,
+          mapping: this.mapping,
+        });
     } catch (error) {
       this.mapping = undefined;
       throw error;

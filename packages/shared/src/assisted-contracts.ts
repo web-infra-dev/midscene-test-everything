@@ -18,6 +18,11 @@ export const CALIBRATION_CLICK_COUNT = 15;
 export const CALIBRATION_CLICK_REQUIRED = 15;
 export const CALIBRATION_PHONE_PATH = '/phone-calibration';
 export const CALIBRATION_PHONE_POLICY = {
+  visibilityPattern: {
+    columns: 8,
+    rows: 12,
+    colors: ['#40e55b', '#e540d9'],
+  },
   heartbeatMs: 750,
   stepAcknowledgementMs: 5000,
   measurementFreshMs: 10000,
@@ -229,6 +234,7 @@ export interface CalibrationPageUpdate {
   view?: CalibrationPageReply['view'];
   markersPainted?: boolean;
   markerRequest?: string;
+  visibilityProbeAck?: string;
   touchDiagnosticsVersion?: 2;
   /** Bounded diagnostic history; never used as contact evidence. */
   touchEvents?: PhoneTouchEvent[];
@@ -267,6 +273,7 @@ export interface CalibrationPageUpdate {
   }>;
 }
 export interface CalibrationPageReply {
+  visibilityProbe?: { id: string; phase: 0 | 1 };
   /** Same-camera transition from camera-only preview to a paired Device. */
   pairingToken?: string;
   insetMarkers?: boolean;
@@ -404,6 +411,7 @@ export interface AssistedCalibrationState {
   samples: number;
   /** Travel to the reference before probing or after a sampling/fit check. */
   referenceTravel?: 'approach' | 'return';
+  recheckingPayload?: boolean;
   /** Operator-authorized collection, safe return and verification sequence. */
   automaticWorkflow?: boolean;
   explorationMode?: AutomaticExplorationMode;
@@ -543,6 +551,11 @@ export interface AssistedCalibrationRecording {
   failedAttempts?: WebVerificationAttempt[];
 }
 
+export type CalibrationBatchSamplingMode = Extract<
+  AutomaticExplorationMode,
+  'standard' | 'slide'
+>;
+
 export interface CalibrationBatchState {
   id: string;
   revision: number;
@@ -556,8 +569,15 @@ export interface CalibrationBatchState {
   cameraId?: string;
   robotProfileId?: string;
   toolProfileId?: string;
+  samplingMode?: CalibrationBatchSamplingMode;
+  usesSharedSafePosition?: true;
+  sharedSafePosition?: CartesianPose;
+  sharedSafePositionVerified?: boolean;
+  sharedVisibility?: import('./contracts.js').ScreenVisibilityEvidence;
+  sharedParkingOperatorConfirmedAt?: string;
   acceptance?: 'manual' | 'automatic';
   error?: string;
+  visibilityMissingScreens?: string[];
   planVersion?: string;
   contextVersion?: string;
   transfer?: CalibrationBatchPlan['transfer'];
@@ -643,6 +663,7 @@ export interface CalibrationBatchCommand {
     | 'stop'
     | 'accept'
     | 'record-safe-position'
+    | 'confirm-shared-parking'
     | 'enter-drag'
     | 'exit-drag';
 }

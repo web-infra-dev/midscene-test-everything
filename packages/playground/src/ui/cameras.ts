@@ -3,6 +3,20 @@ import type { PerspectiveTarget } from '@midscene/arm-kit-shared/camera/vision-t
 import type { CameraCorrection } from '@midscene/arm-kit-shared/contracts';
 import { create } from 'zustand';
 
+export type ScreenControlReason =
+  | 'CALIBRATION_REQUIRED'
+  | 'SCREEN_MAPPING_REQUIRED'
+  | 'MAPPING_REQUIRED'
+  | 'CONFIGURATION_UNAVAILABLE';
+export interface CameraScreenControl {
+  id: string;
+  calibrationId?: string;
+  calibrationAccepted: boolean;
+  pixelWidth?: number;
+  pixelHeight?: number;
+  ready: boolean;
+  reason?: ScreenControlReason;
+}
 export interface CameraScreen {
   id: string;
   name: string;
@@ -10,6 +24,8 @@ export interface CameraScreen {
   correction?: CameraCorrection;
   previewPositions?: CalibrationPreviewPositions;
   perspectiveTarget?: PerspectiveTarget;
+  /** Per-screen readiness for manual camera-view control. */
+  control?: CameraScreenControl;
 }
 export interface CameraEntry extends CameraScreen {
   previewScreenId?: string;

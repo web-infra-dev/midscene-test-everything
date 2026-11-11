@@ -1,6 +1,7 @@
 import type {
   CalibrationBatchCommand,
   CalibrationBatchPlan,
+  CalibrationBatchSamplingMode,
   CalibrationBatchState,
   WorkstationScreenState,
 } from '@midscene/arm-kit-shared/assisted-contracts';
@@ -36,6 +37,7 @@ export class BatchClient {
     planVersion: string;
     auto: true;
     horizontalConfirmed: true;
+    samplingMode?: CalibrationBatchSamplingMode;
     acceptance?: 'manual';
     corridorConfirmed?: true;
   }) {

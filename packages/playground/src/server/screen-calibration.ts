@@ -367,7 +367,20 @@ export class ScreenCalibration {
       );
       if (!saved) return;
       const page = await this.page(saved);
-      if (page.host || page.mode !== 'waiting' || host.service.status()) return;
+      const stage = host.service.status()?.stage;
+      if (
+        page.host ||
+        page.mode !== 'waiting' ||
+        (stage &&
+          ![
+            'ready',
+            'completed',
+            'cancelled',
+            'interrupted',
+            'capture-failed',
+          ].includes(stage))
+      )
+        return;
       host.service.resumePhonePage();
       page.assign(host, 'mapping');
     });

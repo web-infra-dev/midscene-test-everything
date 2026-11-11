@@ -144,6 +144,8 @@ function GuidedContent({
   const [selectedId, setSelectedId] = useState(id);
   const [step, setStep] = useState<number>(initialStep);
   const initialStepPending = useRef(true);
+  const resumeCalibration = useRef<string>();
+  const restoringMapping = useRef<string>();
   const [loadedConfig, setConfig] = useState<Configuration>();
   const config =
     loadedConfig?.deviceId === selectedId ? loadedConfig : undefined;
@@ -270,6 +272,8 @@ function GuidedContent({
     ? [{ id: selected.id, name: selected.name, pageKey: selected.pageKey }]
     : undefined;
   const selectScreen = useCallback((next: string) => {
+    resumeCalibration.current = undefined;
+    restoringMapping.current = undefined;
     setCheckedScreen(undefined);
     autoOpened.current = undefined;
     setSelectedId(next);
@@ -340,6 +344,12 @@ function GuidedContent({
           next.mappingReady === false ||
           next.perspectiveValidity?.state === 'invalid'
         ) {
+          if (
+            initialStep !== 1 &&
+            next.correction &&
+            next.perspectiveValidity?.state !== 'invalid'
+          )
+            resumeCalibration.current = selectedId;
           setStep(1);
         } else {
           setStep(next.installationTaught ? 3 : 2);
@@ -371,8 +381,15 @@ function GuidedContent({
       );
       if (busy || inBatch || (completed && openingScreen && initialStep !== 1))
         setStep(3);
-      else if (!completed && next.mappingReady === false)
-        setStep((current) => (current === 3 ? 1 : current));
+      else if (
+        !completed &&
+        next.mappingReady === false &&
+        currentStep.current === 3
+      ) {
+        if (next.correction && next.perspectiveValidity?.state !== 'invalid')
+          resumeCalibration.current = selectedId;
+        setStep(1);
+      }
       setSingleFailure(
         singleStatus.phase === 'error' &&
           singleStatus.attemptId !== reportedSingleFailure.current
@@ -549,9 +566,10 @@ function GuidedContent({
     Boolean(activeConfig?.correction ?? activeScreen?.correction),
     activeConfig?.correctionKey ?? JSON.stringify(activeScreen?.correction),
   );
-  const outlineBlocked =
-    (perspective.summary ?? activeConfig?.perspectiveValidity)?.state ===
-    'invalid';
+  const perspectiveState = (
+    perspective.summary ?? activeConfig?.perspectiveValidity
+  )?.state;
+  const outlineBlocked = perspectiveState === 'invalid';
   /*
    * Every screen with a saved perspective is drawn on the live preview at
    * once; the selected one carries the freshest correction and the verdict.
@@ -720,13 +738,57 @@ function GuidedContent({
    */
   const autoDetectStarted = useRef<string>();
   useEffect(() => {
-    if (step !== 1 || !config) return;
+    if (
+      step !== 1 ||
+      markerOpen ||
+      perspectiveEditor ||
+      batchActive ||
+      closing ||
+      config?.deviceId !== selectedId ||
+      !config.correction ||
+      perspectiveState !== 'valid' ||
+      resumeCalibration.current !== selectedId
+    )
+      return;
+    if (config.mappingReady) {
+      resumeCalibration.current = undefined;
+      setStep(config.installationTaught ? 3 : 2);
+      return;
+    }
+    if (!phoneFullscreen || restoringMapping.current === base) return;
+    restoringMapping.current = base;
+    void client
+      .mapAssistedCalibration()
+      .then(() => refresh())
+      .catch((cause) => {
+        if (currentBase.current === base) {
+          resumeCalibration.current = undefined;
+          setMappingError(
+            cause instanceof Error ? cause.message : String(cause),
+          );
+        }
+      });
+  }, [
+    step,
+    markerOpen,
+    perspectiveEditor,
+    batchActive,
+    closing,
+    config,
+    selectedId,
+    perspectiveState,
+    phoneFullscreen,
+    base,
+    client,
+    refresh,
+  ]);
+  useEffect(() => {
+    if (step !== 1 || config?.deviceId !== selectedId) return;
     if (markerOpen) {
       autoDetectStarted.current = selectedId;
       return;
     }
-    if (config.correction && config.mappingReady !== false && !outlineBlocked)
-      return;
+    if (config.correction && !outlineBlocked) return;
     // Markers are only reported from a fullscreen page; opening the dialog
     // earlier would detect against a viewport the camera cannot trust.
     if (!phoneConnected || !phoneFullscreen) return;
@@ -857,6 +919,7 @@ function GuidedContent({
                     aria-current={index === step ? 'step' : undefined}
                     disabled={!canVisit(index)}
                     onClick={() => {
+                      resumeCalibration.current = undefined;
                       setStep(index);
                       if (index === 1) setMarkerOpen(false);
                     }}
@@ -1289,6 +1352,22 @@ function GuidedContent({
                           {t('Calibrate {0}', [selected?.name ?? selectedId])}
                         </Button>
                         {batchAction}
+                        {savedScreens.length > 0 &&
+                          savedScreens.every((screen) =>
+                            states.some(
+                              (state) =>
+                                state.screenId === screen.id &&
+                                state.cameraId === cameraId &&
+                                state.status === 'ready',
+                            ),
+                          ) && (
+                            <Button
+                              loading={closing}
+                              onClick={() => void close()}
+                            >
+                              {t('Finish calibration and return')}
+                            </Button>
+                          )}
                       </WizardFooter>
                     )}
                   </>

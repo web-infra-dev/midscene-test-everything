@@ -9,6 +9,7 @@ import {
 import type { CalibrationPageOptions } from './calibration-server/standalone.js';
 import { type CameraSession, CameraSessionManager } from './camera/session.js';
 import {
+  type ActionResult,
   type CalibrationProfile,
   type MappedScreenProfile,
   RobotArmError,
@@ -37,6 +38,89 @@ interface DeviceContext {
   calibration: CalibrationProfile;
   vision: VisionBinding;
   key: string;
+}
+function assertScreenPoint(
+  point: ScreenPoint | undefined,
+  width: number,
+  height: number,
+  label: string,
+): void {
+  if (
+    !point ||
+    !Number.isFinite(point.x) ||
+    !Number.isFinite(point.y) ||
+    point.x < 0 ||
+    point.y < 0 ||
+    point.x > width - 1 ||
+    point.y > height - 1
+  )
+    throw new RobotArmError(
+      'INVALID_ACTION',
+      `${label} must be inside the ${width} × ${height} screen`,
+      422,
+    );
+}
+function assertScreenAction(
+  action: ScreenAction,
+  screen: MappedScreenProfile,
+): void {
+  if (!action || typeof action !== 'object')
+    throw new RobotArmError('INVALID_ACTION', 'Screen action is required', 422);
+  const duration = 'durationMs' in action ? action.durationMs : undefined;
+  if (
+    duration !== undefined &&
+    (!Number.isFinite(duration) || duration <= 0 || duration > 60000)
+  )
+    throw new RobotArmError(
+      'INVALID_ACTION',
+      'durationMs must be in (0,60000]',
+      422,
+    );
+  switch (action.type) {
+    case 'tap':
+      assertScreenPoint(
+        action.point,
+        screen.pixelWidth,
+        screen.pixelHeight,
+        'Tap point',
+      );
+      return;
+    case 'longPress':
+      assertScreenPoint(
+        action.point,
+        screen.pixelWidth,
+        screen.pixelHeight,
+        'Long-press point',
+      );
+      return;
+    case 'swipe':
+    case 'dragAndDrop':
+      assertScreenPoint(
+        action.from,
+        screen.pixelWidth,
+        screen.pixelHeight,
+        'Gesture start',
+      );
+      assertScreenPoint(
+        action.to,
+        screen.pixelWidth,
+        screen.pixelHeight,
+        'Gesture end',
+      );
+      if (action.from.x === action.to.x && action.from.y === action.to.y)
+        throw new RobotArmError(
+          'INVALID_ACTION',
+          'Gesture start and end must differ',
+          422,
+        );
+      return;
+    default:
+      throw new RobotArmError(
+        'UNSUPPORTED_ACTION',
+        'Unsupported screen action',
+        422,
+      );
+  }
 }
 /** A physical touchscreen: camera and accepted calibration, sharing one arm. */
 export class RobotArmDevice extends AbstractInterface {
@@ -270,12 +354,21 @@ export class RobotArmDevice extends AbstractInterface {
     await this.resolveContext();
     return snapshot;
   }
-  private run(action: ScreenAction): Promise<void> {
+  /**
+   * Execute one absolute touch gesture on this Device's accepted screen.
+   *
+   * Callers supply screen pixels only. Calibration, camera mapping and the
+   * execution context are resolved here, so a stale client binding cannot be
+   * used to move the arm against another screen.
+   */
+  async perform(action: ScreenAction): Promise<ActionResult> {
     this.assertAlive();
+    const request = structuredClone(action);
     const pending = (async () => {
       const context = await this.resolveContext();
       this.assertAlive();
-      await this.options.arm.executeForDevice(
+      assertScreenAction(request, context.screen);
+      return this.options.arm.executeForDevice(
         this.ownerId,
         {
           robotProfileId: context.calibration.robotProfileId,
@@ -284,7 +377,7 @@ export class RobotArmDevice extends AbstractInterface {
           calibrationProfileId: context.calibration.id,
           requestId: randomUUID(),
           contextKey: context.key,
-          action,
+          action: request,
         },
         async () => (await this.snapshot()).binding,
       );
@@ -294,6 +387,9 @@ export class RobotArmDevice extends AbstractInterface {
       .finally(() => this.pending.delete(pending))
       .catch(() => undefined);
     return pending;
+  }
+  private async run(action: ScreenAction): Promise<void> {
+    await this.perform(action);
   }
   async calibrate(
     options: CalibrationPageOptions & {
@@ -431,6 +527,12 @@ export class RobotArmDevice extends AbstractInterface {
       ),
       calibration: context.calibration,
     });
+  }
+
+  /** @internal Let a host-owned Device resolve the current accepted binding again. */
+  refreshCalibrationContext(): void {
+    this.assertAlive();
+    this.context = undefined;
   }
 
   private async configure<T>(

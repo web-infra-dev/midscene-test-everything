@@ -48,6 +48,18 @@ async function setup() {
     corridorConfirmed: true,
   });
   const sessions = new Map<string, AssistedCalibrationState | null>();
+  rstest.spyOn(f.runtime, 'parkScreenGroup').mockResolvedValue({
+    pose: f.calibration.observationPose,
+    visibility: {
+      clear: true,
+      checkedAt: new Date().toISOString(),
+      screens: ['one', 'two'].map((id) => ({
+        id,
+        visibleFraction: 1,
+        minimumTileFraction: 1,
+      })),
+    },
+  });
   const starts: string[] = [];
   const stops: string[] = [];
   const entries = new Map();
@@ -69,6 +81,7 @@ async function setup() {
           return state;
         },
         setBatchTravelHeight: rstest.fn(),
+        setBatchParking: rstest.fn(),
         setBatchReference: rstest.fn(),
         command: rstest.fn(async (_id: string, command: string) => {
           if (command === 'accept') complete(id);
@@ -258,6 +271,39 @@ it('falls back to operator acceptance when automatic evidence fails and preserve
   await rstest.waitFor(() =>
     expect(f.batch.read()?.items[0].status).toBe('completed'),
   );
+});
+it('runs a fast batch with automatic acceptance and parks after both screens', async () => {
+  const f = await setup();
+  for (const id of ['one', 'two']) {
+    f.entries
+      .get(id)
+      .host.service.acceptAutomatically.mockImplementation(async () => {
+        expect(f.runtime.parkScreenGroup).not.toHaveBeenCalled();
+        f.complete(id);
+        return { accepted: true, reasons: [] };
+      });
+  }
+  const plan = await f.batch.plan('cam');
+  await f.batch.start({
+    cameraId: 'cam',
+    planVersion: plan.version,
+    horizontalConfirmed: true,
+    samplingMode: 'slide',
+  });
+  await rstest.waitFor(() => expect(f.batch.read()?.status).toBe('completed'));
+  expect(f.batch.read()?.sharedSafePosition).toEqual(
+    f.calibration.observationPose,
+  );
+  for (const id of ['one', 'two'])
+    expect(f.entries.get(id).host.service.command).toHaveBeenCalledWith(
+      expect.any(String),
+      'start-slide',
+      true,
+    );
+  expect(
+    f.entries.get('two').host.service.setBatchParking,
+  ).toHaveBeenCalledWith(f.batch.read()?.id);
+  expect(f.runtime.parkScreenGroup).toHaveBeenCalledTimes(1);
 });
 it('includes the measured start in the confirmed transfer corridor and invalidates a plan after repositioning', async () => {
   const f = await setup();

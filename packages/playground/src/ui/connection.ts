@@ -9,10 +9,21 @@ export type Phase =
   | 'connected'
   | 'error'
   | 'interrupted';
+export interface ControlState {
+  activeCalibrationId?: string;
+  positionUnknown: boolean;
+  manualBusy: boolean;
+  manualAction?: {
+    screenId: string;
+    action: 'tap' | 'longPress' | 'swipe' | 'dragAndDrop';
+    startedAt: number;
+  };
+}
 interface RuntimeSnapshot {
   runtime?: RuntimeState;
   capabilities?: EffectiveCapabilities;
   adapter?: { name?: string; connectionIdentity: string };
+  control?: ControlState;
   setupSession?: string;
 }
 interface ConnectionSnapshot extends RuntimeSnapshot {
@@ -104,6 +115,7 @@ export const useConnection = create<ConnectionStore>((set, get) => ({
           runtime: snapshot.runtime,
           capabilities: snapshot.capabilities,
           adapter: snapshot.adapter,
+          control: snapshot.control,
           setupSession: snapshot.setupSession,
           ...(snapshot.setupSession &&
           snapshot.setupSession !== get().setupSession
@@ -145,6 +157,7 @@ export const useConnection = create<ConnectionStore>((set, get) => ({
         runtime: undefined,
         capabilities: undefined,
         adapter: undefined,
+        control: undefined,
         setupSession: state.setupSession,
         phase: state.phase,
         error: state.error,

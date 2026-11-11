@@ -3,13 +3,17 @@ import {
   type ScreenOutlineEntry,
   usePerspectiveValidity,
 } from '@midscene/arm-calibration-ui';
+import type { ScreenAction } from '@midscene/arm-kit-shared/contracts';
 import {
   Alert,
   Button,
   Empty,
+  Modal,
   Segmented,
   Select,
+  Space,
   Spin,
+  Switch,
   Tag,
   Typography,
 } from 'antd';
@@ -25,20 +29,26 @@ import {
   Unplug,
   VideoOff,
 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { type CameraView, cameraPreviewUrl } from '../camera-preview';
 import { cameraStateLabel, useCameras } from '../cameras';
 import { useConnection } from '../connection';
 import { useViews } from '../extensions';
 import { useDeviceReadiness } from '../hooks/useDeviceReadiness';
+import { usePreviewControl } from '../hooks/usePreviewControl';
 import { useRobotArm } from '../hooks/useRobotArm';
 import { usePreferences, useT } from '../i18n';
+import { PreviewControl } from '../preview/PreviewControl';
+import type {
+  PreviewScreenGeometry,
+  PreviewScreenProjection,
+} from '../preview/projection';
+import { useTasks } from '../tasks';
 import { CameraPerspectiveActions } from './CameraPerspectiveActions';
 import { CameraRail } from './CameraRail';
 import { CameraStagePreview } from './CameraStagePreview';
 import { DeviceCalibration } from './DeviceCalibration';
 import { DeviceTransfer } from './DeviceTransfer';
-import { LiveCameraImage } from './LiveCameraImage';
 import { RobotConnectionDialog } from './RobotConnectionDialog';
 import { RobotReadinessCard } from './RobotReadinessCard';
 import { TaskWorkspace } from './TaskWorkspace';
@@ -53,6 +63,7 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
   const t = useT();
   const { ConnectionForm } = useViews();
   const arm = useRobotArm();
+  const [controlEnabled, setControlEnabled] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [connectionOpen, setConnectionOpen] = useState(false);
   const language = usePreferences((state) => state.language);
@@ -65,6 +76,7 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
   }>();
   const [wizardScreen, setWizardScreen] = useState<string>();
   const [transferId, setTransferId] = useState<string>();
+  const [transferTargetId, setTransferTargetId] = useState<string>();
   const [preferredView, setCameraView] = useState<CameraView>('raw');
   const [previewError, setPreviewError] = useState<string>();
   const [previewRevision, setPreviewRevision] = useState(0);
@@ -80,17 +92,18 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
     pendingId,
     error,
   } = useCameras();
+  const { host, disconnect, setupSession, check, control } = useConnection();
   const closeCalibration = useCallback(
     (screenId?: string) => {
       if (screenId) setPreferredScreenId(screenId);
       setWizard(undefined);
       setWizardScreen(undefined);
       setConfigurationRevision((value) => value + 1);
-      void refresh();
+      void refresh(false);
+      void check();
     },
-    [refresh],
+    [check, refresh],
   );
-  const { host, disconnect, setupSession, check } = useConnection();
   const [pausedCamera, setPausedCamera] = useState<string>();
   const [frame, setFrame] = useState<{
     key: string;
@@ -111,6 +124,7 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
   useEffect(() => {
     setSettingsOpen(false);
     setTransferId(undefined);
+    setTransferTargetId(undefined);
     setWizardScreen(undefined);
     setWizard(undefined);
     setPausedCamera(undefined);
@@ -155,6 +169,43 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
     robotReady && streamState === 'running'
       ? (activeScreen?.id ?? selectedId ?? undefined)
       : undefined;
+  const taskRunning = useTasks((state) =>
+    state.tasks.some(
+      (task) => task.phase === 'running' || task.phase === 'closing',
+    ),
+  );
+  const taskWasRunning = useRef(false);
+  useEffect(() => {
+    if (taskWasRunning.current && !taskRunning) void check();
+    taskWasRunning.current = taskRunning;
+  }, [check, taskRunning]);
+  const controlScreens = useMemo<PreviewScreenGeometry[]>(
+    () =>
+      availableScreens.flatMap((screen) => {
+        const control = screen.control;
+        if (
+          !screen.correction ||
+          !control?.ready ||
+          !control.pixelWidth ||
+          !control.pixelHeight
+        )
+          return [];
+        return [
+          {
+            id: screen.id,
+            name: screen.name,
+            correction: screen.correction,
+            target: screen.perspectiveTarget,
+            pixelWidth: control.pixelWidth,
+            pixelHeight: control.pixelHeight,
+            calibrationId: control.calibrationId,
+            active: screen.id === activeScreen?.id,
+            ready: true,
+          },
+        ];
+      }),
+    [activeScreen?.id, availableScreens],
+  );
   const activeWizard =
     robotReady && wizard?.session === setupSession ? wizard : undefined;
   const openCalibration = (step: 0 | 1 = 0) => {
@@ -235,6 +286,137 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
   );
   const perspectiveBlocked = perspective.summary?.state === 'invalid';
   const ready = readiness?.status === 'ready';
+  const runtimeState = arm.state;
+  const robotState = runtimeState?.state;
+  const activeViewBlocked = cameraView === 'corrected' && perspectiveBlocked;
+  const robotControlReady = Boolean(
+    connected &&
+      robotReady &&
+      running &&
+      previewError !== previewKey &&
+      !activeViewBlocked &&
+      !taskRunning &&
+      !control?.positionUnknown &&
+      arm.capabilities?.screenActions.includes('tap') &&
+      arm.capabilities?.screenActions.includes('swipe') &&
+      robotState?.connected &&
+      robotState.enabled &&
+      !robotState.moving &&
+      !robotState.dragMode &&
+      !runtimeState?.recoveryRequired &&
+      !runtimeState?.softwarePaused &&
+      !robotState.faults.length &&
+      runtimeState?.operation?.status !== 'running',
+  );
+  const visibleControlScreens =
+    cameraView === 'corrected'
+      ? controlScreens.filter((screen) => screen.id === activeScreen?.id)
+      : controlScreens;
+  const controlAvailable =
+    !activeWizard && robotControlReady && visibleControlScreens.length > 0;
+  const controlUnavailableReason = !connected
+    ? language === 'zh'
+      ? '连接机械臂后才能控制屏幕'
+      : 'Connect the robot before controlling a screen'
+    : !robotReady
+      ? language === 'zh'
+        ? '正在核对机械臂与相机，暂不可控制'
+        : 'Checking the robot and camera connection'
+      : !running
+        ? language === 'zh'
+          ? '启动相机后才能控制屏幕'
+          : 'Start the camera before controlling a screen'
+        : activeViewBlocked
+          ? language === 'zh'
+            ? '屏幕轮廓已失效，请重新标定相机映射'
+            : 'The screen outline is stale. Recalibrate the camera mapping'
+          : !visibleControlScreens.length
+            ? language === 'zh'
+              ? '当前画面没有已完成标定和映射的屏幕'
+              : 'No screen with accepted calibration and mapping is in view'
+            : !ready
+              ? language === 'zh'
+                ? '屏幕标定尚未就绪'
+                : 'Screen calibration is not ready'
+              : control?.positionUnknown
+                ? language === 'zh'
+                  ? '机械臂位置未知，请先恢复或重新标定'
+                  : 'The arm position is unknown. Recover or recalibrate first'
+                : !robotState?.enabled
+                  ? language === 'zh'
+                    ? '请先使能机械臂并确认工具负载'
+                    : 'Enable the robot and confirm its tool payload first'
+                  : taskRunning
+                    ? language === 'zh'
+                      ? 'AI 任务运行中，暂不可手动控制'
+                      : 'An AI task is running; manual control is paused'
+                    : robotState?.moving || robotState?.dragMode
+                      ? language === 'zh'
+                        ? '机械臂正在运动，暂不可控制'
+                        : 'The arm is moving; control is paused'
+                      : runtimeState?.recoveryRequired ||
+                          runtimeState?.softwarePaused ||
+                          robotState?.faults.length
+                        ? language === 'zh'
+                          ? '请先处理机械臂报警或恢复状态'
+                          : 'Clear the robot fault or recovery state first'
+                        : undefined;
+  const confirmCrossScreen = useCallback(
+    async (target: PreviewScreenProjection, action: ScreenAction) =>
+      new Promise<boolean>((resolve) => {
+        const name = target.screen.name ?? target.screen.id;
+        Modal.confirm({
+          title:
+            language === 'zh'
+              ? '切换到目标屏幕并执行动作？'
+              : 'Switch screens and execute this action?',
+          content:
+            language === 'zh'
+              ? `机械臂会先沿已验证的路线移动到「${name}」，然后执行 ${action.type}。如果该方向尚未验证路线，动作会被拒绝，机械臂不会移动。`
+              : `The arm will first move along the verified route to “${name}”, then execute ${action.type}. If that direction has no verified route, the action is refused without movement.`,
+          okText: language === 'zh' ? '继续' : 'Continue',
+          cancelText: language === 'zh' ? '取消' : 'Cancel',
+          onOk: () => resolve(true),
+          onCancel: () => resolve(false),
+        });
+      }),
+    [language],
+  );
+  const refreshAfterControl = useCallback(() => {
+    setConfigurationRevision((value) => value + 1);
+    void refresh(false);
+    void check();
+  }, [check, refresh]);
+  const openTransferFor = useCallback(
+    (targetId: string) => {
+      const current =
+        cameras
+          .flatMap((camera) => camera.screens ?? [])
+          .find(
+            (screen) =>
+              screen.control?.calibrationId &&
+              screen.control.calibrationId === control?.activeCalibrationId,
+          ) ?? activeScreen;
+      if (!current || current.id === targetId) return;
+      setTransferTargetId(targetId);
+      setTransferId(current.id);
+    },
+    [activeScreen, cameras, control?.activeCalibrationId],
+  );
+  const previewControl = usePreviewControl({
+    contextKey: previewKey,
+    activeCalibrationId: control?.activeCalibrationId,
+    confirmCrossScreen,
+    onCompleted: refreshAfterControl,
+    onActionError: (error, target) => {
+      if (error.code === 'TRANSFER_REQUIRED' || error.code === 'TRANSFER_STALE')
+        openTransferFor(target.screen.id);
+    },
+  });
+  useEffect(() => {
+    if ((!controlAvailable && !previewControl.busy) || activeWizard)
+      setControlEnabled(false);
+  }, [controlAvailable, previewControl.busy, activeWizard]);
   /*
    * The raw view draws every screen the camera holds a perspective for, the way
    * the workstation stage did. The corrected view is already rectified, so an
@@ -268,6 +450,31 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
     <>
       {connected && (
         <RobotStatusBar
+          control={
+            <Tooltip
+              title={
+                activeWizard
+                  ? language === 'zh'
+                    ? '点击标定向导右上角的「关闭」，返回相机画面后开启控制。'
+                    : 'Close the calibration wizard to enable control in the camera preview.'
+                  : controlAvailable
+                    ? language === 'zh'
+                      ? '点击屏幕为点击，按住 500ms 为长按，拖动为滑动。释放后执行。'
+                      : 'Click to tap, hold for at least 500 ms to long press, or drag to swipe. Gestures execute on release.'
+                    : controlUnavailableReason
+              }
+            >
+              <Space>
+                <span>{language === 'zh' ? '控制' : 'Control'}</span>
+                <Switch
+                  aria-label={language === 'zh' ? '控制屏幕' : 'Control screen'}
+                  checked={controlEnabled}
+                  disabled={!controlAvailable || previewControl.busy}
+                  onChange={setControlEnabled}
+                />
+              </Space>
+            </Tooltip>
+          }
           key={JSON.stringify([controlScreen, setupSession])}
           cameraId={controlScreen}
           onConfigure={() => {
@@ -518,10 +725,24 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
                   }
                 />
               ) : previewEnabled && previewId ? (
-                <LiveCameraImage
+                <PreviewControl
                   key={previewKey}
+                  activeScreenId={activeScreen?.id}
+                  alt={
+                    cameraView === 'corrected'
+                      ? (activeScreen?.name ?? selected.name)
+                      : selected.name
+                  }
+                  available={controlAvailable}
+                  cameraId={selected.id}
+                  longPressEnabled={Boolean(
+                    arm.capabilities?.screenActions.includes('longPress'),
+                  )}
                   className="stream-preview"
-                  src={`${cameraPreviewUrl(previewId, cameraView)}&revision=${encodeURIComponent(previewKey)}`}
+                  control={previewControl}
+                  enabled={controlEnabled}
+                  onEnabledChange={setControlEnabled}
+                  onError={() => setPreviewError(previewKey)}
                   onLoad={(event) => {
                     const { naturalWidth: width, naturalHeight: height } =
                       event.currentTarget;
@@ -534,12 +755,9 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
                           : { key: previewKey, width, height },
                       );
                   }}
-                  onError={() => setPreviewError(previewKey)}
-                  alt={
-                    cameraView === 'corrected'
-                      ? activeScreen?.name
-                      : selected.name
-                  }
+                  screens={controlScreens}
+                  src={`${cameraPreviewUrl(previewId, cameraView)}&revision=${encodeURIComponent(previewKey)}`}
+                  view={cameraView}
                 />
               ) : starting ? (
                 <Spin aria-label={t('cameraStarting')} />
@@ -641,7 +859,10 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
                 {running && deviceId && transferTargets.length > 1 && (
                   <Button
                     icon={<ArrowRightLeft size={18} />}
-                    onClick={() => setTransferId(deviceId)}
+                    onClick={() => {
+                      setTransferTargetId(undefined);
+                      setTransferId(deviceId);
+                    }}
                   >
                     {t('transferTitle')}
                   </Button>
@@ -683,7 +904,11 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
           key={transferId}
           id={transferId}
           cameras={transferTargets}
-          onClose={() => setTransferId(undefined)}
+          initialTargetId={transferTargetId}
+          onClose={() => {
+            setTransferId(undefined);
+            setTransferTargetId(undefined);
+          }}
         />
       )}
     </>

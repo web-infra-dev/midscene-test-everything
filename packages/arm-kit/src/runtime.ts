@@ -1,10 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import type { MotionTarget } from './application/context.js';
-import { assertCameraBoundary } from './application/teaching-constraints.js';
+import {
+  assertCameraBoundary,
+  cameraBoundaryExcessMm,
+} from './application/teaching-constraints.js';
 import type { AutomaticCaptureHost } from './assisted-contracts.js';
 import { screenPoseMm } from './calibration/geometry.js';
 import { contactDepthMm, surfaceClearanceMm } from './calibration/surface.js';
 import { moveToTaughtPosition } from './calibration/taught-position.js';
+import {
+  type CameraAvoidanceState,
+  assertBatchParking,
+  avoidCamera,
+} from './calibration/verification/camera-avoidance.js';
 import { applyCalibrationCommand } from './calibration/verification/commands.js';
 import {
   calibrationSessionStatus,
@@ -39,6 +47,8 @@ import {
   type SafePositionRequest,
   type ScreenMotionSettings,
   type ScreenProfile,
+  type ScreenVisibilityEvidence,
+  type SharedParkingEvidence,
   type ToolProfile,
   type VisionBinding,
   assertScreenMapping,
@@ -154,6 +164,7 @@ export class RobotArmRuntime extends RobotKernel {
   async collectAutomaticPoints<T>(
     input: Pick<ProfileBinding, 'robotProfileId' | 'toolProfileId'> & {
       cameraId?: string;
+      onPayloadRecheck?: (waiting: boolean) => void;
     },
     work: (
       host: AutomaticCaptureHost &
@@ -243,11 +254,31 @@ export class RobotArmRuntime extends RobotKernel {
         );
       this.assertAppliedPayload(tool);
     };
+    let recheckingPayload = false;
+    const isTransientFeedbackLoss = (error: RobotArmError) => {
+      if (
+        ['DISCONNECTED', 'STATE_STALE', 'STATE_UNAVAILABLE'].includes(
+          error.code,
+        )
+      )
+        return true;
+      const payload = error.details?.payloadApplication as
+        | PayloadApplicationState
+        | undefined;
+      return (
+        error.code === 'TOOL_PAYLOAD_NOT_APPLIED' &&
+        ['connection-lost', 'readback-unavailable'].includes(
+          payload?.reason ?? '',
+        )
+      );
+    };
+    const setPayloadRecheck = (waiting: boolean) => {
+      if (recheckingPayload === waiting) return;
+      recheckingPayload = waiting;
+      input.onPayloadRecheck?.(waiting);
+    };
     try {
-      await this.ready(tool);
-      check();
-      await this.profileStore.markOperation(operationId, 'calibration');
-      const value = await work({
+      const host: Parameters<typeof work>[0] = {
         signal,
         check,
         stop: () => this.adapter.stop(),
@@ -314,6 +345,7 @@ export class RobotArmRuntime extends RobotKernel {
               submitted: () => {
                 submitted = true;
                 this.motionSubmitted = true;
+                setPayloadRecheck(false);
               },
             },
           );
@@ -335,7 +367,61 @@ export class RobotArmRuntime extends RobotKernel {
               409,
             );
         },
-      });
+      };
+      const collect = async () => {
+        let deadline: number | undefined;
+        let interrupted: RobotArmError | undefined;
+        let marked = false;
+        try {
+          while (true) {
+            try {
+              await this.ready(tool);
+              check();
+              if (
+                interrupted &&
+                deadline !== undefined &&
+                performance.now() >= deadline
+              )
+                throw interrupted;
+              if (!marked) {
+                await this.profileStore.markOperation(
+                  operationId,
+                  'calibration',
+                );
+                marked = true;
+              }
+              return await work(host);
+            } catch (error) {
+              if (
+                !input.onPayloadRecheck ||
+                calibrationSessionId ||
+                this.motionSubmitted ||
+                signal.aborted ||
+                !isRobotArmError(error) ||
+                !isTransientFeedbackLoss(error)
+              )
+                throw error;
+              if (deadline === undefined) {
+                interrupted = error;
+                deadline = performance.now() + 3000;
+                setPayloadRecheck(true);
+              }
+              const remaining = deadline - performance.now();
+              if (remaining <= 0)
+                throw new RobotArmError(
+                  error.code,
+                  'Could not reconfirm the robot connection and tool payload before calibration motion.',
+                  error.status,
+                  error.details,
+                );
+              await this.hold(Math.min(150, remaining));
+            }
+          }
+        } finally {
+          setPayloadRecheck(false);
+        }
+      };
+      const value = await collect();
       check();
       if (!calibrationSessionId) {
         await this.profileStore.clearOperation();
@@ -350,6 +436,13 @@ export class RobotArmRuntime extends RobotKernel {
             isRobotArmError(error) &&
             error.code === 'DISCONNECTED';
           if (disconnected) this.requireRecovery('socket-disconnect');
+          else if (
+            input.onPayloadRecheck &&
+            this.motionSubmitted &&
+            isRobotArmError(error) &&
+            isTransientFeedbackLoss(error)
+          )
+            this.requireRecovery('interruption');
           await this.controlledStop(
             disconnected && !this.motionSubmitted,
           ).catch(() => undefined);
@@ -530,7 +623,7 @@ export class RobotArmRuntime extends RobotKernel {
       const c = s.candidate!;
       if (evidence.protocol === 'auto-boundary-v1') {
         if (
-          !s.auto?.observationRecorded ||
+          !(s.auto?.observationRecorded || s.auto?.deferParkingBatchId) ||
           s.stage !== 'verification' ||
           s.dragMode ||
           !s.boundary ||
@@ -589,7 +682,8 @@ export class RobotArmRuntime extends RobotKernel {
         };
       }
       c.acceptanceStatus = 'accepted';
-      if (!calibrationAccepted(c))
+      c.pendingParkingBatchId = s.auto?.deferParkingBatchId;
+      if (!calibrationAccepted(c, c.pendingParkingBatchId))
         throw new RobotArmError(
           'NOT_VERIFIED',
           'Web touch measurements did not meet acceptance thresholds',
@@ -1119,7 +1213,9 @@ export class RobotArmRuntime extends RobotKernel {
     if (payloadApplication.status !== 'applied')
       throw new RobotArmError(
         'TOOL_PAYLOAD_NOT_APPLIED',
-        'Tool payload is not confirmed for the saved tool. Apply it according to the adapter requirements before motion.',
+        payloadApplication.reason === 'parameters-changed'
+          ? 'The controller tool payload differs from the saved tool payload. Sync the saved payload before motion.'
+          : 'Tool payload is not confirmed for the saved tool. Apply it according to the adapter requirements before motion.',
         409,
         { payloadApplication },
       );
@@ -2925,6 +3021,144 @@ export class RobotArmRuntime extends RobotKernel {
       return teaching;
     });
   }
+  async parkScreenGroup(
+    binding: ProfileBinding,
+    calibrationId: string,
+    parking: NonNullable<
+      NonNullable<CalibrationSession['auto']>['batchParking']
+    >,
+    minimumTravelTipZMm: number,
+    verifyVisibility: (
+      signal: AbortSignal,
+    ) => Promise<ScreenVisibilityEvidence>,
+    guard: () => void,
+    confirmPages: () => Promise<void>,
+    operatorConfirmed = false,
+  ): Promise<{ pose: CartesianPose; visibility: SharedParkingEvidence }> {
+    const profile = this.profileStore.getCalibration(calibrationId);
+    const ctx = this.context(binding);
+    ctx.minimumTravelTipZMm = Math.max(
+      ctx.minimumTravelTipZMm ?? Number.NEGATIVE_INFINITY,
+      minimumTravelTipZMm,
+    );
+    if (
+      !calibrationAccepted(
+        profile,
+        this.profileStore.list().calibrationBatch?.id,
+      )
+    )
+      throw new RobotArmError(
+        'CALIBRATION_INVALID',
+        'A verified screen from the current batch is required for shared parking.',
+        409,
+      );
+    this.validateCalibration(profile, binding, ctx, false);
+    if (!operatorConfirmed) await confirmPages();
+    guard();
+    const input = { ...binding, cameraId: ctx.installationTeaching?.cameraId };
+    return this.collectAutomaticPoints(input, async (host) => {
+      const check = () => {
+        guard();
+        host.check();
+      };
+      const state: CameraAvoidanceState = {
+        candidate: structuredClone(profile),
+        stage: 'verification',
+        auto: { batchParking: parking },
+      };
+      if (operatorConfirmed) {
+        check();
+        const pose = await host.read();
+        const teaching = ctx.installationTeaching;
+        if (
+          !teaching ||
+          cameraBoundaryExcessMm(pose.positionMm, teaching) > -20 ||
+          cameraBoundaryExcessMm(
+            contactPoint(pose, ctx.tool.offsetMm),
+            teaching,
+          ) > -20
+        )
+          throw new RobotArmError(
+            'CAMERA_CLEARANCE_REQUIRED',
+            'The current position must clear the taught camera boundary by at least 20 mm.',
+            409,
+          );
+        assertBatchParking(state, ctx, pose);
+        await this.motionExecutor.stable(pose, 5000, check, (ms) =>
+          this.hold(ms),
+        );
+        check();
+        return {
+          pose,
+          visibility: { operatorConfirmedAt: new Date().toISOString() },
+        };
+      }
+      const found = await avoidCamera(
+        {
+          profileStore: this.profileStore,
+          check,
+          interrupted: () => host.signal.aborted,
+          stationaryPose: async () => {
+            check();
+            return host.read();
+          },
+          safeLift: (pose, candidate, context, onScreen) =>
+            this.safeLift(pose, candidate, context, onScreen),
+          preflight: async (targets) => {
+            check();
+            await host.preflight(
+              targets.map((target) => target.pose),
+              targets[0]?.options,
+            );
+            check();
+          },
+          move: (pose, _context, speed, acceleration) => {
+            check();
+            return host.move(pose, { speed, acceleration });
+          },
+          stable: (pose) =>
+            this.motionExecutor
+              .stable(pose, 5000, check, (ms) => this.hold(ms))
+              .then(() => undefined),
+          verifyCameraVisibility: async () => {
+            check();
+            const evidence = await verifyVisibility(host.signal);
+            check();
+            return evidence;
+          },
+        },
+        state,
+        ctx,
+      );
+      check();
+      if (!found && state.auto?.cameraVisibility)
+        throw new RobotArmError(
+          'CAMERA_VIEW_OBSTRUCTED',
+          'The arm reached a candidate Safe Position, but the camera could not verify every screen.',
+          409,
+          {
+            screens: state.auto.cameraVisibility.screens.map((screen) => ({
+              id: screen.id,
+              percent: Math.round(
+                100 *
+                  (screen.interiorVisibleFraction ?? screen.visibleFraction),
+              ),
+            })),
+          },
+        );
+      if (!found || !state.auto?.cameraVisibility?.clear)
+        throw new RobotArmError(
+          'CAMERA_AVOIDANCE_FAILED',
+          'No reachable camera-clear Safe Position was found within the bounded search.',
+          409,
+        );
+      return {
+        pose: state.candidate!.observationPose,
+        visibility: state.auto.cameraVisibility,
+      };
+    });
+  }
+
   async positionInstallationPoint(
     input: {
       robotProfileId: string;
@@ -3177,6 +3411,9 @@ export class RobotArmRuntime extends RobotKernel {
     command: CalibrationCommand,
     beforeMove?: () => Promise<void>,
     onProgress?: () => void,
+    verifyCameraVisibility?: (
+      signal: AbortSignal,
+    ) => Promise<ScreenVisibilityEvidence>,
   ): Promise<CalibrationSession> {
     if (
       !command ||
@@ -3313,11 +3550,25 @@ export class RobotArmRuntime extends RobotKernel {
               this.session.progress = next.progress;
               this.session.verificationRuns = next.verificationRuns;
               if (this.session.auto && next.auto)
-                this.session.auto.avoidingCamera = next.auto.avoidingCamera;
+                Object.assign(this.session.auto, {
+                  avoidingCamera: next.auto.avoidingCamera,
+                  checkingVisibility: next.auto.checkingVisibility,
+                  cameraVisibility: next.auto.cameraVisibility,
+                });
               onProgress?.();
             }
           },
           adapter: this.adapter,
+          verifyCameraVisibility: verifyCameraVisibility
+            ? async () => {
+                this.check();
+                const signal = this.abort!.signal;
+                const result = await verifyCameraVisibility(signal);
+                signal.throwIfAborted();
+                this.check();
+                return result;
+              }
+            : undefined,
           profileStore: this.profileStore,
           check: () => this.check(),
           interrupted: () => Boolean(this.abort?.signal.aborted),

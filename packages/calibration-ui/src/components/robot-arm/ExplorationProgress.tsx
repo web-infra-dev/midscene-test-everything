@@ -25,6 +25,10 @@ export function ExplorationProgress({
   const failed =
     (session.stage === 'interrupted' && session.collectionFailed) ||
     session.stage === 'capture-failed';
+  if (session.calibration?.auto?.checkingVisibility)
+    return <output>{t('Checking screen visibility')}</output>;
+  if (session.stage === 'collecting' && session.recheckingPayload)
+    return <output>{t('Reconfirming the tool payload…')}</output>;
   if (session.stage === 'collecting' && session.referenceTravel)
     return (
       <output>
