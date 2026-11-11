@@ -81,11 +81,46 @@ test.each(layout.markers)(
   },
 );
 
-test('requires distributed marker coverage and reports a displaced remaining check marker', async () => {
-  const four = await photograph(false, layout.markers.slice(1, 5));
-  await expect(detectCalibrationMarkers(four, layout.markers)).rejects.toThrow(
-    'at least five',
+test('requires four visible markers', async () => {
+  const three = await photograph(false, layout.markers.slice(1, 4));
+  await expect(detectCalibrationMarkers(three, layout.markers)).rejects.toThrow(
+    'at least four',
   );
+});
+
+const occludedPairs = layout.markers.flatMap((first, index) =>
+  layout.markers
+    .slice(index + 1)
+    .map((second) => [first.code, second.code] as const),
+);
+test.each(occludedPairs)(
+  'maps with markers %i and %i occluded',
+  async (first, second) => {
+    const visible = layout.markers.filter(
+      (marker) => marker.code !== first && marker.code !== second,
+    );
+    const { accuracy, webToImage } = await detectCalibrationMarkers(
+      await photograph(false, visible),
+      layout.markers,
+    );
+    expect(accuracy.points.map((point) => point.code).sort()).toEqual(
+      visible.map((marker) => marker.code).sort(),
+    );
+    for (const x of [0, layout.width]) {
+      for (const y of [0, layout.height]) {
+        const projected = applyHomography(webToImage, { x, y });
+        expect(
+          Math.hypot(
+            projected.x - (x - 0.08 * y + 95),
+            projected.y - (-0.12 * x + 0.84 * y + 70),
+          ),
+        ).toBeLessThan(4);
+      }
+    }
+  },
+);
+
+test('reports a displaced remaining check marker', async () => {
   const shifted = await photograph(true, layout.markers.slice(0, 5));
   const { accuracy } = await detectCalibrationMarkers(shifted, layout.markers);
   expect(mappingQualityWarnings(accuracy, layout).map((w) => w.label)).toEqual([

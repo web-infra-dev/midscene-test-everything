@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ArmController, type CameraSessionManager } from '@midscene/arm-kit';
 import { calibrationPageMarkers } from '@midscene/arm-kit-shared/assisted-contracts';
+import { markerCaptureRecommended } from '@midscene/arm-kit-shared/marker-contracts';
 import type {
   MarkerCalibrationDetectionResponse,
   TargetDisplaySession,
@@ -144,7 +145,11 @@ async function fixture({ screens = true }: { screens?: boolean } = {}) {
     });
     return { page, targetHost, pageKey, token, targetId, pageId };
   }
-  async function render(missingSecond = false, secondOffsetX = 0) {
+  async function render(
+    missingSecond = false,
+    secondOffsetX = 0,
+    hideSecondChecks = false,
+  ) {
     if (!session) throw new Error('No marker session in fixture');
     const chunks = session.targets
       .map(
@@ -159,6 +164,9 @@ async function fixture({ screens = true }: { screens?: boolean } = {}) {
                 !missingSecond ||
                 index === 0 ||
                 (m.purpose === 'fit' && m.x < 200),
+            )
+            .filter(
+              (m) => !hideSecondChecks || index === 0 || m.purpose !== 'check',
             )
             .map((m) =>
               markerSvg(m.code).replace(
@@ -227,6 +235,40 @@ it('binds each phone once, gives it distinct markers and applies all passing per
   );
   expect(f.adapter.movements).toHaveLength(0);
 });
+it('applies a screen mapping when only its four outer markers remain visible', async () => {
+  const f = await fixture();
+  const first = await f.connect();
+  const second = await f.connect();
+  await f.render(false, 0, true);
+  const command = {
+    cameraId: 'cam',
+    id: f.session.id,
+    token: f.session.token,
+  };
+  const detected = (await f.service.markerAction({
+    ...command,
+    action: 'detect',
+  })) as MarkerCalibrationDetectionResponse;
+  expect(detected.session.targets.map((target) => target.state)).toEqual([
+    'succeeded',
+    'succeeded',
+  ]);
+  expect(detected.session.targets[1].result?.markerIds).toHaveLength(4);
+  expect(markerCaptureRecommended(detected.session.targets[1].result!)).toBe(
+    true,
+  );
+  const applied = await f.service.markerAction({
+    ...command,
+    action: 'apply',
+  });
+  expect(applied).toMatchObject({ mappingErrors: {} });
+  expect(
+    f.devices.entries.get(first.targetId)?.camera.getCorrection(),
+  ).toBeDefined();
+  expect(
+    f.devices.entries.get(second.targetId)?.camera.getCorrection(),
+  ).toBeDefined();
+});
 it('keeps markers visible on the screen whose perspective passed but page mapping failed', async () => {
   const f = await fixture();
   const first = await f.connect();
@@ -239,7 +281,7 @@ it('keeps markers visible on the screen whose perspective passed but page mappin
   expect(applied).toMatchObject({
     mappingErrors: {
       [second.targetId]:
-        'Keep at least five of the six calibration markers visible and in focus.',
+        'Keep at least four of the six calibration markers visible and in focus.',
     },
   });
   expect(first.targetHost.service.phoneView().view).toBe('touch-preview');

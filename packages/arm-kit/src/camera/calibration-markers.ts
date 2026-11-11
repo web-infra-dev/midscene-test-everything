@@ -21,9 +21,7 @@ export const markerSvg = (id: number) => dictionary.generateSVG(id);
 type Markers = CalibrationPageLayout['markers'];
 
 export function hasMappingMarkerCoverage(fit: number, check: number) {
-  return (
-    (fit === 4 && (check === 1 || check === 2)) || (fit === 3 && check === 2)
-  );
+  return fit + check >= 4;
 }
 
 export async function detectCalibrationMarkers(jpeg: Buffer, markers: Markers) {
@@ -96,11 +94,11 @@ export async function detectCalibrationMarkers(jpeg: Buffer, markers: Markers) {
   if (!hasMappingMarkerCoverage(fit.length, pairs.length - fit.length))
     throw new RobotVisionError(
       'NO_SCREEN_DETECTED',
-      'Keep at least five of the six calibration markers visible and in focus.',
+      'Keep at least four of the six calibration markers visible and in focus.',
     );
   const webToImage = computeHomography(
-    fit.flatMap((p) => p.page),
-    fit.flatMap((p) => p.image),
+    pairs.flatMap((p) => p.page),
+    pairs.flatMap((p) => p.image),
   );
   const inverse = invertHomography(webToImage);
   const points = pairs.map(({ m, page, image }) => ({
@@ -116,6 +114,8 @@ export async function detectCalibrationMarkers(jpeg: Buffer, markers: Markers) {
     const errors = points
       .filter((p) => p.purpose === purpose)
       .map((p) => p.errorCssPx);
+    if (!errors.length)
+      return { count: 0, meanErrorCssPx: 0, maxErrorCssPx: 0 };
     const mean = errors.reduce((a, b) => a + b, 0) / errors.length;
     const max = Math.max(...errors);
     if (!Number.isFinite(mean) || !Number.isFinite(max))

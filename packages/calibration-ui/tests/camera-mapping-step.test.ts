@@ -128,9 +128,9 @@ it('shows a failed mapping check against an applied perspective until confirmati
       }),
     );
   const failed = render(
-    'Keep at least five of the six calibration markers visible and in focus.',
+    'Keep at least four of the six calibration markers visible and in focus.',
   );
-  expect(failed).toContain('至少有五个');
+  expect(failed).toContain('至少有四个');
   expect(failed).not.toContain('相机映射已确认');
   const confirmed = render();
   expect(confirmed).toContain('相机映射已确认');

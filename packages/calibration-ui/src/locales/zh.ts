@@ -139,8 +139,8 @@ const calibrationZh: Record<string, string> = {
     '标定期间手机已断开，请重新开始本步骤。',
   'Calibration marker {0} could not be decoded uniquely ({1} matches).':
     '标记 {0} 识别失败（匹配到 {1} 处）。',
-  'Keep at least five of the six calibration markers visible and in focus.':
-    '请确保六个标定码中至少有五个在画面中清晰可见。',
+  'Keep at least four of the six calibration markers visible and in focus.':
+    '请确保六个标定码中至少有四个在画面中清晰可见。',
   'Page marker fit verified; screen edges require visual confirmation':
     '页面标记拟合通过；屏幕边界仍需目视确认',
   'The browser did not report the page position within the screen. Automatic screen boundary detection is unavailable.':
