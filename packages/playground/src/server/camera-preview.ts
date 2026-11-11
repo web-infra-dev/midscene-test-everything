@@ -207,7 +207,7 @@ export async function streamCameraPreview(
       res,
       camera.stream,
       corrected ? (frame) => rectifyPreviewFrame(camera, frame) : undefined,
-      corrected ? 100 : 0,
+      corrected ? CORRECTED_PREVIEW_INTERVAL_MS : 0,
     );
   } catch (error) {
     untrack();

@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { afterAll, afterEach, test } from '@rstest/core';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { streamCameraPreview } from '../src/server/camera-preview';
 import { type CameraEntry, useCameras } from '../src/ui/cameras';
 import { CameraRail } from '../src/ui/components/CameraRail';
 import { CameraStagePreview } from '../src/ui/components/CameraStagePreview';
@@ -178,4 +180,57 @@ test('a corrected preview is framed by the saved target instead of the camera fr
   const raw = render();
   assert.ok(!raw.includes('is-framed'));
   assert.ok(!raw.includes('--rv-preview-aspect'));
+});
+
+test('a connected corrected preview follows the camera frame rate', async () => {
+  const stream = new EventEmitter();
+  const response = Object.assign(new EventEmitter(), {
+    destroyed: false,
+    writableEnded: false,
+    frames: 0,
+    writeHead() {},
+    write(chunk: Buffer) {
+      if (chunk.toString('latin1').includes('Content-Type: image/jpeg'))
+        this.frames += 1;
+      return true;
+    },
+    end() {
+      this.writableEnded = true;
+    },
+    destroy() {
+      this.destroyed = true;
+      this.emit('close');
+    },
+  });
+  await streamCameraPreview(
+    response as never,
+    {
+      camera: {
+        stream,
+        camera: { id: 'camera' },
+        getRectifiedPreviewTarget: () => ({
+          width: 100,
+          height: 100,
+          rotation: 0,
+        }),
+        rectifiedFrame: async () => Buffer.from('jpeg'),
+      },
+    } as never,
+    true,
+    'client',
+    'test',
+  );
+  for (let index = 0; index < 15; index += 1) {
+    stream.emit('frame', {
+      jpeg: Buffer.from('frame'),
+      id: index,
+      capturedAt: Date.now(),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 16));
+  }
+  response.emit('close');
+  assert.ok(
+    response.frames >= 10,
+    `Expected an unthrottled corrected preview, received ${response.frames} frames`,
+  );
 });
