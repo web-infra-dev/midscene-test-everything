@@ -157,20 +157,20 @@ pnpm ios-hid:service uninstall
 
 设备 API 返回连接和占用状态，支持控制已在管理台连好的手机。控制会话绑定申请时的设备连接。连接关闭或连续 30 秒未收到心跳时，会话结束。手机重连后需重新申请会话。服务重启后需重新添加手机，可复用已保存校准。
 
-### 更新已发布的设备服务
+### 从 npm 安装和更新设备服务
 
-在运行服务的 Mac 上，使用发行版自带的 CLI：
+包发布到 npm 后，在接手机的 Mac 上运行：
 
 ```sh
+npm install -g @midscene/ios-hid-service@latest
+hid-service install
 hid-service update --check
 hid-service update
 ```
 
-升级命令按当前 Node 的架构下载 macOS 发行包，并对照 HTTPS 发布清单验证 SHA-256。新版先解包到独立目录，再检查是否有手机被占用。有占用时，请在 Playground 断开设备或释放 SDK 会话后重试。升级会把现有 LaunchAgent 切到新版，验证实际运行版本，启动失败时恢复原注册。端口、访问令牌、设备配置和校准数据会保留。重启后在管理台重新连接手机。升级进度记录在 `~/.midscene/ios-hid/service/update.log`。
+首次安装将 CLI 对应的 npm 版本放到 `~/.midscene/ios-hid/service/releases/`，后续升级查询 npm 的 `latest` 标签。全局命令会转发到 LaunchAgent 登记的版本，`hid-service help` 也会随之更新。`update --check` 只比较版本。升级保留端口、访问令牌、设备配置和校准数据。更新器切换前检查手机占用，启动后验证新版，失败则恢复原注册。重启后在管理台重新连接手机。升级进度记录在 `~/.midscene/ios-hid/service/update.log`。
 
-如果运行中的旧版不支持占用检查，请等手机空闲后手动停止服务，再用新版 CLI 执行升级。升级成功会启动原本已停止的服务。该命令仅升级已发布的版本，默认读取 GitHub Releases，也可用 `--manifest <https-url>` 指定可信的 HTTPS 镜像。
-
-发布时，在对应架构的 Mac 上运行 `pnpm build` 和 `pnpm ios-hid:release <version> <output-dir>`。把压缩包和对应的 `ios-hid-service-<arch>.json` 清单上传到同一个 GitHub Release。首次安装时，把压缩包解到持久目录，然后在该目录运行 `node dist/commands.js install`。也可在该目录用 `node dist/commands.js update` 执行升级。
+如果运行中的旧版不支持占用检查，请等手机空闲后手动停止服务，再重试更新。本地开发时，重新构建后用 `pnpm ios-hid:service stop` 和 `pnpm ios-hid:service start` 重启从该仓库安装的服务。
 
 ## 目录结构
 

@@ -3,9 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import { setTimeout } from 'node:timers/promises';
-import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import {
   directory,
@@ -35,12 +34,8 @@ function xml(value: string) {
   );
 }
 
-function launchAgent(port: number) {
-  const args = [
-    process.execPath,
-    fileURLToPath(new URL('./service-entry.js', import.meta.url)),
-    String(port),
-  ];
+function launchAgent(port: number, entry: string) {
+  const args = [process.execPath, entry, String(port)];
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -81,6 +76,21 @@ async function installedArguments() {
     plist,
   ]);
   return JSON.parse(stdout) as string[];
+}
+
+export async function installedCLI() {
+  const args = await installedArguments();
+  if (!args) return;
+  const entry = args[1];
+  if (
+    typeof entry !== 'string' ||
+    !isAbsolute(entry) ||
+    basename(entry) !== 'service-entry.js'
+  )
+    throw new Error(
+      'The device service registration has an invalid entry path.',
+    );
+  return join(dirname(entry), 'commands.js');
 }
 
 async function installedPort() {
@@ -159,6 +169,7 @@ export async function start() {
 export async function install(
   requestedPort: number | undefined,
   defaultPort: number,
+  resolveEntry: () => Promise<{ entry: string; version?: string }>,
 ) {
   const existing = await installedPort();
   if (existing !== undefined) {
@@ -171,14 +182,15 @@ export async function install(
 
   const port = requestedPort ?? defaultPort;
   await checkPort(port);
+  const { entry, version } = await resolveEntry();
   await ensureToken();
   await mkdir(launchAgents, { recursive: true });
-  await writeFile(plist, launchAgent(port), { mode: 0o600, flag: 'wx' });
+  await writeFile(plist, launchAgent(port, entry), { mode: 0o600, flag: 'wx' });
   let loaded = false;
   try {
     await exec('/bin/launchctl', ['bootstrap', domain, plist]);
     loaded = true;
-    await waitForHealth(port);
+    await waitForHealth(port, version);
     return port;
   } catch (error) {
     if (loaded) await stop();

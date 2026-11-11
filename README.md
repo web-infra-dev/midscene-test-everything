@@ -153,20 +153,20 @@ The service listens on `0.0.0.0:5801` by default. Open the local setup URL on th
 
 The public API reports availability and supports exclusive device control sessions for phones connected in the manager. A session controls the connection it was issued for. It ends when that connection closes or after 30 seconds without a heartbeat. After reconnecting the phone, request a new session. After restarting the service, add the phones again to reuse their saved calibration.
 
-### Updating a released device service
+### Installing and updating from npm
 
-On the service Mac, use the CLI from a released build:
+On the service Mac, once the package is published to npm:
 
 ```sh
+npm install -g @midscene/ios-hid-service@latest
+hid-service install
 hid-service update --check
 hid-service update
 ```
 
-The updater downloads the macOS release for the current Node architecture and verifies its SHA-256 against the HTTPS release manifest. It prepares the release before checking control sessions. If a phone is in use, disconnect it in Playground or release the SDK session and retry. The updater switches the existing LaunchAgent to the staged release, verifies the running version, and restores the previous registration if startup fails. It keeps the port, access token, device profiles, and calibration. Reconnect phones in the manager after the restart. Update progress is logged to `~/.midscene/ios-hid/service/update.log`.
+Initial installation stages the CLI’s npm version under `~/.midscene/ios-hid/service/releases/`. Subsequent updates look up the npm `latest` tag. The global command forwards to the CLI in the version registered with LaunchAgent, so `hid-service help` follows that version. `update --check` compares versions without staging or restarting the service. An update preserves the port, token, device profiles and calibration. It checks for active control sessions before switching, verifies the new service and restores the previous registration if startup fails. Reconnect phones in the manager after the restart. Update progress is logged to `~/.midscene/ios-hid/service/update.log`.
 
-If an older running service cannot check for active sessions, stop it manually once it is idle, then run the new CLI's update command. A stopped service is started on successful update. The command upgrades published releases only. The default channel uses GitHub Releases, and `--manifest <https-url>` selects a trusted HTTPS mirror.
-
-To prepare release assets, build on a Mac for each supported architecture using `pnpm build` and `pnpm ios-hid:release <version> <output-dir>`. Publish the archive and its `ios-hid-service-<arch>.json` manifest on the same GitHub release. For an initial install, unpack the archive into a persistent directory and run `node dist/commands.js install` from that directory. From the unpacked directory, `node dist/commands.js update` is equivalent to invoking the CLI by name.
+If an older running service cannot check for active sessions, stop it manually once it is idle and retry. For local development, rebuild the repository and use `pnpm ios-hid:service stop` and `pnpm ios-hid:service start` to reload a service installed from that checkout.
 
 ## Project Structure
 

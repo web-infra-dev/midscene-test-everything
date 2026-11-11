@@ -5,8 +5,8 @@
   "type": "module",
   "files": ["dist", "native"],
   "bin": {
-    "hid-service": "dist/commands.js",
-    "midscene-hid-service": "dist/commands.js"
+    "hid-service": "dist/launcher.js",
+    "midscene-hid-service": "dist/launcher.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && rsbuild build",
@@ -28,10 +28,12 @@
     "swagger-ui-dist": "^5.32.0",
     "@midscene/core": "1.17.5",
     "@midscene/shared": "1.17.5",
+    "pacote": "^21",
     "sharp": "^0.34.3",
     "zod": "3.25.76"
   },
   "devDependencies": {
+    "@types/pacote": "11.1.8",
     "@types/node": "^22.0.0",
     "typescript": "^5.8.3",
     "@rsbuild/core": "^1.6.15",
