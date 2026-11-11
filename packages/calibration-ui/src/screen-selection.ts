@@ -15,13 +15,3 @@ export function selectableScreens<T extends ScreenSelectionLike>(
 ): T[] {
   return screens.filter((screen) => screen.cameraId === cameraId);
 }
-
-/** Add Screen calibrates a draft target; it is not mounted until committed. */
-export function screensWithoutDraft<T extends { id: string }>(
-  screens: readonly T[],
-  draftId: string | undefined,
-): T[] {
-  return draftId
-    ? screens.filter((screen) => screen.id !== draftId)
-    : [...screens];
-}
