@@ -214,7 +214,6 @@ export class CalibrationHost {
         const cameraId = this.options.camera.camera.id;
         const tool = sharedCalibrationTool(
           store.list(),
-          cameraId,
           runtime.id,
           runtime.connectionIdentity,
         );

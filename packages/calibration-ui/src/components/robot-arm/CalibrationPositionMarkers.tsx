@@ -30,7 +30,6 @@ export function CalibrationPositionMarkers({
       return [];
     const outside =
       point.x < 0 || point.x >= width || point.y < 0 || point.y >= height;
-    if (outside && marker.kind === 'cameraBoundary') return [];
     return [{ ...marker, point, outside }];
   });
   const visible = Boolean(width && height && located.length);
@@ -61,23 +60,31 @@ export function CalibrationPositionMarkers({
     >
       {located.map(({ kind, label, color, point: p, outside }) => {
         const safe = kind === 'safe';
-        const right = outside || p.x > width / 2;
-        const labelX = outside
+        const atEdge = outside && kind === 'cameraBoundary';
+        const point = atEdge
+          ? {
+              x: Math.min(width - 10 * unit, Math.max(10 * unit, p.x)),
+              y: Math.min(height - 10 * unit, Math.max(10 * unit, p.y)),
+            }
+          : p;
+        const labelOnly = outside && !atEdge;
+        const right = labelOnly || point.x > width / 2;
+        const labelX = labelOnly
           ? width - 6 * unit
-          : p.x + (right ? -8 : 8) * unit;
-        const labelY = outside
+          : point.x + (right ? -8 : 8) * unit;
+        const labelY = labelOnly
           ? safe
             ? height - 7 * unit
             : 15 * unit
           : Math.min(
               height - 4 * unit,
-              Math.max(13 * unit, p.y + (safe ? 12 : -6) * unit),
+              Math.max(13 * unit, point.y + (safe ? 12 : -6) * unit),
             );
         return (
           <g key={kind} data-position={kind}>
-            {!outside && (
+            {!labelOnly && (
               <g
-                transform={`translate(${p.x} ${p.y}) scale(${unit})`}
+                transform={`translate(${point.x} ${point.y}) scale(${unit})`}
                 fill={color}
                 stroke="#152333"
                 strokeWidth="1.5"

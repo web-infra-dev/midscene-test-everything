@@ -19,6 +19,8 @@ const teachingBoundaryZh: Record<string, string> = {
   'The current position must clear the taught camera boundary by at least 20 mm.':
     '当前位置必须与已示教的相机边界保持至少 20 毫米的避让距离。',
   'Batch screens': '队列屏幕',
+  'Screen list refresh timed out': '屏幕状态刷新超时',
+  'Could not refresh the screen list': '暂时无法刷新屏幕状态',
   'Choose screens in calibration order': '按标定顺序选择屏幕',
   'Move screen up': '将屏幕前移',
   'Move screen down': '将屏幕后移',

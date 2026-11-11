@@ -51,27 +51,29 @@ import { backupPreviousFile, robotDataRoot } from '../storage/layout.js';
 
 export function sharedCalibrationTool(
   profiles: Pick<ProfileData, 'calibrationSetups' | 'robots' | 'screenTargets'>,
-  cameraId: string,
   adapterId: string,
   connectionIdentity: string,
 ): Pick<ProfileBinding, 'robotProfileId' | 'toolProfileId'> | undefined {
-  const candidates = profiles.calibrationSetups?.filter(
+  const matching = (profiles.calibrationSetups ?? []).filter((setup) =>
+    profiles.robots.some(
+      (robot) =>
+        robot.id === setup.robotProfileId &&
+        robot.adapterId === adapterId &&
+        robot.connectionIdentity === connectionIdentity,
+    ),
+  );
+  const active = matching.filter(
     (setup) =>
-      setup.cameraId === cameraId &&
       !profiles.screenTargets?.some(
         (target) => target.id === setup.deviceId && target.archived,
-      ) &&
-      profiles.robots.some(
-        (robot) =>
-          robot.id === setup.robotProfileId &&
-          robot.adapterId === adapterId &&
-          robot.connectionIdentity === connectionIdentity,
       ),
   );
-  const first = candidates?.[0];
+  // Retiring a screen does not retire the physical tool on the arm.
+  const candidates = active.length ? active : matching;
+  const first = candidates[0];
   if (
     first &&
-    candidates?.every(
+    candidates.every(
       (setup) =>
         setup.robotProfileId === first.robotProfileId &&
         setup.toolProfileId === first.toolProfileId,

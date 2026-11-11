@@ -12,6 +12,7 @@ import {
   type ToolPayload,
   type Workspace,
   assertToolPayload,
+  isRobotArmError,
 } from '../contracts.js';
 import { assertOrientation, assertPose, assertTarget } from '../domain.js';
 import type {
@@ -603,9 +604,17 @@ export class RobotDriverBoundary {
     );
     // Explicit SDK bounds retain their existing semantics. Workstation moves
     // have no user bounds and must recheck reachability before every submission.
-    if (!workspace) await this.preflightCartesian(kind, pose, options);
-    await this.assertCartesianFreedom(pose);
-    await this.assertReady();
+    try {
+      if (!workspace) await this.preflightCartesian(kind, pose, options);
+      await this.assertCartesianFreedom(pose);
+      await this.assertReady();
+    } catch (error) {
+      if (!isRobotArmError(error)) throw error;
+      throw new RobotArmError(error.code, error.message, error.status, {
+        ...error.details,
+        beforeMotionSubmission: true,
+      });
+    }
     if (generation !== this.generation)
       throw new RobotArmError(
         'ACTION_STOPPED',

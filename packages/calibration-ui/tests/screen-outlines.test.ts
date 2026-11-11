@@ -79,23 +79,28 @@ it.each([
   { x: 640, y: 100 },
   { x: 100, y: 480 },
   { x: 100, y: -1 },
-])('omits a boundary beyond the camera frame', (cameraBoundary) => {
-  const html = renderToStaticMarkup(
-    createElement(ScreenOutlines, {
-      outlines: [
-        {
-          id: 'phone',
-          name: '',
-          correction,
-          previewPositions: { cameraBoundary },
-        },
-      ],
-    }),
-  );
-  expect(html).not.toContain('相机侧边界');
-  expect(html).not.toContain('画面外');
-  expect(html).not.toContain('calibration-position-markers');
-});
+])(
+  'labels a boundary beyond the camera frame at the edge',
+  (cameraBoundary) => {
+    const html = renderToStaticMarkup(
+      createElement(ScreenOutlines, {
+        outlines: [
+          {
+            id: 'phone',
+            name: '',
+            correction,
+            previewPositions: { cameraBoundary },
+          },
+        ],
+      }),
+    );
+    expect(html).toContain('相机侧边界 · 画面外');
+    expect(html).toContain('calibration-position-markers');
+    expect(html).not.toContain(
+      `translate(${cameraBoundary.x} ${cameraBoundary.y})`,
+    );
+  },
+);
 
 it('centers the screen name on the calibrated top edge, even on the side', () => {
   expect(

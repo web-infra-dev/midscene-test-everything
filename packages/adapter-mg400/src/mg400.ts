@@ -2485,6 +2485,7 @@ export class Mg400Adapter implements RobotArmAdapter {
       throw new RobotArmError('BUSY', 'MG400 has an outstanding motion', 409);
     this.active = true;
     const generation = this.generation;
+    let dispatchAttempted = false;
     try {
       // Fresh on purpose: dispatching a motion is a physical go/no-go decision,
       // so it must not be taken from a bounded sample that may predate a fault.
@@ -2523,6 +2524,7 @@ export class Mg400Adapter implements RobotArmAdapter {
       this.invalidateStateSample();
       this.lastCommandAt = Date.now();
       const submittedAt = this.lastCommandAt;
+      dispatchAttempted = true;
       await this.motion.send(command);
       const terminal = (async (): Promise<MotionResult> => {
         try {
@@ -2637,6 +2639,11 @@ export class Mg400Adapter implements RobotArmAdapter {
       return createMotionHandle(randomUUID(), terminal);
     } catch (e) {
       this.active = false;
+      if (!dispatchAttempted && isRobotArmError(e))
+        throw new RobotArmError(e.code, e.message, e.status, {
+          ...e.details,
+          beforeMotionSubmission: true,
+        });
       throw e;
     }
   }

@@ -145,6 +145,49 @@ const JOG_RELEASE_COOLDOWN_MS = 250;
 /** How often a failed jog release is retried before a real stop is issued. */
 const JOG_RETRY_MS = 400;
 const JOG_STOP_ATTEMPTS = 3;
+/**
+ * How long a pre-motion gate waits for controller feedback that a reset channel
+ * invalidated. A socket reset loses the evidence, not the controller's payload
+ * configuration: the adapter re-reads that load and re-confirms it as soon as the
+ * channels are back. Waiting here keeps a brief gap from failing a run while
+ * still refusing every command until the saved payload is confirmed again.
+ */
+const PAYLOAD_RECONFIRM_TIMEOUT_MS = 3000;
+/** Poll interval while waiting for that re-confirmation. */
+const PAYLOAD_RECONFIRM_POLL_MS = 100;
+/** Evidence the adapter rebuilds from the controller without any operator action. */
+const RECONFIRMABLE_PAYLOAD_REASONS = [
+  'connection-lost',
+  'readback-unavailable',
+  'disconnected',
+  'state-unavailable',
+  'controller-restarted',
+];
+function payloadApplicationOf(error: RobotArmError) {
+  return error.details?.payloadApplication as
+    | PayloadApplicationState
+    | undefined;
+}
+/** The saved payload is unconfirmed only because controller evidence was lost. */
+function payloadEvidenceGap(error: RobotArmError) {
+  return (
+    error.code === 'TOOL_PAYLOAD_NOT_APPLIED' &&
+    RECONFIRMABLE_PAYLOAD_REASONS.includes(
+      payloadApplicationOf(error)?.reason ?? '',
+    )
+  );
+}
+/** Feedback a reconnect repairs without an operator stop or recovery. */
+function isTransientFeedbackLoss(error: RobotArmError) {
+  return (
+    [
+      'DISCONNECTED',
+      'QUERY_INTERRUPTED',
+      'STATE_STALE',
+      'STATE_UNAVAILABLE',
+    ].includes(error.code) || payloadEvidenceGap(error)
+  );
+}
 function captureMotion(
   options?: Pick<MotionOptions, 'speed' | 'acceleration'>,
 ): MotionOptions {
@@ -259,31 +302,22 @@ export class RobotArmRuntime extends RobotKernel {
           'Automatic collection context changed',
           409,
         );
-      this.assertAppliedPayload(tool);
+      try {
+        this.assertAppliedPayload(tool);
+      } catch (error) {
+        // A reset channel drops the evidence, not the configuration. This check
+        // runs between commands, so it must not fail an attempt that the next
+        // dispatch gate will re-confirm; a changed payload still throws here.
+        if (!isRobotArmError(error) || !payloadEvidenceGap(error)) throw error;
+      }
     };
     let recheckingPayload = false;
-    const isTransientFeedbackLoss = (error: RobotArmError) => {
-      if (
-        ['DISCONNECTED', 'STATE_STALE', 'STATE_UNAVAILABLE'].includes(
-          error.code,
-        )
-      )
-        return true;
-      const payload = error.details?.payloadApplication as
-        | PayloadApplicationState
-        | undefined;
-      return (
-        error.code === 'TOOL_PAYLOAD_NOT_APPLIED' &&
-        ['connection-lost', 'readback-unavailable'].includes(
-          payload?.reason ?? '',
-        )
-      );
-    };
     const setPayloadRecheck = (waiting: boolean) => {
       if (recheckingPayload === waiting) return;
       recheckingPayload = waiting;
       input.onPayloadRecheck?.(waiting);
     };
+    let marked = false;
     try {
       const host: Parameters<typeof work>[0] = {
         signal,
@@ -307,7 +341,7 @@ export class RobotArmRuntime extends RobotKernel {
         },
         read: async () => {
           check();
-          await this.ready(tool);
+          await this.ready(tool, setPayloadRecheck);
           const pose = await this.adapter.getPose();
           assertPose(pose);
           check();
@@ -320,7 +354,7 @@ export class RobotArmRuntime extends RobotKernel {
             if (!submitted) probeOptions?.beforeSubmit?.();
           };
           checkSubmission();
-          await this.ready(tool);
+          await this.ready(tool, setPayloadRecheck);
           assertPose(pose);
           const teaching =
             input.cameraId &&
@@ -338,24 +372,40 @@ export class RobotArmRuntime extends RobotKernel {
             robot.workspace,
           );
           checkSubmission();
-          await this.motionExecutor.move(
-            pose,
-            robot.workspace,
-            options,
-            probeOptions?.timeoutMs ?? 120000,
-            {
-              check: checkSubmission,
-              signal,
-              accepting: (promise) => {
-                this.accepting = promise;
+          const previousMotionSubmitted = this.motionSubmitted;
+          try {
+            await this.motionExecutor.move(
+              pose,
+              robot.workspace,
+              options,
+              probeOptions?.timeoutMs ?? 120000,
+              {
+                check: checkSubmission,
+                signal,
+                accepting: (promise) => {
+                  this.accepting = promise;
+                  if (recheckingPayload)
+                    void promise?.then(
+                      () => setPayloadRecheck(false),
+                      () => undefined,
+                    );
+                },
+                submitted: () => {
+                  submitted = true;
+                  this.motionSubmitted = true;
+                },
               },
-              submitted: () => {
-                submitted = true;
-                this.motionSubmitted = true;
-                setPayloadRecheck(false);
-              },
-            },
-          );
+            );
+          } catch (error) {
+            // A failed acceptance is ambiguous unless the driver confirms it
+            // never reached the motion channel. Preserve any earlier motion.
+            if (
+              isRobotArmError(error) &&
+              error.details?.beforeMotionSubmission === true
+            )
+              this.motionSubmitted = previousMotionSubmitted;
+            throw error;
+          }
           const actual = await this.motionExecutor.stable(
             pose,
             5000,
@@ -378,11 +428,10 @@ export class RobotArmRuntime extends RobotKernel {
       const collect = async () => {
         let deadline: number | undefined;
         let interrupted: RobotArmError | undefined;
-        let marked = false;
         try {
           while (true) {
             try {
-              await this.ready(tool);
+              await this.ready(tool, setPayloadRecheck);
               check();
               if (
                 interrupted &&
@@ -410,7 +459,7 @@ export class RobotArmRuntime extends RobotKernel {
                 throw error;
               if (deadline === undefined) {
                 interrupted = error;
-                deadline = performance.now() + 3000;
+                deadline = performance.now() + PAYLOAD_RECONFIRM_TIMEOUT_MS;
                 setPayloadRecheck(true);
               }
               const remaining = deadline - performance.now();
@@ -421,7 +470,7 @@ export class RobotArmRuntime extends RobotKernel {
                   error.status,
                   error.details,
                 );
-              await this.hold(Math.min(150, remaining));
+              await this.hold(Math.min(PAYLOAD_RECONFIRM_POLL_MS, remaining));
             }
           }
         } finally {
@@ -438,21 +487,30 @@ export class RobotArmRuntime extends RobotKernel {
     } catch (error) {
       if (this.operation?.requestId === operationId && this.leased) {
         if (!signal.aborted) {
-          const disconnected =
-            !calibrationSessionId &&
-            isRobotArmError(error) &&
-            error.code === 'DISCONNECTED';
-          if (disconnected) this.requireRecovery('socket-disconnect');
-          else if (
-            input.onPayloadRecheck &&
-            this.motionSubmitted &&
-            isRobotArmError(error) &&
-            isTransientFeedbackLoss(error)
-          )
-            this.requireRecovery('interruption');
-          await this.controlledStop(
-            disconnected && !this.motionSubmitted,
-          ).catch(() => undefined);
+          if (!calibrationSessionId && !this.motionSubmitted) {
+            if (marked)
+              await this.profileStore.clearOperation(operationId).catch(() => {
+                this.requireRecovery('interruption');
+              });
+          } else {
+            const disconnected =
+              !calibrationSessionId &&
+              isRobotArmError(error) &&
+              error.code === 'DISCONNECTED';
+            if (disconnected) this.requireRecovery('socket-disconnect');
+            else if (
+              input.onPayloadRecheck &&
+              this.motionSubmitted &&
+              isRobotArmError(error) &&
+              isTransientFeedbackLoss(error) &&
+              // An evidence gap is a configuration precondition, not an
+              // interruption: no command was travelling when it was reported,
+              // so recovering the controller would only cost the operator a stop.
+              !payloadEvidenceGap(error)
+            )
+              this.requireRecovery('interruption');
+            await this.controlledStop().catch(() => undefined);
+          }
         } else await this.stopPromise;
         if (this.operation?.requestId === operationId)
           this.release(signal.aborted ? 'stopped' : 'failed', error);
@@ -504,7 +562,13 @@ export class RobotArmRuntime extends RobotKernel {
           'Robot or tool geometry changed',
           409,
         );
-      this.assertAppliedPayload(tool);
+      try {
+        this.assertAppliedPayload(tool);
+      } catch (error) {
+        // Same rule as automatic collection: evidence a reset channel dropped is
+        // re-confirmed before the next command, while a changed payload throws.
+        if (!isRobotArmError(error) || !payloadEvidenceGap(error)) throw error;
+      }
     };
     try {
       await this.ready(tool);
@@ -819,7 +883,7 @@ export class RobotArmRuntime extends RobotKernel {
   ) {
     if (!this.adapter.resolver.descriptor('motion.linear-sequence'))
       return undefined;
-    this.assertAppliedPayload(ctx.tool);
+    await this.confirmAppliedPayload(ctx.tool);
     this.check();
     await this.profileStore.markOperation(
       this.operation!.requestId,
@@ -962,6 +1026,7 @@ export class RobotArmRuntime extends RobotKernel {
       this.recordPayloadEvidence();
       if (state.moving || state.dragMode || state.paused || state.faults.length)
         this.recoveryRequired = true;
+      await this.preflightConnection(state);
     } catch (error) {
       // A failed startup connect or read leaves the controller unconfirmed, so
       // setup must not treat it as untouched. Unlike a steady-state read
@@ -969,6 +1034,48 @@ export class RobotArmRuntime extends RobotKernel {
       // Connect itself stays available for a later retry.
       this.recoveryRequired = true;
       throw error;
+    }
+  }
+  /**
+   * Check motion preconditions when the service connects, not when the first
+   * calibration command needs them. An operator can spend minutes configuring
+   * screens between connecting and starting a batch; discovering an unconfirmed
+   * payload only then costs a stopped queue and a manual recovery. This read is
+   * non-fatal and writes nothing: the controller's reported load is adopted when
+   * it is available, and an unconfirmed payload stays visible as pending.
+   */
+  private async preflightConnection(state: RobotState): Promise<void> {
+    if (!this.describeCapabilities().payload) return;
+    const id = randomUUID();
+    const detail: Record<string, unknown> = {
+      control: 'connection-preflight',
+      enabled: state.enabled,
+      moving: state.moving,
+      dragMode: state.dragMode,
+      faults: state.faults.length,
+      recoveryRequired: this.recoveryRequired,
+    };
+    try {
+      detail.payload = this.payloadState(undefined, state);
+      const toolProfileId = this.profileStore.list().workstation?.toolProfileId;
+      if (
+        toolProfileId &&
+        state.enabled &&
+        !state.moving &&
+        !state.dragMode &&
+        !state.paused &&
+        !state.faults.length
+      )
+        await this.confirmAppliedPayload(
+          this.profileStore.getTool(toolProfileId),
+        );
+      detail.result = 'checked';
+      this.audit('control', id, 'completed', detail);
+    } catch (error) {
+      // Startup must not fail because configuration needs the operator: the
+      // pending payload is reported instead, and every motion still waits for it.
+      detail.result = 'pending';
+      this.audit('control', id, 'completed', detail, error);
     }
   }
   describeCapabilities() {
@@ -1073,21 +1180,80 @@ export class RobotArmRuntime extends RobotKernel {
         : undefined,
     };
   }
-  private async ready(tool?: ToolProfile): Promise<void> {
+  /**
+   * Pre-motion gate. It re-reads the controller while a reset channel has left
+   * readiness or payload evidence unconfirmed, so a brief reconnect neither
+   * fails a run nor lets a command out on unconfirmed configuration. Returning
+   * without a confirmed payload remains impossible: the last error is thrown
+   * once the bounded re-confirmation window expires.
+   */
+  private async ready(
+    tool?: ToolProfile,
+    onWait?: (waiting: boolean) => void,
+  ): Promise<void> {
     if (this.softwarePaused)
       throw new RobotArmError(
         'ROBOT_PAUSED',
         'Resume and perform recovery check before reissuing motion',
         409,
       );
-    await this.adapter.assertReady();
-    if (tool) this.assertAppliedPayload(tool);
-    else if (!this.payloadCurrent())
-      throw new RobotArmError(
-        'TOOL_PAYLOAD_NOT_APPLIED',
-        'Enable with the current saved tool payload before motion.',
-        409,
-      );
+    const deadline = performance.now() + PAYLOAD_RECONFIRM_TIMEOUT_MS;
+    let waiting = false;
+    try {
+      while (true) {
+        try {
+          await this.adapter.assertReady();
+          if (tool) this.assertAppliedPayload(tool);
+          else if (!this.payloadCurrent())
+            throw new RobotArmError(
+              'TOOL_PAYLOAD_NOT_APPLIED',
+              'Enable with the current saved tool payload before motion.',
+              409,
+            );
+          return;
+        } catch (error) {
+          if (
+            !isRobotArmError(error) ||
+            !isTransientFeedbackLoss(error) ||
+            performance.now() >= deadline
+          )
+            throw error;
+          if (!waiting) {
+            waiting = true;
+            onWait?.(true);
+          }
+        }
+        this.check();
+        // A fresh sample is what re-adopts the controller's reported load after
+        // a reconnect; the profile is never assumed to still be in force.
+        await this.adapter.getState(true).catch(() => undefined);
+        this.check();
+        await this.hold(PAYLOAD_RECONFIRM_POLL_MS);
+      }
+    } finally {
+      if (waiting) onWait?.(false);
+    }
+  }
+  /** Admission check that absorbs the same transient evidence gap as `ready`. */
+  private async confirmAppliedPayload(tool: ToolProfile): Promise<void> {
+    const deadline = performance.now() + PAYLOAD_RECONFIRM_TIMEOUT_MS;
+    while (true) {
+      try {
+        this.assertAppliedPayload(tool);
+        return;
+      } catch (error) {
+        if (
+          !isRobotArmError(error) ||
+          !payloadEvidenceGap(error) ||
+          performance.now() >= deadline
+        )
+          throw error;
+      }
+      this.check();
+      await this.adapter.getState(true).catch(() => undefined);
+      this.check();
+      await this.hold(PAYLOAD_RECONFIRM_POLL_MS);
+    }
   }
   private payloadCurrent() {
     return ['not-required', 'applied'].includes(this.payloadState().status);
@@ -1113,7 +1279,7 @@ export class RobotArmRuntime extends RobotKernel {
         409,
         { reasons: readiness?.reasons },
       );
-    this.assertAppliedPayload(tool, snapshot.state);
+    await this.confirmAppliedPayload(tool);
     return pose;
   }
   async readiness() {
@@ -1260,7 +1426,7 @@ export class RobotArmRuntime extends RobotKernel {
     targets: MotionTarget[],
     ctx: Context,
   ): Promise<void> {
-    this.assertAppliedPayload(ctx.tool);
+    await this.confirmAppliedPayload(ctx.tool);
     for (const target of targets) {
       this.check();
       try {
@@ -1292,7 +1458,7 @@ export class RobotArmRuntime extends RobotKernel {
     acceleration = ctx.screen.actionAcceleration,
     contact?: ContactMoveOptions,
   ): Promise<MotionResult> {
-    this.assertAppliedPayload(ctx.tool);
+    await this.confirmAppliedPayload(ctx.tool);
     await this.ready();
     this.check();
     this.target(p, ctx);
@@ -2714,7 +2880,10 @@ export class RobotArmRuntime extends RobotKernel {
           await this.adapter[type]();
           if (type === 'connect') this.connectionEstablished = true;
         }
-        if (type !== 'disconnect') await this.adapter.getState();
+        if (type !== 'disconnect') {
+          const state = await this.adapter.getState();
+          if (type === 'connect') await this.preflightConnection(state);
+        }
       }, type !== 'enable'),
     );
   }

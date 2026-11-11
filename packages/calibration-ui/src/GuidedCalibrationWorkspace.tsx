@@ -165,6 +165,7 @@ function GuidedContent({
     [],
   );
   const [states, setStates] = useState<WorkstationScreenState[]>([]);
+  const [screenListError, setScreenListError] = useState<string>();
   const [error, setError] = useState<string>();
   const [mappingError, setMappingError] = useState<string>();
   const [singleFailure, setSingleFailure] = useState<SingleStatus>();
@@ -557,36 +558,80 @@ function GuidedContent({
       clearTimeout(timer);
     };
   }, [base, cameraId, refresh, selectedId]);
+  const current = batch?.items[batch.currentIndex];
+  const awaitingBatchPhone =
+    batch?.status === 'waiting' &&
+    (current?.status === 'awaiting-phone' ||
+      current?.status === 'awaiting-mapping');
+  const waitingForScreen =
+    (phonesOpen && !phoneConnected) ||
+    states.some(
+      (state) =>
+        state.cameraId === cameraId &&
+        state.screenId === selectedId &&
+        state.status === 'mapping-required',
+    );
+  const screenListInterval = awaitingBatchPhone
+    ? 1500
+    : batchActive || singleBusy
+      ? undefined
+      : waitingForScreen
+        ? 1500
+        : 10_000;
   useEffect(() => {
-    if (step !== 3) return;
+    setScreenListError(undefined);
+    if (step !== 3 || screenListInterval === undefined) return;
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
+    let pending = false;
+    let failures = 0;
     const poll = async () => {
-      const signal = AbortSignal.any([
-        abort.signal,
-        AbortSignal.timeout(15000),
-      ]);
+      clearTimeout(timer);
+      if (abort.signal.aborted || document.hidden || pending) return;
+      pending = true;
       try {
-        const nextStates = await batchClient.screens(signal);
-        if (!abort.signal.aborted) setStates(nextStates);
+        const nextStates = await batchClient.screens(abort.signal);
+        if (!abort.signal.aborted) {
+          failures = 0;
+          setStates(nextStates);
+          setScreenListError(undefined);
+        }
       } catch (cause) {
-        if (!abort.signal.aborted)
-          setError(cause instanceof Error ? cause.message : String(cause));
+        if (!abort.signal.aborted && ++failures >= 2)
+          setScreenListError(
+            cause instanceof Error && cause.name === 'TimeoutError'
+              ? 'Screen list refresh timed out'
+              : 'Could not refresh the screen list',
+          );
       } finally {
-        if (!abort.signal.aborted) timer = setTimeout(() => void poll(), 1500);
+        pending = false;
+        if (!abort.signal.aborted && !document.hidden)
+          timer = setTimeout(refreshScreenList, screenListInterval);
       }
     };
-    void poll();
+    const refreshScreenList = () => void poll();
+    refreshScreenList();
+    window.addEventListener('focus', refreshScreenList);
+    document.addEventListener('visibilitychange', refreshScreenList);
     return () => {
       abort.abort();
       clearTimeout(timer);
+      window.removeEventListener('focus', refreshScreenList);
+      document.removeEventListener('visibilitychange', refreshScreenList);
     };
-  }, [batchClient, step]);
+  }, [
+    batchClient,
+    step,
+    selectedId,
+    screenListInterval,
+    batch?.status,
+    phoneConnected,
+    config?.mappingReady,
+  ]);
   const markerKey = useMemo(
     () => ({ id: cameraId, deviceId: cameraId }),
     [cameraId],
   );
-  const current = batch?.items[batch.currentIndex];
   const activeId = batchActive && current ? current.deviceId : selectedId;
   useEffect(() => onScreenChange?.(activeId), [activeId, onScreenChange]);
   const activeScreen = screens.find((screen) => screen.id === activeId);
@@ -1082,6 +1127,9 @@ function GuidedContent({
               />
             )}
             {loadError && <Alert type="error" showIcon message={loadError} />}
+            {screenListError && (
+              <Alert type="warning" showIcon message={t(screenListError)} />
+            )}
             {!config ? (
               !loadError && <Spin />
             ) : (

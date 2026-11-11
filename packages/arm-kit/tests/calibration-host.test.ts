@@ -65,6 +65,33 @@ it('prepares first-time measured setup without inventing tool geometry or replac
     });
     expect(f.store.deviceBinding('new-device')).toBeUndefined();
     await reopened.close();
+
+    await f.store.saveScreenTarget({
+      id: 'new-device',
+      name: 'Previous screen',
+      cameraId: camera.camera.id,
+    });
+    await f.store.archiveScreenTarget('new-device');
+    await f.store.load();
+    const replacement = new CalibrationHost({
+      arm,
+      camera: {
+        ...camera,
+        camera: { ...camera.camera, id: 'replacement-camera' },
+      },
+      deviceId: 'replacement-screen',
+    });
+    try {
+      await replacement.prepare();
+      const replacementConfig = await replacement.configuration();
+      expect(replacementConfig.input?.cameraId).toBe('replacement-camera');
+      expect(replacementConfig.measuredSetup?.tool).toEqual(
+        restored.measuredSetup?.tool,
+      );
+      expect(f.store.deviceBinding('replacement-screen')).toBeUndefined();
+    } finally {
+      await replacement.close();
+    }
     const post = async (body: unknown, path = 'enable') => {
       const req = Readable.from([JSON.stringify(body)]) as IncomingMessage;
       req.method = 'POST';

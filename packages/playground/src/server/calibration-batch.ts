@@ -369,52 +369,50 @@ export class CalibrationBatch {
       state.contextVersion = this.contextVersion(state.cameraId!);
     });
   }
-  async screens(cameraId: string): Promise<WorkstationScreenState[]> {
-    if (
-      !this.runtime.profileStore
-        .list()
-        .calibrationSetups?.some((s) => s.cameraId === cameraId)
-    )
-      return [];
+  screens(cameraId: string): WorkstationScreenState[] {
+    const setups = (
+      this.runtime.profileStore.list().calibrationSetups ?? []
+    ).filter((setup) => setup.cameraId === cameraId);
+    if (!setups.length) return [];
     const entries = this.entries(cameraId);
     const estimates = this.estimates(cameraId);
-    return Promise.all(
-      entries.map(async (e) => {
-        const host = await this.devices.ensureHost(e.target.id);
-        const setup = host.service.setup();
-        const quad =
-          e.calibration && e.screen && calibrationQuad(e.calibration, e.screen);
-        const center = quad
-          ? quadCenter(quad)
-          : estimates.get(e.target.id)?.center;
-        return {
-          cameraId,
-          screenId: e.target.id,
-          name: e.target.name,
-          screenProfileId: e.screen?.id,
-          calibrationProfileId: e.calibration?.id,
-          selected: false,
-          ready: Boolean(
-            calibrationAccepted(e.calibration) &&
-              setup.mapping &&
-              setup.phoneConnected,
-          ),
-          status: !setup.prepared
-            ? 'unconfigured'
-            : !setup.phoneConnected || !setup.mapping
-              ? 'mapping-required'
-              : calibrationAccepted(e.calibration)
-                ? 'ready'
-                : 'calibration-required',
-          expectedCenterMm: center,
-          expectedSource: quad
-            ? 'calibration'
-            : center
-              ? 'estimate'
-              : undefined,
-        };
-      }),
-    );
+    return entries.map((e) => {
+      const setup = this.devices.entries
+        .get(e.target.id)
+        ?.host?.service.setup();
+      const prepared =
+        setup?.prepared ??
+        Boolean(
+          e.binding || setups.some((saved) => saved.deviceId === e.target.id),
+        );
+      const quad =
+        e.calibration && e.screen && calibrationQuad(e.calibration, e.screen);
+      const center = quad
+        ? quadCenter(quad)
+        : estimates.get(e.target.id)?.center;
+      return {
+        cameraId,
+        screenId: e.target.id,
+        name: e.target.name,
+        screenProfileId: e.screen?.id,
+        calibrationProfileId: e.calibration?.id,
+        selected: false,
+        ready: Boolean(
+          calibrationAccepted(e.calibration) &&
+            setup?.mapping &&
+            setup.phoneConnected,
+        ),
+        status: !prepared
+          ? 'unconfigured'
+          : !setup?.phoneConnected || !setup.mapping
+            ? 'mapping-required'
+            : calibrationAccepted(e.calibration)
+              ? 'ready'
+              : 'calibration-required',
+        expectedCenterMm: center,
+        expectedSource: quad ? 'calibration' : center ? 'estimate' : undefined,
+      };
+    });
   }
   async plan(cameraId: string): Promise<CalibrationBatchPlan> {
     if (this.task || this.stopping || this.busy)

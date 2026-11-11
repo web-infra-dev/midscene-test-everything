@@ -15,6 +15,7 @@ function openPhone(
   fullscreenApi = false,
   rejectPrimaryLock = false,
   orientationApi: 'standard' | 'legacy' | 'none' = 'standard',
+  userAgent = ios ? 'iPhone' : 'Android',
 ) {
   const updates: CalibrationPageUpdate[] = [];
   const listeners = new Map<string, (event?: unknown) => void>();
@@ -126,7 +127,7 @@ function openPhone(
         reloaded = true;
       },
     },
-    navigator: { language: 'en', userAgent: ios ? 'iPhone' : 'Android' },
+    navigator: { language: 'en', userAgent },
     innerWidth: 390,
     innerHeight: height,
     visualViewport: viewport,
@@ -338,6 +339,40 @@ test('Android reports the displayed view and visibility when switching away and 
   expect(phone.last()).toMatchObject({ view: 'touch-preview', visible: true });
   phone.receive({ view: 'waiting', anchors: [] });
   expect(phone.last()).toMatchObject({ view: 'waiting', visible: true });
+});
+
+test('HarmonyOS compensates the top status bar without using touch coordinates', () => {
+  const phone = openPhone(
+    824,
+    0,
+    0,
+    false,
+    false,
+    false,
+    'standard',
+    'OpenHarmony ArkWeb',
+  );
+  phone.scope.window.screen.width = 390 * 3;
+  phone.scope.window.screen.height = 844 * 3;
+  phone.receive({ view: 'markers', markerRequest: 'markers-1' });
+  phone.paint();
+  expect(phone.last()).toMatchObject({
+    fullscreen: true,
+    markersPainted: true,
+    layout: { topInset: 20, screen: { width: 390, height: 844 } },
+  });
+  phone.tap(0);
+  expect(phone.last()).toMatchObject({
+    markersPainted: true,
+    layout: { topInset: 20 },
+  });
+  phone.scope.innerHeight = 820;
+  phone.resize();
+  phone.paint();
+  expect(phone.last()).toMatchObject({
+    markersPainted: true,
+    layout: { topInset: 24 },
+  });
 });
 
 test('Android waits for the phone button before requesting browser fullscreen', async () => {

@@ -1,8 +1,53 @@
 import { expect, it, rstest } from '@rstest/core';
 import { assertCameraBoundary } from '../src/application/teaching-constraints.js';
-import type { InstallationTeaching } from '../src/contracts.js';
+import { type InstallationTeaching, RobotArmError } from '../src/contracts.js';
+import { RobotDriverBoundary } from '../src/kernel/driver-boundary.js';
 import { ProfileStore } from '../src/runtime/profile-store.js';
 import { fixture, pose } from './fixtures.js';
+
+it('rebuilds the calibration approach after a disconnect known to precede dispatch', async () => {
+  const f = await fixture();
+  const move = rstest
+    .spyOn(RobotDriverBoundary.prototype, 'moveLinear')
+    .mockRejectedValueOnce(
+      new RobotArmError(
+        'DISCONNECTED',
+        'Motion channel dropped before dispatch',
+        503,
+        {
+          beforeMotionSubmission: true,
+        },
+      ),
+    );
+  const rechecking: boolean[] = [];
+  const collect = rstest.fn(
+    async (
+      host: Parameters<
+        Parameters<typeof f.runtime.collectAutomaticPoints>[1]
+      >[0],
+    ) => {
+      await host.read();
+      await host.move(pose(110, -50, 100));
+    },
+  );
+  try {
+    await f.runtime.collectAutomaticPoints(
+      {
+        ...f.binding,
+        onPayloadRecheck: (waiting) => rechecking.push(waiting),
+      },
+      collect,
+    );
+    expect(collect).toHaveBeenCalledTimes(2);
+    expect(rechecking).toEqual([true, false]);
+    expect(f.adapter.movements).toEqual([pose(110, -50, 100)]);
+    expect((await f.runtime.state()).recoveryRequired).toBe(false);
+    expect(f.store.list().pendingOperation).toBeUndefined();
+  } finally {
+    move.mockRestore();
+    await f.cleanup();
+  }
+});
 
 it('returns from boundary readback noise without commanding a point across the plane, and uses configured motion for both taught positions', async () => {
   const f = await fixture();

@@ -61,12 +61,7 @@ export class StatusPanel {
       calibration ??
       measured ??
       profiles.devices?.find((item) => item.deviceId === cameraId) ??
-      sharedCalibrationTool(
-        profiles,
-        physicalCameraId,
-        arm.id,
-        arm.connectionIdentity,
-      ) ??
+      sharedCalibrationTool(profiles, arm.id, arm.connectionIdentity) ??
       profiles.devices?.find((item) => item.cameraId === cameraId) ??
       (profiles.workstation?.cameraId === cameraId
         ? profiles.workstation

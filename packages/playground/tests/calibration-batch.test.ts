@@ -157,6 +157,26 @@ async function setup() {
     entries,
   };
 }
+it('reads saved screen status without opening a calibration host', async () => {
+  const f = await setup();
+  f.entries.get('one').host = undefined;
+  const ensureHost = rstest.spyOn(f.devices, 'ensureHost');
+  try {
+    expect(f.batch.screens('cam')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          screenId: 'one',
+          ready: false,
+          status: 'mapping-required',
+        }),
+      ]),
+    );
+    expect(ensureHost).not.toHaveBeenCalled();
+  } finally {
+    ensureHost.mockRestore();
+  }
+});
+
 it('rejects an unconfirmed tool payload before creating a batch or starting sampling', async () => {
   const f = await setup();
   const check = rstest

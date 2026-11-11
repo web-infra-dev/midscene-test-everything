@@ -386,12 +386,39 @@ export function mountCalibrationPhonePage(
     // the reported physical screen and fail the bounds check.
     const portrait = innerHeight >= innerWidth;
     const dimensions = [display.width, display.height];
-    const screen = {
-      width: portrait ? Math.min(...dimensions) : Math.max(...dimensions),
-      height: portrait ? Math.max(...dimensions) : Math.min(...dimensions),
-      devicePixelRatio: window.devicePixelRatio,
+    const ratio = window.devicePixelRatio;
+    const screenDimension = (reported: number, viewport: number) => {
+      if (platform !== 'harmonyos') return reported;
+      // ArkWeb can report screen dimensions in device pixels.
+      const css = reported / ratio;
+      return Math.abs(css - viewport) < Math.abs(reported - viewport)
+        ? css
+        : reported;
     };
-    const topInset = iosTopInset(screen.height - innerHeight);
+    const screen = {
+      width: screenDimension(
+        portrait ? Math.min(...dimensions) : Math.max(...dimensions),
+        innerWidth,
+      ),
+      height: screenDimension(
+        portrait ? Math.max(...dimensions) : Math.min(...dimensions),
+        innerHeight,
+      ),
+      devicePixelRatio: ratio,
+    };
+    const gap = screen.height - innerHeight;
+    let topInset = iosTopInset(gap);
+    if (
+      platform === 'harmonyos' &&
+      fullscreenReady() &&
+      (visualViewport?.scale ?? 1) === 1 &&
+      gap > 3
+    ) {
+      // The HarmonyOS page sits below the retained status bar. ArkWeb can
+      // echo clientY as screenY, so taps are not reliable viewport origins.
+      topInset = gap;
+      insetReason = 'harmonyos-top-chrome';
+    }
     const value = {
       width: innerWidth,
       height: innerHeight,
