@@ -84,16 +84,31 @@ export class PlaygroundDevices {
     const defaults = [...this.entries]
       .filter(([id, e]) => id === e.cameraId && !saved.some((s) => s.id === id))
       .map(([id, e]) => ({ id, cameraId: id, name: e.camera.camera.name }));
-    return [...defaults, ...saved.filter((t) => !t.archived)].map((target) => {
+    const targets: {
+      id: string;
+      cameraId: string;
+      name: string;
+      pageKey?: string;
+      markerSlot?: number;
+    }[] = [...defaults, ...saved.filter((t) => !t.archived)];
+    return targets.map((target) => {
       const entry = this.entries.get(target.id);
       const camera = entry?.camera;
       const correction = camera?.getCorrection();
       return {
-        ...target,
+        id: target.id,
+        cameraId: target.cameraId,
+        name: target.name,
+        ...(target.pageKey !== undefined ? { pageKey: target.pageKey } : {}),
+        ...(target.markerSlot !== undefined
+          ? { markerSlot: target.markerSlot }
+          : {}),
         hasCorrection: Boolean(correction),
         hasSavedPerspective: camera?.hasSavedPerspective() ?? false,
-        // The stage draws every screen's outline from the saved correction, so
-        // the list carries the quad instead of only a yes/no flag.
+        // The stage draws every applied screen's outline, so the list carries
+        // the live quad instead of only a yes/no flag. Never spread the stored
+        // target: an older naming path saved the whole screen DTO there, and
+        // its snapshot correction would outlive a cleared perspective.
         ...(correction
           ? {
               correction,
@@ -196,6 +211,10 @@ export class PlaygroundDevices {
     const store = controllerRuntime(this.arm).profileStore;
     await store.saveScreenTarget({ id, cameraId, name });
     await this.open(id);
+    // The wizard selects the new screen immediately; prepare its calibration
+    // host here so the first configuration/validity requests cannot fail with
+    // "Calibration is not ready" while a host is still opening behind them.
+    await this.ensureHost(id);
     return { id, cameraId, name };
   }
   async startAll(discover = listCameras, previewing: readonly string[] = []) {

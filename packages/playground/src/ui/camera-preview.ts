@@ -1,4 +1,32 @@
 export type CameraView = 'raw' | 'corrected';
-export function cameraPreviewUrl(id: string, view: CameraView = 'raw') {
-  return `/api/cameras/preview?id=${encodeURIComponent(id)}&view=${view}`;
+
+const PREVIEW_CLIENT_KEY = 'arm-playground-preview-client';
+
+/**
+ * Identity of this browser tab, stable across reloads. The server retires the
+ * tab's previous MJPEG responses when a new preview opens, which keeps a page
+ * refresh or a raw/corrected swap from leaving sockets in the connection pool.
+ */
+export function previewClientId(): string {
+  try {
+    const stored = sessionStorage.getItem(PREVIEW_CLIENT_KEY);
+    if (stored) return stored;
+    const id = crypto.randomUUID();
+    sessionStorage.setItem(PREVIEW_CLIENT_KEY, id);
+    return id;
+  } catch {
+    // Storage or crypto can be unavailable; the preview still works.
+    return '';
+  }
+}
+
+export function cameraPreviewUrl(
+  id: string,
+  view: CameraView = 'raw',
+  viewer = 'stage',
+) {
+  const client = previewClientId();
+  return `/api/cameras/preview?id=${encodeURIComponent(id)}&view=${view}${
+    client ? `&client=${encodeURIComponent(client)}` : ''
+  }&viewer=${encodeURIComponent(viewer)}`;
 }

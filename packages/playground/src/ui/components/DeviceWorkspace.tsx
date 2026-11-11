@@ -99,6 +99,8 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
       setWizard(undefined);
       setWizardScreen(undefined);
       setConfigurationRevision((value) => value + 1);
+      // Closing the wizard must not probe the camera devices: the stream is
+      // already running and enumeration can disturb the capture process.
       void refresh(false);
       void check();
     },
@@ -112,7 +114,7 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
   }>();
   const [preferredScreenId, setPreferredScreenId] = useState<string>();
   useEffect(() => {
-    void refresh();
+    void refresh(false);
     const onFocus = () => void refresh(false);
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
@@ -426,7 +428,9 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
     cameraView === 'raw'
       ? (standalone && selected ? [selected] : availableScreens).flatMap(
           (screen) => {
-            if (!screen.correction) return [];
+            // A saved perspective is not an applied one: only paint what the
+            // camera is actually rectifying right now.
+            if (!screen.correction || screen.hasCorrection === false) return [];
             return [
               {
                 id: screen.id,
@@ -448,6 +452,18 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
       : [];
   return (
     <>
+      {connected && arm.adapter?.connectionIdentity.startsWith('mock://') && (
+        <Alert
+          banner
+          showIcon
+          type="warning"
+          message={
+            language === 'zh'
+              ? '模拟机械臂：不会连接或移动真实控制器，标定结果不能当作实测结果。'
+              : 'Simulated arm: no controller is connected and no motion is sent. Calibration here is not physical evidence.'
+          }
+        />
+      )}
       {connected && (
         <RobotStatusBar
           control={
@@ -676,7 +692,9 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
                     loading={status === 'loading'}
                     onClick={() => {
                       setPreviewRevision((value) => value + 1);
-                      void refresh();
+                      // Reload the preview, not the device list: probing while
+                      // this camera is capturing can disturb the stream.
+                      void refresh(false);
                     }}
                   />
                 </Tooltip>

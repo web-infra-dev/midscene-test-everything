@@ -1513,17 +1513,31 @@ export class ScreenCalibration {
       return {};
     }
     if (input.action === 'rename-screen') {
-      await this.store.updateScreenTarget(input.id!, { name: input.name });
+      const name = input.name!.trim();
+      await this.store.updateScreenTarget(input.id!, { name });
       for (const session of this.sessions.values()) {
         const target = session.targets.find((t) => t.id === input.id);
-        if (target) target.name = input.name!.trim();
+        if (target) target.name = name;
       }
-      const associated = [...this.pages.values()].find(
-        (p) => p.saved.targetId === input.id,
-      );
-      if (associated) {
-        associated.saved.name = input.name!.trim();
-        await this.persistPage(associated.saved);
+      // Every page bound to this screen follows the screen name, including
+      // pages that are only persisted: an offline page must not come back
+      // with the name it had before the operator renamed the screen.
+      const openPages = [...this.pages.values()];
+      const openIds = new Set(openPages.map((page) => page.saved.id));
+      for (const page of this.store.list().screenPages ?? []) {
+        if (
+          page.targetId !== input.id ||
+          page.name === name ||
+          openIds.has(page.id)
+        )
+          continue;
+        await this.store.saveScreenPage({ ...page, name });
+      }
+      for (const page of openPages) {
+        if (page.saved.targetId !== input.id || page.saved.name === name)
+          continue;
+        page.saved.name = name;
+        await this.persistPage(page.saved);
       }
       return {};
     }

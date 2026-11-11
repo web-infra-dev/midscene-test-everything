@@ -186,7 +186,7 @@ function MarkerDialog({
         <Alert showIcon type="error" message={connectionError} />
       )}
       <LiveCameraImage
-        src={cameraPreviewUrl(id)}
+        src={cameraPreviewUrl(id, 'raw', 'marker')}
         alt={name}
         style={{
           width: '100%',

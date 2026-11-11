@@ -2,6 +2,7 @@ import {
   type WebCalibrationMapping,
   mappingQualityWarnings,
 } from '@midscene/arm-kit-shared/assisted-contracts';
+import { measuredPerspectiveTarget } from '@midscene/arm-kit-shared/camera/vision-geometry';
 import type { CameraCorrection } from '@midscene/arm-kit-shared/contracts';
 import { Alert, Button, Modal, Select, Space, Tag, Typography } from 'antd';
 import {
@@ -16,6 +17,7 @@ import { createPortal } from 'react-dom';
 import { CameraCornerEditor } from '../../CameraCornerEditor';
 import { CorrectedPreview } from '../../CorrectedPreview';
 import { calibrationErrorText, t, useCalibrationLanguage } from '../../i18n';
+import { cameraPreviewUrl } from '../../preview-url';
 import { speakCalibration } from '../../voice/calibration';
 import { CalibrationQualityWarnings } from './CalibrationQualityWarnings';
 
@@ -118,6 +120,7 @@ export function CameraMappingStep({
     onPerspectiveOpenChange?.(open);
   };
   const [clearOpen, setClearOpen] = useState(false);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [clearError, setClearError] = useState<string>();
   const [error, setError] = useState<string>();
@@ -315,15 +318,21 @@ export function CameraMappingStep({
         )}
       </div>
       {correction && output && (
-        <details className="robot-device-diagnostics">
+        <details
+          className="robot-device-diagnostics"
+          open={diagnosticsOpen}
+          onToggle={(event) => setDiagnosticsOpen(event.currentTarget.open)}
+        >
           <summary>{t('Diagnostics')}</summary>
-          <div className="robot-setup-corrected-preview">
-            <CorrectedPreview
-              correction={correction}
-              size={output}
-              src={`${base}/camera/preview`}
-            />
-          </div>
+          {diagnosticsOpen && (
+            <div className="robot-setup-corrected-preview">
+              <CorrectedPreview
+                correction={correction}
+                size={output}
+                src={cameraPreviewUrl(base, 'mapping-corrected')}
+              />
+            </div>
+          )}
         </details>
       )}
       {notice && (
@@ -409,7 +418,8 @@ export function CameraMappingStep({
       <PerspectiveEditor
         open={editorOpen}
         base={base}
-        live={`${base}/camera/preview`}
+        live={cameraPreviewUrl(base, 'mapping-live')}
+        corrected={cameraPreviewUrl(base, 'mapping-editor-corrected')}
         correction={correction}
         output={output}
         onClose={() => setEditorOpen(false)}
@@ -443,6 +453,7 @@ function PerspectiveEditor({
   open,
   base,
   live,
+  corrected,
   correction,
   output,
   onClose,
@@ -453,6 +464,8 @@ function PerspectiveEditor({
   open: boolean;
   base: string;
   live: string;
+  /** Separate MJPEG slot; sharing `live` would make the two retire each other. */
+  corrected: string;
   correction?: CameraCorrection;
   output?: { width: number; height: number };
   onClose(): void;
@@ -505,7 +518,7 @@ function PerspectiveEditor({
   }, [open, draft, base, frameKey]);
   const size =
     output ??
-    (draft && { width: draft.sourceWidth, height: draft.sourceHeight });
+    (draft && measuredPerspectiveTarget(draft.points, draft.rotation));
   return (
     <Modal
       open={open}
@@ -582,9 +595,13 @@ function PerspectiveEditor({
                   </small>
                 )}
               </header>
-              <div className="screen-range-stage">
+              <div className="screen-range-stage corrected-preview-stage">
                 {size && (
-                  <CorrectedPreview correction={draft} size={size} src={live} />
+                  <CorrectedPreview
+                    correction={draft}
+                    size={size}
+                    src={corrected}
+                  />
                 )}
               </div>
             </section>

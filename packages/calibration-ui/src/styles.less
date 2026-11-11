@@ -610,6 +610,8 @@
   .range-output {
     position: relative;
     display: grid;
+    /* A definite track makes the canvas max-height resolve, not just max-width. */
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);
     place-items: center;
     color: var(--rv-text-secondary);
     width: 100%;
@@ -628,6 +630,20 @@
       border-top: 1px solid var(--rv-border);
     }
   }
+}
+
+/*
+ * The rectified canvas carries its own pixel dimensions, so every host has to
+ * fit it. Without this the canvas renders at its intrinsic width (up to 720px)
+ * inside panels that are often narrower and gets clipped instead of scaled.
+ * max-height keeps tall phone screens inside fixed-height preview stages.
+ */
+.corrected-preview-canvas {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
 }
 
 // Let notices and the retry action take their natural height before sizing the previews.
@@ -824,6 +840,27 @@
   gap: 12px;
 }
 
+/*
+ * Keep the corrected pane at its current width and give it the screen's own
+ * height. A tall phone then scrolls inside the fixed-height stage instead of
+ * shrinking to a thumbnail or being clipped to the camera frame's aspect.
+ */
+.guided-mapping-editor .corrected-preview-stage {
+  align-items: start;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.guided-mapping-editor .corrected-preview-stage .range-output {
+  display: block;
+  height: auto;
+  min-height: 0;
+}
+.guided-mapping-editor .corrected-preview-stage .corrected-preview-canvas {
+  width: 100%;
+  height: auto;
+  max-height: none;
+}
+
 .camera-mapping-outline-layer,
 .camera-mapping-outlines {
   position: absolute;
@@ -862,7 +899,8 @@
   background: rgb(20 32 28 / 72%);
   border: 1px solid rgb(255 255 255 / 35%);
   border-radius: 999px;
-  transform: translateX(-50%);
+  /* The transform is inline: it centers the pill on the edge and turns it. */
+  transform-origin: 50% 50%;
 }
 
 .camera-mapping-outline-layer[data-active='true'] {

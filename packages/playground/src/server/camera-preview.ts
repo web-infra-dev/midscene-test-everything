@@ -21,6 +21,101 @@ const CORRECTED_PREVIEW_MAX_PIXELS = 450_000;
 const CORRECTED_PREVIEW_INTERVAL_MS = 0;
 
 /**
+ * Live previews for one (camera, browser tab), keyed by UI slot. A refresh or a
+ * raw/corrected swap leaves the previous multipart response open unless it is
+ * explicitly destroyed. Keep at most two slots: the browser only has six
+ * connections, and the arm/camera polls must keep some of them.
+ */
+const clientPreviews = new Map<string, Map<string, ServerResponse>>();
+
+/**
+ * A retired MJPEG response must not leave a reusable keep-alive socket behind:
+ * the next API request on that socket would hang until its timeout.
+ */
+function retirePreview(res: ServerResponse) {
+  if (res.destroyed || res.writableEnded) return;
+  try {
+    res.end();
+  } catch {
+    // The socket is already gone.
+  }
+  res.destroy();
+}
+
+function trackClientPreview(
+  cameraId: string | undefined,
+  client: string | undefined,
+  viewer: string | undefined,
+  res: ServerResponse,
+): () => void {
+  if (!cameraId || !client) return () => {};
+  const groupKey = `${cameraId}\u0000${client}`;
+  const viewerKey = viewer || 'preview';
+  let active = clientPreviews.get(groupKey);
+  const previous = active?.get(viewerKey);
+  active ??= new Map<string, ServerResponse>();
+  active.set(viewerKey, res);
+  clientPreviews.set(groupKey, active);
+  if (previous && previous !== res) retirePreview(previous);
+  // A hidden or unmounted preview can leave its response behind; the oldest
+  // slot is the least likely to still be visible.
+  while (active.size > 2) {
+    const oldest = active.entries().next().value as
+      | [string, ServerResponse]
+      | undefined;
+    if (!oldest || oldest[1] === res) break;
+    active.delete(oldest[0]);
+    retirePreview(oldest[1]);
+  }
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    if (active.get(viewerKey) === res) active.delete(viewerKey);
+    if (!active.size && clientPreviews.get(groupKey) === active)
+      clientPreviews.delete(groupKey);
+  };
+  res.once('close', release);
+  return release;
+}
+
+/**
+ * Previews also live in per-device calibration hosts. Cap them across every
+ * route for one tab: the browser only has six connections, and six preview
+ * responses leave nothing for the arm poll.
+ */
+const globalClientPreviews = new Map<string, Map<string, ServerResponse>>();
+
+export function registerClientPreview(
+  client: string | undefined,
+  key: string,
+  res: ServerResponse,
+): () => void {
+  if (!client) return () => {};
+  let previews = globalClientPreviews.get(client);
+  const previous = previews?.get(key);
+  previews ??= new Map<string, ServerResponse>();
+  previews.set(key, res);
+  globalClientPreviews.set(client, previews);
+  if (previous && previous !== res) retirePreview(previous);
+  while (previews.size > 2) {
+    const oldest = previews.entries().next().value as
+      | [string, ServerResponse]
+      | undefined;
+    if (!oldest || oldest[1] === res) break;
+    previews.delete(oldest[0]);
+    retirePreview(oldest[1]);
+  }
+  const release = () => {
+    if (previews!.get(key) === res) previews!.delete(key);
+    if (!previews!.size && globalClientPreviews.get(client) === previews)
+      globalClientPreviews.delete(client);
+  };
+  res.once('close', release);
+  return release;
+}
+
+/**
  * One MJPEG response over one live stream. Frames are dropped, never queued, so
  * a slow perspective transform cannot build latency or outlive its viewer.
  */
@@ -35,6 +130,7 @@ async function streamFrames(
     'Content-Type': 'multipart/x-mixed-replace; boundary=frame',
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',
+    Connection: 'close',
   });
   // Keep dead viewers from pinning a response forever.
   res.socket?.setKeepAlive(true, 5_000);
@@ -90,6 +186,8 @@ export async function streamCameraPreview(
   res: ServerResponse,
   entry: Pick<DeviceEntry, 'camera'>,
   corrected = false,
+  client?: string,
+  viewer?: string,
 ) {
   const { camera } = entry;
   if (corrected && !camera.getRectifiedPreviewTarget())
@@ -97,12 +195,24 @@ export async function streamCameraPreview(
       new Error('Save perspective correction before viewing it'),
       { status: 409 },
     );
-  await streamFrames(
+  if (res.destroyed) return;
+  registerClientPreview(
+    client,
+    `camera:${camera.camera?.id ?? ''}:${viewer || 'preview'}`,
     res,
-    camera.stream,
-    corrected ? (frame) => rectifyPreviewFrame(camera, frame) : undefined,
-    corrected ? 100 : 0,
   );
+  const untrack = trackClientPreview(camera.camera?.id, client, viewer, res);
+  try {
+    await streamFrames(
+      res,
+      camera.stream,
+      corrected ? (frame) => rectifyPreviewFrame(camera, frame) : undefined,
+      corrected ? 100 : 0,
+    );
+  } catch (error) {
+    untrack();
+    throw error;
+  }
 }
 
 function rectifyPreviewFrame(
@@ -130,6 +240,8 @@ export async function streamStandalonePreview(
   id: string,
   view: CameraPreviewView = 'raw',
   screenId?: string,
+  client?: string,
+  viewer?: string,
 ) {
   const owner = randomUUID();
   const camera = await cameras.acquire(
@@ -148,16 +260,28 @@ export async function streamStandalonePreview(
           new Error('Save perspective correction before viewing it'),
           { status: 409 },
         );
-      await streamFrames(
-        res,
-        camera.stream,
-        (frame) => rectifyPreviewFrame(camera, frame),
-        CORRECTED_PREVIEW_INTERVAL_MS,
-      );
-    } else {
-      await streamFrames(res, camera.stream);
     }
-    await closed;
+    const untrack = trackClientPreview(id, client, viewer, res);
+    registerClientPreview(
+      client,
+      `standalone:${id}:${viewer || 'preview'}`,
+      res,
+    );
+    try {
+      if (view === 'corrected') {
+        await streamFrames(
+          res,
+          camera.stream,
+          (frame) => rectifyPreviewFrame(camera, frame),
+          CORRECTED_PREVIEW_INTERVAL_MS,
+        );
+      } else {
+        await streamFrames(res, camera.stream);
+      }
+      await closed;
+    } finally {
+      untrack();
+    }
   } finally {
     await cameras.release(id, owner);
   }

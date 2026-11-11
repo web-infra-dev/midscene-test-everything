@@ -23,26 +23,52 @@ export class RobotVisionApiError extends Error {
     super(message);
   }
 }
-export async function markerRequest<T>(
+/**
+ * Screen and marker calls share at most two browser connections. A stuck
+ * display/status query otherwise stacks with its own polling until all six
+ * per-origin connections are gone and the arm/camera requests time out.
+ */
+const MAX_SCREEN_REQUESTS = 1;
+let activeScreenRequests = 0;
+const screenRequestWaiters: (() => void)[] = [];
+
+async function withScreenRequestSlot<T>(work: () => Promise<T>): Promise<T> {
+  if (activeScreenRequests >= MAX_SCREEN_REQUESTS)
+    await new Promise<void>((resolve) => screenRequestWaiters.push(resolve));
+  activeScreenRequests += 1;
+  try {
+    return await work();
+  } finally {
+    activeScreenRequests -= 1;
+    screenRequestWaiters.shift()?.();
+  }
+}
+
+export function markerRequest<T>(
   path: string,
   body?: unknown,
   signal?: AbortSignal,
 ): Promise<T> {
-  const response = await fetch(path, {
-    signal,
-    method: body === undefined ? 'GET' : 'POST',
-    headers:
-      body === undefined ? undefined : { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
+  return withScreenRequestSlot(async () => {
+    signal?.throwIfAborted();
+    // Never leave a screen/marker request holding a connection indefinitely.
+    const timeout = AbortSignal.timeout(15_000);
+    const response = await fetch(path, {
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+      method: body === undefined ? 'GET' : 'POST',
+      headers:
+        body === undefined ? undefined : { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const value = await response.json();
+    if (!response.ok)
+      throw new RobotVisionApiError(
+        t(value.error?.message ?? value.error ?? 'Screen request failed'),
+        value.code,
+        value.details,
+      );
+    return value;
   });
-  const value = await response.json();
-  if (!response.ok)
-    throw new RobotVisionApiError(
-      t(value.error?.message ?? value.error ?? 'Screen request failed'),
-      value.code,
-      value.details,
-    );
-  return value;
 }
 /** Local transport for the original marker-calibration UI. */
 export class RobotVisionClient {

@@ -38,6 +38,21 @@ import { calibrationPreviewPositions } from './preview-positions.js';
 
 const REFERENCE_REPORT_MAX_AGE_MS = 3 * CALIBRATION_PHONE_POLICY.heartbeatMs;
 
+/**
+ * End the MJPEG response before closing the socket. Destroying a streaming
+ * response outright leaves a dead keep-alive connection in the browser pool;
+ * the next API request sent on it can hang until its timeout.
+ */
+function retirePreviewResponse(res: ServerResponse) {
+  if (res.destroyed || res.writableEnded) return;
+  try {
+    res.end();
+  } catch {
+    // The socket is already gone.
+  }
+  res.destroy();
+}
+
 export interface CalibrationHostOptions {
   arm: ArmController;
   camera: CameraSession;
@@ -54,6 +69,8 @@ export class CalibrationHost {
   private readonly control;
   readonly phoneSocket: PhoneSocketServer;
   private readonly streams = new Set<ServerResponse>();
+  /** At most one live MJPEG preview per browser tab and UI slot. */
+  private readonly previews = new Map<string, ServerResponse>();
   private autoOutput = false;
   private input?: AssistedCalibrationInput;
   constructor(private readonly options: CalibrationHostOptions) {
@@ -369,6 +386,9 @@ export class CalibrationHost {
       installationTaught: Boolean(teaching),
       mappingReady: Boolean(mapping),
       correctionOutput: this.autoOutputSize(),
+      // The exact rectangle the live corrected stream uses. Without a saved
+      // setup size the UI otherwise falls back to the camera frame's aspect.
+      perspectiveTarget: camera.getRectifiedPreviewTarget(),
       output: selection
         ? {
             cameraId: selection.cameraId,
@@ -803,9 +823,35 @@ export class CalibrationHost {
             'VISION_UNAVAILABLE',
             'Camera is not running',
           );
+        // Re-renders open a new multipart response for the same UI slot. Retire
+        // that slot's previous response and keep at most two slots per tab so
+        // previews cannot exhaust the browser's connection pool.
+        const query = new URL(req.url ?? '/', 'http://localhost').searchParams;
+        const client = query.get('client');
+        const viewer = query.get('viewer') ?? 'preview';
+        if (client) {
+          const key = `${client}\u0000${viewer}`;
+          const previous = this.previews.get(key);
+          if (previous && previous !== res) retirePreviewResponse(previous);
+          this.previews.set(key, res);
+          const prefix = `${client}\u0000`;
+          const keys = [...this.previews.keys()].filter((candidate) =>
+            candidate.startsWith(prefix),
+          );
+          while (keys.length > 2) {
+            const oldest = keys.shift()!;
+            const response = this.previews.get(oldest);
+            this.previews.delete(oldest);
+            if (response) retirePreviewResponse(response);
+          }
+          res.once('close', () => {
+            if (this.previews.get(key) === res) this.previews.delete(key);
+          });
+        }
         res.writeHead(200, {
           'Content-Type': 'multipart/x-mixed-replace; boundary=frame',
           'Cache-Control': 'no-store',
+          Connection: 'close',
         });
         let blocked = false;
         const frame = ({ jpeg }: { jpeg: Buffer }) => {
