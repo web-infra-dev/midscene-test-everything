@@ -4,6 +4,7 @@ import { type RequestHandler, Router, json } from 'express';
 import { z } from 'zod';
 
 export type ControlledDevice = {
+  signal: AbortSignal;
   screenshot(): Promise<ScreenFrame>;
   execute(action: InputAction, signal: AbortSignal): Promise<void>;
 };
@@ -55,12 +56,14 @@ type Lease = {
   device: ControlledDevice;
   lifetime: AbortController;
   expires: number;
+  disconnect: () => void;
   action?: Promise<void>;
   closing?: Promise<void>;
 };
 
 export class ControlSessions {
   private closed = false;
+  private updateUntil = 0;
   private byId = new Map<string, Lease>();
   private byDevice = new Map<string, Lease>();
   private timer = setInterval(() => {
@@ -76,34 +79,54 @@ export class ControlSessions {
     return this.byDevice.has(id);
   }
 
+  prepareUpdate() {
+    if (this.closed || this.updateUntil > Date.now())
+      throw new ControlError(503, 'An update is already in progress.');
+    const busy = [...this.byDevice.keys()];
+    if (busy.length) return { busy, expiresAt: undefined };
+    // Acquisition and this check run synchronously in the same process.
+    this.updateUntil = Date.now() + 60_000;
+    return { busy, expiresAt: this.updateUntil };
+  }
+
   private acquire(deviceId: string) {
     if (this.closed) throw new ControlError(503, '设备服务正在停止。');
+    if (this.updateUntil > Date.now())
+      throw new ControlError(503, '设备服务正在更新，请稍后重试。');
     if (this.busy(deviceId))
       throw new ControlError(409, '设备正在使用，请先断开现有连接。');
     const device = this.readyDevice(deviceId);
-    if (!device)
+    if (!device || device.signal.aborted)
       throw new ControlError(409, '设备未就绪，请先在设备管理台连接手机。');
-    const lease = {
+    const lease: Lease = {
       id: randomUUID(),
       deviceId,
       device,
       lifetime: new AbortController(),
       expires: Date.now() + leaseMs,
+      disconnect: () => void this.release(lease),
     };
     this.byId.set(lease.id, lease);
     this.byDevice.set(deviceId, lease);
+    device.signal.addEventListener('abort', lease.disconnect, { once: true });
     return { id: lease.id, deviceId, expiresInMs: leaseMs };
   }
 
   private require(id: string) {
     const lease = this.byId.get(id);
-    if (!lease || lease.closing || lease.expires <= Date.now())
+    if (
+      !lease ||
+      lease.closing ||
+      lease.device.signal.aborted ||
+      lease.expires <= Date.now()
+    )
       throw new ControlError(410, '设备控制会话已结束，请重新连接。');
     return lease;
   }
 
   private release(lease: Lease) {
     lease.closing ??= (async () => {
+      lease.device.signal.removeEventListener('abort', lease.disconnect);
       lease.lifetime.abort();
       await lease.action?.catch(() => {});
       this.byId.delete(lease.id);
@@ -168,8 +191,9 @@ export class ControlSessions {
       '/:id/screenshot',
       handle(async (req, res) => {
         const lease = this.require(req.params.id);
-        const frame = await lease.device.screenshot();
-        lease.lifetime.signal.throwIfAborted();
+        const frame = await lease.device.screenshot().finally(() => {
+          this.require(req.params.id);
+        });
         res.json({ ...frame, jpeg: frame.jpeg.toString('base64') });
       }),
     );
@@ -188,7 +212,9 @@ export class ControlSessions {
             action,
             AbortSignal.any([lease.lifetime.signal, request.signal]),
           );
-          await lease.action;
+          await lease.action.finally(() => {
+            this.require(req.params.id);
+          });
           res.json({});
         } finally {
           lease.action = undefined;

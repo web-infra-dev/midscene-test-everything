@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { get } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
+import { DeviceConfigStore } from '../dist/hardware/config/store.js';
 import { runServer } from '../dist/server.js';
 import { DeviceWorkspaces } from '../dist/workspaces.js';
 
@@ -66,61 +70,343 @@ test('LAN clients can discover saved devices with a token, while setup stays loc
   assert.equal((await request('/api/docs/swagger-initializer.js')).status, 200);
 });
 
-test('manager can connect, preview and remove a device without a task server', async (t) => {
-  let state;
-  let listener;
-  const manager = {
-    onStateChange: (notify) => {
-      listener = notify;
-      return () => {
-        listener = undefined;
-      };
-    },
-    getSnapshot: () => ({ state, source: 'usb' }),
-    refreshConnectionState: async () => state,
-    connect: async () => {
-      state = {
-        phase: 'ready',
-        device: { id: 'phone-1', name: 'Test iPhone' },
-      };
-      listener?.();
-    },
-    screenshot: async () => ({
+test(
+  'manager setup and remote control share a service-owned phone',
+  { timeout: 10000 },
+  async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), 'hid-service-test-'));
+    const peer = { id: 'peer', name: 'Test iPhone', reports: [1, 2, 3] };
+    const frame = {
       jpeg: Buffer.from('test-image'),
       receivedAt: 1,
-    }),
-    destroySession: async () => {
-      state = undefined;
-    },
-  };
+      sequence: 1,
+      width: 1,
+      height: 1,
+    };
+    const preview = {
+      getFrame: async () => frame,
+      getSetupInfo: () => ({
+        state: 'streaming',
+        name: 'Test receiver',
+        pin: '1234',
+      }),
+      close: async () => {},
+    };
+    const actions = [];
+    let closed = false;
+    const runtime = {
+      input: {
+        subscribe: () => () => {},
+        status: async () => ({ hosts: [peer] }),
+        listPeers: async () => [peer],
+      },
+      openScreen: async () => preview,
+      open: async (_config, screen) => {
+        assert.equal(screen, preview);
+        return {
+          screenshot: async () => frame,
+          execute: async (action) => actions.push(action),
+          close: async () => {
+            closed = true;
+          },
+        };
+      },
+      close: async () => {},
+    };
+    const service = await runServer(0, {
+      accessToken: 'test-token',
+      workspaces: new DeviceWorkspaces(
+        runtime,
+        new DeviceConfigStore(directory),
+      ),
+    });
+    t.after(async () => {
+      await service.close();
+      await rm(directory, { recursive: true, force: true });
+    });
+    const origin = `http://127.0.0.1:${service.port}`;
+    const base = `${origin}/ios-hid/workspaces`;
+    const workspaceHeaders = { 'X-Midscene-Playground': 'workspace' };
+    const created = await fetch(base, {
+      method: 'POST',
+      headers: workspaceHeaders,
+    });
+    assert.equal(created.status, 200);
+    const { id } = await created.json();
+    const url = `${base}/${id}`;
+    const post = (url, body, headers) =>
+      fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify(body),
+      });
+    const connecting = post(
+      `${url}/session`,
+      { source: 'airplay', bluetoothPeerId: peer.id },
+      { 'X-Midscene-Playground': 'setup' },
+    );
+    let setupId;
+    for (let i = 0; i < 50 && !setupId; i++) {
+      const [workspace] = await (await fetch(base)).json();
+      setupId = workspace.state?.setupId;
+      if (!setupId) await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.ok(setupId, 'workspace exposes the in-process setup session');
+    const setup = `${url}/ios-hid/setup/${setupId}`;
+    assert.equal(
+      (await (await fetch(`${setup}/state`)).json()).source,
+      'airplay',
+    );
+    assert.equal((await post(`${setup}/select`, {}, {})).status, 403);
+    const setupHeaders = { 'X-Midscene-Setup': setupId };
+    assert.equal((await post(`${setup}/select`, {}, setupHeaders)).status, 200);
+    assert.equal(await (await fetch(`${setup}/frame`)).text(), 'test-image');
+    assert.equal(
+      (
+        await post(
+          `${setup}/confirm`,
+          { confirmed: true, bluetoothPeerId: peer.id },
+          setupHeaders,
+        )
+      ).status,
+      200,
+    );
+    const connected = await connecting;
+    assert.equal(connected.status, 200);
+    const deviceId = (await connected.json()).state.device.id;
+    assert.equal((await fetch(`${setup}/state`)).status, 410);
+    const managedFrame = await (await fetch(`${url}/screenshot`)).json();
+    assert.equal(
+      managedFrame.screenshot,
+      `data:image/jpeg;base64,${frame.jpeg.toString('base64')}`,
+    );
+
+    const api = `${origin}/api/v1`;
+    const authorization = { Authorization: 'Bearer test-token' };
+    const { devices } = await (
+      await fetch(`${api}/devices`, { headers: authorization })
+    ).json();
+    assert.deepEqual(devices, [
+      {
+        id: deviceId,
+        name: peer.name,
+        screenSource: 'airplay',
+        status: 'available',
+      },
+    ]);
+    const acquired = await post(`${api}/sessions`, { deviceId }, authorization);
+    assert.equal(acquired.status, 201);
+    const { id: sessionId } = await acquired.json();
+    const session = `${api}/sessions/${sessionId}`;
+    assert.equal(
+      (await fetch(url, { method: 'DELETE', headers: workspaceHeaders }))
+        .status,
+      409,
+    );
+    assert.equal(
+      (await post(`${session}/actions`, { type: 'home' }, authorization))
+        .status,
+      200,
+    );
+    assert.deepEqual(actions, [{ type: 'home' }]);
+    const remoteFrame = await (
+      await fetch(`${session}/screenshot`, { headers: authorization })
+    ).json();
+    assert.equal(remoteFrame.jpeg, frame.jpeg.toString('base64'));
+    assert.equal(
+      (await fetch(session, { method: 'DELETE', headers: authorization }))
+        .status,
+      200,
+    );
+    assert.equal(
+      (await fetch(url, { method: 'DELETE', headers: workspaceHeaders }))
+        .status,
+      200,
+    );
+    assert.equal(closed, true);
+  },
+);
+
+test(
+  'Bluetooth loss cancels control and old sessions cannot follow a workspace to another phone',
+  { timeout: 10000 },
+  async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), 'hid-service-lease-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const store = new DeviceConfigStore(directory);
+    const peers = ['a', 'b'].map((id) => ({
+      id,
+      name: id,
+      reports: [1, 2, 3],
+    }));
+    for (const peer of peers) {
+      await store.save({
+        id: peer.id,
+        name: peer.name,
+        bluetoothPeerId: peer.id,
+        screen: { source: 'usb', deviceId: peer.id },
+      });
+    }
+    const listeners = new Set();
+    const actionStarted = Promise.withResolvers();
+    const actions = [];
+    const runtime = {
+      input: {
+        subscribe(listener) {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+        listPeers: async () => peers,
+      },
+      open: async ({ id }) => ({
+        screenshot: async () => ({ jpeg: Buffer.from('image') }),
+        async execute(action, signal) {
+          actions.push({ id, action });
+          if (action.type !== 'home') return;
+          const cancelled = new Promise((_, reject) => {
+            signal.addEventListener('abort', () => reject(signal.reason), {
+              once: true,
+            });
+          });
+          actionStarted.resolve();
+          await cancelled;
+        },
+        close: async () => {},
+      }),
+      close: async () => {},
+    };
+    const workspaces = new DeviceWorkspaces(runtime, store);
+    const { apiBase } = await workspaces.create();
+    const service = await runServer(0, {
+      accessToken: 'test-token',
+      workspaces,
+    });
+    t.after(() => service.close());
+    const base = `http://127.0.0.1:${service.port}`;
+    const sessions = '/api/v1/sessions';
+    const auth = { Authorization: 'Bearer test-token' };
+    const setup = { 'X-Midscene-Playground': 'setup' };
+    const request = (path, headers = auth) => fetch(base + path, { headers });
+    const post = (path, body, headers = auth) =>
+      fetch(base + path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify(body),
+      });
+    const connect = async (id) => {
+      const response = await post(
+        `${apiBase}/session`,
+        { id, source: 'saved' },
+        setup,
+      );
+      assert.equal(response.status, 200, await response.text());
+    };
+    const acquire = async (deviceId) => {
+      const response = await post(sessions, { deviceId });
+      assert.equal(response.status, 201);
+      return `${sessions}/${(await response.json()).id}`;
+    };
+    const dropA = () => {
+      for (const notify of listeners) notify({ hosts: [peers[1]] });
+    };
+
+    await connect('a');
+    const old = await acquire('a');
+    const running = post(`${old}/actions`, { type: 'home' });
+    await actionStarted.promise;
+    dropA();
+    assert.equal((await running).status, 410);
+    assert.equal((await post(`${old}/heartbeat`, {})).status, 410);
+    assert.equal((await request(`${old}/screenshot`)).status, 410);
+
+    const refresh = await post(
+      `${apiBase}/refresh`,
+      {},
+      { 'X-Midscene-Playground': 'workspace' },
+    );
+    assert.equal(refresh.status, 200, await refresh.text());
+    assert.equal((await post(`${old}/actions`, { type: 'back' })).status, 410);
+    const restored = await acquire('a');
+    assert.equal(
+      (await post(`${restored}/actions`, { type: 'back' })).status,
+      200,
+    );
+
+    dropA();
+    // Refresh the manager snapshot, as the workspace health check also does.
+    await (await request('/ios-hid/workspaces')).json();
+    assert.equal(
+      (await post(`${apiBase}/ios-hid/cancel`, {}, setup)).status,
+      200,
+    );
+    await connect('b');
+    const replacement = await acquire('b');
+    assert.equal(
+      (await post(`${restored}/actions`, { type: 'back' })).status,
+      410,
+    );
+    assert.deepEqual(actions, [
+      { id: 'a', action: { type: 'home' } },
+      { id: 'a', action: { type: 'back' } },
+    ]);
+    assert.equal(
+      (await post(`${replacement}/actions`, { type: 'back' })).status,
+      200,
+    );
+    assert.equal(actions.at(-1).id, 'b');
+  },
+);
+
+test('update preparation refuses active leases and gates new control once idle', async (t) => {
   const service = await runServer(0, {
     accessToken: 'test-token',
-    workspaces: new DeviceWorkspaces(() => manager, false),
+    workspaces: {
+      readyDevice: () => ({
+        signal: new AbortController().signal,
+        execute: async () => {},
+      }),
+      mount() {},
+      async close() {},
+    },
   });
   t.after(() => service.close());
-  const base = `http://127.0.0.1:${service.port}/ios-hid/workspaces`;
-  const headers = { 'X-Midscene-Playground': 'workspace' };
-  const created = await fetch(base, { method: 'POST', headers });
-  assert.equal(created.status, 200);
-  const { id } = await created.json();
-  const url = `${base}/${id}`;
-  const connected = await fetch(`${url}/session`, {
+  const url = `http://127.0.0.1:${service.port}`;
+  const auth = { Authorization: 'Bearer test-token' };
+  const prepare = (headers) =>
+    fetch(`${url}/ios-hid/update/prepare`, { method: 'POST', headers });
+  const acquire = () =>
+    fetch(`${url}/api/v1/sessions`, {
+      method: 'POST',
+      headers: { ...auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceId: 'phone' }),
+    });
+  const local = { ...auth, 'X-Midscene-Service-Pid': String(process.pid) };
+  assert.equal((await prepare({})).status, 401);
+  assert.equal(
+    (await prepare({ ...local, Origin: 'https://remote.example' })).status,
+    403,
+  );
+  assert.equal((await prepare(auth)).status, 409);
+  const lease = await acquire();
+  assert.equal(lease.status, 201);
+  const { id } = await lease.json();
+  const busy = await prepare(local);
+  assert.equal(busy.status, 409);
+  assert.deepEqual(await busy.json(), { busy: ['phone'] });
+  const heartbeat = await fetch(`${url}/api/v1/sessions/${id}/heartbeat`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Midscene-Playground': 'setup',
-    },
-    body: JSON.stringify({
-      source: 'usb',
-      deviceId: 'usb',
-      bluetoothPeerId: 'peer',
-    }),
+    headers: auth,
   });
-  assert.equal(connected.status, 200);
-  assert.equal((await connected.json()).state.device.id, 'phone-1');
-  const frame = await (await fetch(`${url}/screenshot`)).json();
-  assert.match(frame.screenshot, /^data:image\/jpeg;base64,/);
-  assert.equal((await fetch(`${url}/execute`, { method: 'POST' })).status, 404);
-  assert.equal((await fetch(url, { method: 'DELETE', headers })).status, 200);
-  assert.equal(state, undefined);
+  assert.equal(heartbeat.status, 200);
+  await fetch(`${url}/api/v1/sessions/${id}`, {
+    method: 'DELETE',
+    headers: auth,
+  });
+  const ready = await prepare(local);
+  assert.equal(ready.status, 200);
+  const reservation = await ready.json();
+  assert.deepEqual(reservation.busy, []);
+  assert.ok(reservation.expiresAt > Date.now());
+  assert.equal((await acquire()).status, 503);
+  assert.equal((await prepare(local)).status, 503);
 });

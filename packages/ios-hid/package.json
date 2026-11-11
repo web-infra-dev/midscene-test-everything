@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": ["dist", "native"],
+  "files": ["dist"],
   "scripts": {
     "build": "rslib build",
     "typecheck": "tsc --noEmit -p tsconfig.build.json && tsc --noEmit -p tsconfig.tests.json",
@@ -15,18 +15,12 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./host": {
-      "types": "./dist/host/host.d.ts",
-      "import": "./dist/host/host.js"
     }
   },
   "dependencies": {
     "@midscene/robotics-shared": "workspace:*",
-    "@midscene/robotics-vision": "workspace:*",
     "@midscene/core": "1.17.5",
-    "@midscene/shared": "1.17.5",
-    "sharp": "^0.34.3"
+    "@midscene/shared": "1.17.5"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

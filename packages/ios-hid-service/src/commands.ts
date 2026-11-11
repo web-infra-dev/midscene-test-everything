@@ -15,6 +15,8 @@ import {
   readToken,
 } from './settings.js';
 
+import { update } from './update.js';
+
 const program = new Command()
   .name('hid-service')
   .description('Manage the Midscene iOS HID Device Service');
@@ -31,6 +33,12 @@ program
   .action(async ({ port }: { port?: number }) =>
     printRunningService(await install(port, defaultPort)),
   );
+program
+  .command('update')
+  .description('Check for or install a published device service release')
+  .option('--check', 'Show the available version without installing it')
+  .option('--manifest <url>', 'Use an alternative HTTPS release manifest')
+  .action(update);
 program
   .command('start')
   .description('Start the installed service')

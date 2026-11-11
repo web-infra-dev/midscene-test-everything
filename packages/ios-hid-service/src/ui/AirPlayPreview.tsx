@@ -1,4 +1,4 @@
-import type { AirPlaySetupInfo } from '@midscene/ios-hid';
+import type { AirPlaySetupInfo } from '../hardware/types.js';
 import { Frame } from './ScreenPreview';
 import './airplay.css';
 

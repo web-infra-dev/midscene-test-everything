@@ -8,7 +8,7 @@ import {
 } from '@midscene/core/device';
 import type { InputAction, ScreenFrame } from './types.js';
 
-/** Midscene integration shared by the remote proxy and Host-local task device. */
+/** Midscene action interface for an iOS HID device. */
 export abstract class IOSHIDInterface extends AbstractInterface {
   readonly interfaceType = 'ios-hid';
   override cacheFeatureForPoint: AbstractInterface['cacheFeatureForPoint'] =

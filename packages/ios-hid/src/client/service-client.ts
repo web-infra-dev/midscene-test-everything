@@ -9,6 +9,15 @@ export type IOSHIDServiceProfile = {
   status: 'available' | 'busy' | 'offline';
 };
 
+class ServiceError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 class ServiceClient {
   private base: string;
   constructor({ host, token }: IOSHIDServiceOptions) {
@@ -56,7 +65,10 @@ class ServiceClient {
     }
     const value = await response.json().catch(() => undefined);
     if (!response.ok)
-      throw new Error(value?.error ?? `设备服务请求失败 (${response.status})`);
+      throw new ServiceError(
+        response.status,
+        value?.error ?? `设备服务请求失败 (${response.status})`,
+      );
     if (value === undefined) throw new Error('设备服务响应无效。');
     return value as T;
   }
@@ -76,6 +88,7 @@ export class IOSHIDServiceDevice extends IOSHIDInterface {
   private closing?: Promise<void>;
   private closed = false;
   private lastHeartbeat = Date.now();
+  private ended = false;
 
   private constructor(
     private client: ServiceClient,
@@ -107,17 +120,44 @@ export class IOSHIDServiceDevice extends IOSHIDInterface {
   }
 
   private heartbeat() {
-    if (this.closed) return;
+    if (this.closed || this.ended) return;
     this.timer = setTimeout(async () => {
-      if (this.closed) return;
+      if (this.closed || this.ended) return;
       try {
-        await this.client.request(`${this.path}/heartbeat`, 'POST');
+        await this.sessionRequest(`${this.path}/heartbeat`, 'POST');
         this.lastHeartbeat = Date.now();
       } catch {
-        if (Date.now() - this.lastHeartbeat >= this.leaseMs) return;
+        if (Date.now() - this.lastHeartbeat >= this.leaseMs) this.endSession();
       }
       this.heartbeat();
     }, 5000).unref();
+  }
+
+  get sessionEnded() {
+    return this.ended;
+  }
+
+  private endSession() {
+    if (this.closed) return;
+    this.ended = true;
+    clearTimeout(this.timer);
+  }
+
+  private async sessionRequest<T>(
+    path: string,
+    method?: string,
+    body?: unknown,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    if (this.closed) throw new Error('设备已断开。');
+    if (this.ended) throw new Error('设备控制会话已结束，请重新连接。');
+    try {
+      return await this.client.request<T>(path, method, body, signal);
+    } catch (error) {
+      if (error instanceof ServiceError && error.status === 410)
+        this.endSession();
+      throw error;
+    }
   }
 
   describe() {
@@ -125,8 +165,7 @@ export class IOSHIDServiceDevice extends IOSHIDInterface {
   }
 
   async execute(action: InputAction, options?: { signal?: AbortSignal }) {
-    if (this.closed) throw new Error('设备已断开。');
-    await this.client.request(
+    await this.sessionRequest(
       `${this.path}/actions`,
       'POST',
       action,
@@ -135,8 +174,7 @@ export class IOSHIDServiceDevice extends IOSHIDInterface {
   }
 
   protected async getFrame(): Promise<ScreenFrame> {
-    if (this.closed) throw new Error('设备已断开。');
-    const frame = await this.client.request<
+    const frame = await this.sessionRequest<
       Omit<ScreenFrame, 'jpeg'> & { jpeg: string }
     >(`${this.path}/screenshot`);
     return { ...frame, jpeg: Buffer.from(frame.jpeg, 'base64') };

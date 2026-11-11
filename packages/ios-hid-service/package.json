@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "files": ["dist"],
+  "files": ["dist", "native"],
   "bin": {
     "hid-service": "dist/commands.js",
     "midscene-hid-service": "dist/commands.js"
@@ -28,6 +28,7 @@
     "swagger-ui-dist": "^5.32.0",
     "@midscene/core": "1.17.5",
     "@midscene/shared": "1.17.5",
+    "sharp": "^0.34.3",
     "zod": "3.25.76"
   },
   "devDependencies": {

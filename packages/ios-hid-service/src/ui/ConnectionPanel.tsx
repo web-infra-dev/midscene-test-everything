@@ -1,7 +1,7 @@
 import type { PlaygroundControllerResult } from '@midscene/arm-kit-playground/shell/controller/types.ts';
 import MidsceneLogo from '@midscene/arm-kit-playground/shell/icons/midscene-logo.svg?react';
 import '@midscene/arm-kit-playground/shell/SessionSetupPanel.less';
-import type { AirPlaySetupInfo } from '@midscene/ios-hid';
+import type { AirPlaySetupInfo } from '../hardware/types.js';
 import { AirPlayPreview, airplayStatusText } from './AirPlayPreview';
 import { CameraCalibration } from './CameraCalibration';
 import { Frame } from './ScreenPreview';

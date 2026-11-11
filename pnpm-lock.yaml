@@ -213,15 +213,9 @@ importers:
       '@midscene/robotics-shared':
         specifier: workspace:*
         version: link:../shared
-      '@midscene/robotics-vision':
-        specifier: workspace:*
-        version: link:../vision
       '@midscene/shared':
         specifier: 1.17.5
         version: 1.17.5
-      sharp:
-        specifier: ^0.34.3
-        version: 0.34.5
     devDependencies:
       '@rslib/core':
         specifier: ^0.18.3
@@ -326,6 +320,9 @@ importers:
       react-resizable-panels:
         specifier: 2.0.22
         version: 2.0.22(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      sharp:
+        specifier: ^0.34.3
+        version: 0.34.5
       swagger-ui-dist:
         specifier: ^5.32.0
         version: 5.34.1

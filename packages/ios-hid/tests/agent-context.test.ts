@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from '@rstest/core';
-import { IOSHIDAgent, IOSHIDDevice } from '../dist/index.js';
+import { IOSHIDAgent } from '../dist/index.js';
+import { TestDevice } from './fixtures/test-device.js';
 
 test('default input guidance is available without connecting hardware', async () => {
-  const agent = new IOSHIDAgent(new IOSHIDDevice());
+  const agent = new IOSHIDAgent(new TestDevice());
   try {
     assert.match(agent.opts.aiContexts!.aiAct!, /Input supports ASCII only/);
     assert.match(agent.opts.aiContexts!.aiAct!, /on-screen keyboard/);
@@ -46,7 +47,7 @@ const cases: [
 for (const [options, selected, excluded] of cases) {
   test(`input guidance preserves context precedence: ${JSON.stringify(options)}`, async () => {
     const original = structuredClone(options);
-    const agent = new IOSHIDAgent(new IOSHIDDevice(), options);
+    const agent = new IOSHIDAgent(new TestDevice(), options);
     try {
       assert.match(agent.opts.aiContexts!.aiAct!, /on-screen keyboard/);
       if (selected) assert.ok(agent.opts.aiContexts!.aiAct!.includes(selected));

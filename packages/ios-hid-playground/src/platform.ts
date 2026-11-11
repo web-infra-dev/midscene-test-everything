@@ -17,10 +17,14 @@ export function serviceOptions(input: unknown): IOSHIDServiceOptions {
   return { host: value.host.trim(), token: value.token };
 }
 
-class RemoteSessionManager implements PlaygroundSessionManager {
+export class RemoteSessionManager implements PlaygroundSessionManager {
   private device?: IOSHIDServiceDevice;
   private opening = false;
   private generation = 0;
+
+  get sessionEnded() {
+    return this.device?.sessionEnded ?? false;
+  }
 
   async getSetupSchema() {
     return {

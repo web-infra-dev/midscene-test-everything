@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
-import { IOSHIDDevice } from '@midscene/ios-hid';
 import { rstest, test } from '@rstest/core';
 import { DeviceConnection } from '../dist/device-connection.js';
+import { LocalDevice } from '../dist/hardware/runtime/local-device.js';
 test('screen health can fail and recover independently of Bluetooth state', async () => {
   let bad = false;
   rstest
-    .spyOn(IOSHIDDevice.prototype, 'connect')
+    .spyOn(LocalDevice.prototype, 'connect')
     .mockImplementation(async (options) => {
       assert.ok(options?.onState);
       options.onState({
@@ -15,22 +15,30 @@ test('screen health can fail and recover independently of Bluetooth state', asyn
       });
     });
   rstest
-    .spyOn(IOSHIDDevice.prototype, 'getConnectionState')
+    .spyOn(LocalDevice.prototype, 'getConnectionState')
     .mockImplementation(async () => ({
       id: 'lease',
       phase: 'ready',
       device: { id: 'phone', name: 'phone' },
     }));
   rstest
-    .spyOn(IOSHIDDevice.prototype, 'screenshotBase64')
+    .spyOn(LocalDevice.prototype, 'screenshot')
     .mockImplementation(async () => {
       if (bad) throw Error('no frames');
-      return 'data:image/jpeg;base64,AA==';
+      return {
+        jpeg: Buffer.alloc(1),
+        width: 1,
+        height: 1,
+        sequence: 1,
+        receivedAt: 1,
+      };
     });
   rstest
-    .spyOn(IOSHIDDevice.prototype, 'destroy')
+    .spyOn(LocalDevice.prototype, 'destroy')
     .mockImplementation(async () => {});
-  const manager = new DeviceConnection();
+  const manager = new DeviceConnection(
+    {} as ConstructorParameters<typeof DeviceConnection>[0],
+  );
   await manager.connect({
     source: 'usb',
     deviceId: 'usb',

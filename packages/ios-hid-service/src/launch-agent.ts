@@ -1,11 +1,19 @@
 import { execFile } from 'node:child_process';
-import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { setTimeout } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { directory, ensureToken, label, logPath } from './settings.js';
+import {
+  directory,
+  ensureToken,
+  label,
+  logPath,
+  readToken,
+} from './settings.js';
 
 const exec = promisify(execFile);
 const launchAgents = join(homedir(), 'Library', 'LaunchAgents');
@@ -57,7 +65,7 @@ export function parsePort(value: string) {
   return Number(value);
 }
 
-async function installedPort() {
+async function installedArguments() {
   try {
     await readFile(plist);
   } catch (error) {
@@ -72,8 +80,12 @@ async function installedPort() {
     '-',
     plist,
   ]);
-  const args = JSON.parse(stdout) as string[];
-  return parsePort(args.at(-1) ?? '');
+  return JSON.parse(stdout) as string[];
+}
+
+async function installedPort() {
+  const args = await installedArguments();
+  return args && parsePort(args.at(-1) ?? '');
 }
 
 async function job() {
@@ -92,25 +104,29 @@ async function job() {
   }
 }
 
-async function healthy(port: number, pid?: number) {
-  if (!pid) return false;
+async function runningHealth(port: number, pid?: number) {
+  if (!pid) return undefined;
   try {
     const response = await fetch(`http://127.0.0.1:${port}/health`, {
       signal: AbortSignal.timeout(1000),
     });
-    if (!response.ok) return false;
+    if (!response.ok) return undefined;
     const health = await response.json();
-    return health.service === label && health.pid === pid;
+    if (health.service !== label || health.pid !== pid) return undefined;
+    return {
+      version: typeof health.version === 'string' ? health.version : undefined,
+    };
   } catch {
-    return false;
+    return undefined;
   }
 }
 
-async function waitForHealth(port: number) {
+async function waitForHealth(port: number, version?: string) {
   const deadline = Date.now() + 12_000;
   do {
-    if (await healthy(port, (await job())?.pid)) return;
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    const health = await runningHealth(port, (await job())?.pid);
+    if (health && (!version || health.version === version)) return;
+    await setTimeout(250);
   } while (Date.now() < deadline);
   throw new Error(
     `Device service did not start on port ${port}. See ${logPath}`,
@@ -177,7 +193,7 @@ export async function status() {
   const running = await job();
   const state = !running
     ? 'Stopped'
-    : (await healthy(port, running.pid))
+    : (await runningHealth(port, running.pid))
       ? 'Running'
       : 'Unhealthy';
   return { state, port };
@@ -192,4 +208,159 @@ export async function uninstall() {
   await unlink(plist).catch((error: NodeJS.ErrnoException) => {
     if (error.code !== 'ENOENT') throw error;
   });
+}
+
+export async function installedVersion() {
+  const args = await installedArguments();
+  if (!args) throw new Error('Run hid-service install first.');
+  const port = parsePort(args.at(-1) ?? '');
+  const running = await runningHealth(port, (await job())?.pid);
+  const manifest = await readFile(
+    join(dirname(args[1]), '../package.json'),
+    'utf8',
+  )
+    .then(JSON.parse)
+    .catch(() => undefined);
+  return {
+    running: running?.version,
+    installed: manifest?.version as string | undefined,
+  };
+}
+
+async function prepareUpdate(port: number, pid: number) {
+  const response = await fetch(
+    `http://127.0.0.1:${port}/ios-hid/update/prepare`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${await readToken()}`,
+        'X-Midscene-Service-Pid': String(pid),
+      },
+      signal: AbortSignal.timeout(5000),
+    },
+  );
+  if (response.status === 404)
+    throw new Error(
+      'This running version cannot check device usage. When idle, stop it manually and run update again.',
+    );
+  const result = await response.json();
+  if (response.status === 409 && Array.isArray(result.busy))
+    throw new Error(
+      `Devices in use or finishing an action: ${result.busy.join(', ')}. Disconnect and retry.`,
+    );
+  if (!response.ok)
+    throw new Error(
+      result.error ?? `Could not prepare the service (${response.status}).`,
+    );
+  if (!Number.isFinite(result.expiresAt))
+    throw new Error('The device service returned an invalid update window.');
+  return result.expiresAt as number;
+}
+
+async function waitForExit(pid: number) {
+  const deadline = Date.now() + 20_000;
+  do {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ESRCH') return;
+      throw error;
+    }
+    await setTimeout(100);
+  } while (Date.now() < deadline);
+  throw new Error(`Service process ${pid} did not exit.`);
+}
+
+export async function activateRelease(
+  entry: string,
+  version: string,
+  report: (message: string) => void,
+) {
+  const original = await readFile(plist);
+  const port = await installedPort();
+  if (port === undefined) throw new Error('Run hid-service install first.');
+  const backup = join(dirname(entry), '../previous-launch-agent.plist');
+  const replacement = `${plist}.${randomUUID()}.tmp`;
+  let stopped = false;
+  let switched = false;
+  let previousPid: number | undefined;
+  // Finish or roll back a started cutover before handling a terminal interrupt.
+  const interrupted = () =>
+    report('Interrupt received. Finishing the service switch safely.');
+  process.on('SIGINT', interrupted);
+  process.on('SIGTERM', interrupted);
+  try {
+    await writeFile(backup, original, { flag: 'wx', mode: 0o600 });
+    await writeFile(replacement, original, { flag: 'wx', mode: 0o600 });
+    await exec('/usr/bin/plutil', [
+      '-replace',
+      'ProgramArguments.1',
+      '-string',
+      entry,
+      replacement,
+    ]);
+    const running = await job();
+    previousPid = running?.pid;
+    if (running && !previousPid)
+      throw new Error(
+        'The registered service is restarting. Retry when it is running or stopped.',
+      );
+    report('Checking device usage');
+    if (previousPid && !(await runningHealth(port, previousPid)))
+      throw new Error(
+        'Cannot verify the running service. Check its status before updating.',
+      );
+    const expiresAt = previousPid && (await prepareUpdate(port, previousPid));
+    if (
+      (await job())?.pid !== previousPid ||
+      !(await readFile(plist)).equals(original)
+    )
+      throw new Error(
+        'The service registration changed during the update. Retry.',
+      );
+
+    report('Stopping the old service and releasing hardware');
+    if (expiresAt && expiresAt - Date.now() < 5_000)
+      throw new Error(
+        'The update window expired before the service could stop. Retry.',
+      );
+    if (previousPid) await exec('/bin/launchctl', ['bootout', target]);
+    stopped = true;
+    if (previousPid) await waitForExit(previousPid);
+    await rename(replacement, plist);
+    switched = true;
+    report(`Starting and verifying version ${version}`);
+    await exec('/bin/launchctl', ['bootstrap', domain, plist]);
+    await waitForHealth(port, version);
+    return port;
+  } catch (error) {
+    if (stopped || switched) {
+      report('Update failed. Restoring the previous registration');
+      try {
+        if (switched) {
+          const failedPid = (await job())?.pid;
+          await stop();
+          if (failedPid) await waitForExit(failedPid);
+          await writeFile(replacement, original, { flag: 'wx', mode: 0o600 });
+          await rename(replacement, plist);
+        }
+        if (previousPid) {
+          await checkPort(port);
+          await start();
+        }
+      } catch (rollback) {
+        throw new AggregateError(
+          [error, rollback],
+          `Update and rollback failed. Saved registration: ${backup}. ${String(rollback)}`,
+        );
+      }
+    }
+    throw error;
+  } finally {
+    process.off('SIGINT', interrupted);
+    process.off('SIGTERM', interrupted);
+    await unlink(replacement).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    });
+  }
 }

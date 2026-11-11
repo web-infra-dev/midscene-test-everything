@@ -1,10 +1,12 @@
-import {
-  type ConnectionState,
-  IOSHIDDevice,
-  type InputAction,
-  type ScreenFrame,
-  type ScreenOptions,
-} from '@midscene/ios-hid';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { ControlledDevice } from './control-sessions.js';
+import type { ConnectionManager } from './hardware/runtime/connections.js';
+import { LocalDevice } from './hardware/runtime/local-device.js';
+import type {
+  ConnectionState,
+  ScreenFrame,
+  ScreenOptions,
+} from './hardware/types.js';
 
 export class DeviceConnection {
   private stateListeners = new Set<() => void>();
@@ -17,7 +19,9 @@ export class DeviceConnection {
   protected notifyStateChange() {
     for (const listener of this.stateListeners) listener();
   }
-  protected device?: IOSHIDDevice;
+  constructor(private connections: ConnectionManager) {}
+
+  protected device?: LocalDevice;
   private creating = false;
   private connectionState?: ConnectionState;
   private input: Record<string, unknown> = {};
@@ -38,16 +42,8 @@ export class DeviceConnection {
     }
   }
   getSnapshot() {
-    const { setupUrl, ...state } = this.getConnectionState() ?? {};
     return {
-      state: this.connectionState
-        ? {
-            ...state,
-            setupId: setupUrl
-              ? new URL(setupUrl).pathname.split('/').filter(Boolean).at(-1)
-              : undefined,
-          }
-        : undefined,
+      state: this.getConnectionState(),
       source: this.input.source ?? 'usb',
       bluetoothPeerId: this.input.bluetoothPeerId as string | undefined,
       sourceId: (this.input.deviceId ?? this.input.cameraId) as
@@ -97,7 +93,7 @@ export class DeviceConnection {
           this.notifyStateChange();
         },
       });
-      await device.screenshotBase64();
+      await device.screenshot();
       const state = await device.getConnectionState();
       if (this.device !== device) throw new Error('设备已移除。');
       if (state.phase !== 'ready')
@@ -120,27 +116,33 @@ export class DeviceConnection {
     }
   }
   private async refreshState() {
-    if (this.device && !this.creating) {
+    const device = this.device;
+    if (device && !this.creating) {
       try {
-        this.connectionState = await this.device.getConnectionState();
+        const state = await device.getConnectionState();
+        if (this.device !== device || this.creating)
+          return this.getConnectionState();
+        this.connectionState = state;
         if (
-          this.connectionState.phase === 'ready' &&
+          state.phase === 'ready' &&
           Date.now() - this.lastScreenCheck > 2000
         ) {
           this.lastScreenCheck = Date.now();
+          let screenError: string | undefined;
           try {
-            await this.device.screenshotBase64();
-            this.screenError = undefined;
+            await device.screenshot();
           } catch {
-            this.screenError = '画面已中断，请检查连接后点击刷新。';
+            screenError = '画面已中断，请检查连接后点击刷新。';
           }
+          if (this.device === device) this.screenError = screenError;
         }
       } catch {
-        this.connectionState = {
-          ...this.connectionState!,
-          phase: 'failed',
-          error: '设备连接已失效，请检查连接后点击刷新。',
-        };
+        if (this.device === device && !this.creating)
+          this.connectionState = {
+            ...this.connectionState!,
+            phase: 'failed',
+            error: '设备连接已失效，请检查连接后点击刷新。',
+          };
       }
     }
     return this.getConnectionState();
@@ -181,47 +183,57 @@ export class DeviceConnection {
     this.screenError = undefined;
     this.connectionState = undefined;
     this.notifyStateChange();
-    const device = new IOSHIDDevice({
-      id: typeof input.id === 'string' ? input.id : undefined,
-      name:
-        typeof input.name === 'string' && input.name.trim()
-          ? input.name.trim()
-          : undefined,
-      reuseConfiguration: input.reuseConfiguration !== false,
-      bluetoothPeerId:
-        typeof input.bluetoothPeerId === 'string'
-          ? input.bluetoothPeerId
-          : undefined,
-      screen:
-        source && source !== 'saved'
-          ? ({
-              source,
-              ...(source === 'usb'
-                ? { deviceId: input.deviceId }
-                : source === 'camera'
-                  ? { cameraId: input.cameraId }
-                  : {}),
-            } as ScreenOptions)
-          : undefined,
-    });
+    const device = new LocalDevice(
+      {
+        id: typeof input.id === 'string' ? input.id : undefined,
+        name:
+          typeof input.name === 'string' && input.name.trim()
+            ? input.name.trim()
+            : undefined,
+        reuseConfiguration: input.reuseConfiguration !== false,
+        bluetoothPeerId:
+          typeof input.bluetoothPeerId === 'string'
+            ? input.bluetoothPeerId
+            : undefined,
+        screen:
+          source && source !== 'saved'
+            ? ({
+                source,
+                ...(source === 'usb'
+                  ? { deviceId: input.deviceId }
+                  : source === 'camera'
+                    ? { cameraId: input.cameraId }
+                    : {}),
+              } as ScreenOptions)
+            : undefined,
+      },
+      this.connections,
+    );
     this.device = device;
     try {
       await device.connect({
         onState: (state) => {
+          if (this.device !== device) return;
           this.connectionState = state;
           this.notifyStateChange();
         },
       });
       if (this.device !== device) throw new Error('Session cancelled');
     } catch (error) {
-      if (this.device === device) this.device = undefined;
-      await device.destroy();
-      this.connectionState = {
-        id: this.getConnectionState()?.id ?? '',
-        phase: 'failed',
-        error: error instanceof Error ? error.message : '连接失败，请重试。',
-      };
-      this.notifyStateChange();
+      try {
+        await device.destroy();
+      } finally {
+        if (this.device === device) {
+          this.device = undefined;
+          this.connectionState = {
+            id: this.getConnectionState()?.id ?? '',
+            phase: 'failed',
+            error:
+              error instanceof Error ? error.message : '连接失败，请重试。',
+          };
+          this.notifyStateChange();
+        }
+      }
       throw error;
     } finally {
       this.creating = false;
@@ -233,15 +245,47 @@ export class DeviceConnection {
     return this.device.screenshot();
   }
 
-  async execute(action: InputAction, signal: AbortSignal) {
+  controlDevice(id: string): ControlledDevice | undefined {
     if (
-      !this.device ||
-      this.connectionState?.phase !== 'ready' ||
+      this.connectionState?.device?.id !== id ||
+      this.connectionState.phase !== 'ready' ||
       this.creating ||
       this.screenError
     )
-      throw new Error('设备连接异常，请先在设备管理台恢复。');
-    await this.device.execute(action, { signal });
+      return undefined;
+
+    const connection = this.device?.controlConnection();
+    if (!connection) return undefined;
+    const { session, signal } = connection;
+    return {
+      signal,
+      screenshot: () => session.screenshot(),
+      execute: async (action, cancellation) => {
+        cancellation.throwIfAborted();
+        if (this.screenError)
+          throw new Error('设备连接异常，请先在设备管理台恢复。');
+        await session.execute(action, cancellation);
+      },
+    };
+  }
+
+  async handleSetup(
+    id: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+    path: string,
+  ) {
+    const device = this.device;
+    if (!device) {
+      res.writeHead(410, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: 'This setup has ended. Reconnect the device.',
+        }),
+      );
+      return;
+    }
+    await device.handleSetup(id, req, res, path);
   }
 
   async destroySession() {

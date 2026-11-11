@@ -1,7 +1,7 @@
 import { ReloadOutlined } from '@ant-design/icons';
 import type { IOSHIDServiceProfile } from '@midscene/ios-hid';
 import { Button, Form, Input, Select } from 'antd';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './connect.css';
 
@@ -234,10 +234,32 @@ function ConnectionForm({ initialNotice }: { initialNotice?: string }) {
 
 function Disconnect() {
   const [disconnecting, setDisconnecting] = useState(false);
+  const [ended, setEnded] = useState(false);
+  useEffect(() => {
+    if (ended) return;
+    const controller = new AbortController();
+    const check = async () => {
+      const status = await request<{ ended: boolean }>(
+        '/ios-hid/session-status',
+        {
+          signal: controller.signal,
+        },
+      ).catch(() => undefined);
+      if (status?.ended && !controller.signal.aborted) setEnded(true);
+    };
+    void check();
+    const timer = setInterval(() => void check(), 2000);
+    return () => {
+      controller.abort();
+      clearInterval(timer);
+    };
+  }, [ended]);
   const [notice, setNotice] = useState<string>();
   return (
     <>
-      <output>{notice}</output>
+      <output>
+        {notice ?? (ended ? '设备控制会话已结束，请重新连接。' : undefined)}
+      </output>
       <Button
         loading={disconnecting}
         onClick={async () => {
@@ -252,7 +274,7 @@ function Disconnect() {
           }
         }}
       >
-        断开设备
+        {ended ? '返回连接页面' : '断开设备'}
       </Button>
     </>
   );

@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { ServerResponse } from 'node:http';
-import { connectIOSHIDHost } from '@midscene/ios-hid';
 import express, { type Request, type Router } from 'express';
 import type { ControlledDevice } from './control-sessions.js';
 import { DeviceConnection } from './device-connection.js';
+import { DeviceConfigStore } from './hardware/config/store.js';
+import { ConnectionManager } from './hardware/runtime/connections.js';
+import { IOSHIDRuntime } from './hardware/runtime/runtime.js';
 import { mountSetupRoutes } from './setup-routes.js';
 
 type Entry = {
@@ -13,13 +15,16 @@ type Entry = {
   connected: boolean;
   deviceId?: string;
   unsubscribe: () => void;
+  closeSetup: () => Promise<void>;
 };
 
 export class DeviceWorkspaces {
   private entries = new Map<string, Entry>();
   private closing = false;
   private streams = new Set<ServerResponse>();
-  private bluetoothWatch?: AbortController;
+  private connections: ConnectionManager;
+  private storeLoaded?: Promise<void>;
+  private bluetoothWatch?: () => void;
   private healthTimer?: ReturnType<typeof setInterval>;
   private lastPublished = '';
   publish() {
@@ -33,66 +38,41 @@ export class DeviceWorkspaces {
         response.end();
   }
   private watchBluetooth() {
-    if (this.bluetoothWatch || !this.watchNativeBluetooth) return;
-    const cancellation = new AbortController();
-    this.bluetoothWatch = cancellation;
-    void (async () => {
-      while (!cancellation.signal.aborted) {
-        try {
-          const host = await connectIOSHIDHost();
-          const response = await fetch(`${host.address.url}/bluetooth/events`, {
-            headers: { Authorization: `Bearer ${host.address.token}` },
-            signal: cancellation.signal,
-          });
-          if (!response.ok || !response.body)
-            throw new Error('Bluetooth stream unavailable');
-          let buffer = '';
-          const decoder = new TextDecoder();
-          for await (const chunk of response.body) {
-            buffer += decoder.decode(chunk, { stream: true });
-            while (buffer.includes('\n\n')) {
-              const end = buffer.indexOf('\n\n');
-              const event = buffer.slice(0, end);
-              buffer = buffer.slice(end + 2);
-              const data = event
-                .split('\n')
-                .find((line) => line.startsWith('data: '));
-              if (!data) continue;
-              const status = JSON.parse(data.slice(6));
-              for (const entry of this.entries.values())
-                entry.manager.updateBluetoothStatus(status.hosts);
-              this.publish();
-            }
-          }
-        } catch {
-          if (cancellation.signal.aborted) break;
-        }
-        if (cancellation.signal.aborted) break;
-        await new Promise<void>((resolve) => {
-          const done = () => {
-            clearTimeout(timer);
-            cancellation.signal.removeEventListener('abort', done);
-            resolve();
-          };
-          const timer = setTimeout(done, 1000);
-          cancellation.signal.addEventListener('abort', done, { once: true });
-        });
-      }
-    })();
+    if (this.bluetoothWatch) return;
+    this.bluetoothWatch = this.runtime.input.subscribe(({ hosts }) => {
+      for (const entry of this.entries.values())
+        entry.manager.updateBluetoothStatus(hosts);
+      this.publish();
+    });
   }
   constructor(
-    private createManager = () => new DeviceConnection(),
-    private watchNativeBluetooth = true,
-  ) {}
+    private runtime = new IOSHIDRuntime(),
+    private store = new DeviceConfigStore(),
+  ) {
+    this.connections = new ConnectionManager(runtime, store);
+  }
+
+  private loadStore() {
+    this.storeLoaded ??= this.store.load().catch((error) => {
+      this.storeLoaded = undefined;
+      throw error;
+    });
+    return this.storeLoaded;
+  }
+
+  async listDevices() {
+    await this.loadStore();
+    return this.store.list();
+  }
 
   async create() {
     if (this.closing) throw new Error('Device service is closing');
     if (this.entries.size >= 32)
       throw new Error('最多支持 32 个设备工作区，请先移除不用的设备。');
     const id = randomUUID();
-    const manager = this.createManager();
+    const manager = new DeviceConnection(this.connections);
     const router = express.Router();
-    mountSetupRoutes(router, manager);
+    const closeSetup = mountSetupRoutes(router, manager, this.runtime);
     router.post('/session', express.json({ limit: '64kb' }), (req, res) => {
       if (req.get('x-midscene-playground') !== 'setup') {
         res.status(403).end();
@@ -106,8 +86,12 @@ export class DeviceWorkspaces {
         res.status(400).json({ error: 'Invalid device setup' });
         return;
       }
-      void manager
-        .connect(req.body)
+      void this.loadStore()
+        .then(() => {
+          if (this.closing || !this.entries.has(id))
+            throw new Error('Device workspace closed');
+          return manager.connect(req.body);
+        })
         .then(() => res.json(this.describe(entry)))
         .catch((error: Error) =>
           res.status(400).json({ error: error.message }),
@@ -131,6 +115,7 @@ export class DeviceWorkspaces {
       router,
       manager,
       connected: false,
+      closeSetup,
       unsubscribe: manager.onStateChange(() => this.publish()),
     };
     this.entries.set(id, entry);
@@ -157,16 +142,10 @@ export class DeviceWorkspaces {
     });
   }
   readyDevice(id: string): ControlledDevice | undefined {
-    const entry = [...this.entries.values()].find((item) => {
-      const state = item.manager.getSnapshot();
-      return (
-        state.state?.device?.id === id &&
-        state.state.phase === 'ready' &&
-        !state.screenError &&
-        !state.refreshing
-      );
-    });
-    return entry?.manager;
+    for (const entry of this.entries.values()) {
+      const device = entry.manager.controlDevice(id);
+      if (device) return device;
+    }
   }
   async remove(id: string) {
     const entry = this.entries.get(id);
@@ -174,7 +153,11 @@ export class DeviceWorkspaces {
     entry.unsubscribe();
     this.entries.delete(id);
     this.publish();
-    await entry.manager.destroySession();
+    try {
+      await entry.manager.destroySession();
+    } finally {
+      await entry.closeSetup();
+    }
   }
   mount(app: Router, inUse: (deviceId: string) => boolean = () => false) {
     const allowed = (req: Request) =>
@@ -278,10 +261,22 @@ export class DeviceWorkspaces {
   }
   async close() {
     this.closing = true;
-    this.bluetoothWatch?.abort();
+    this.bluetoothWatch?.();
     clearInterval(this.healthTimer);
     for (const stream of this.streams) stream.end();
     this.streams.clear();
-    await Promise.all([...this.entries.keys()].map((id) => this.remove(id)));
+    const results = await Promise.allSettled(
+      [...this.entries.keys()].map((id) => this.remove(id)),
+    );
+    try {
+      await this.connections.closeAll();
+    } finally {
+      await this.runtime.close();
+    }
+    const failures = results.flatMap((result) =>
+      result.status === 'rejected' ? [result.reason] : [],
+    );
+    if (failures.length)
+      throw new AggregateError(failures, 'Device workspace cleanup failed');
   }
 }

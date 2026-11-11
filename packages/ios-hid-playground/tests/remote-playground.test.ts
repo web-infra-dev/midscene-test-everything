@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { onTestFinished, test } from '@rstest/core';
 import { launchIOSHIDPlayground } from '../dist/index.js';
 
@@ -14,43 +17,54 @@ test('Playground discovers, claims, previews and releases one device from the se
   ).href;
   const { runServer } = await import(serviceModule);
   const { DeviceWorkspaces } = await import(workspaceModule);
+  const storeModule = new URL(
+    '../../ios-hid-service/dist/hardware/config/store.js',
+    import.meta.url,
+  ).href;
+  const { DeviceConfigStore } = await import(storeModule);
+  const directory = await mkdtemp(join(tmpdir(), 'hid-playground-test-'));
+  onTestFinished(() => rm(directory, { recursive: true, force: true }));
+  const store = new DeviceConfigStore(directory);
+  const peer = { id: 'peer', name: 'Test iPhone', reports: [1, 2, 3] };
+  const profile = {
+    id: 'phone-1',
+    name: peer.name,
+    screen: { source: 'usb', deviceId: 'usb' },
+    bluetoothPeerId: peer.id,
+  };
+  await store.save(profile);
   const token = 'test-token';
   const calls: unknown[] = [];
-  const profiles = [
-    { id: 'phone-1', name: 'Test iPhone', screen: { source: 'usb' } },
-  ];
   const jpeg = Buffer.from('simulated frame');
+  const listeners = new Set<(status: { hosts: (typeof peer)[] }) => void>();
   const workspaces = new DeviceWorkspaces(
-    () => ({
-      onStateChange: () => () => {},
-      getSnapshot: () => ({
-        state: {
-          phase: 'ready',
-          device: { id: 'phone-1', name: 'Test iPhone' },
+    {
+      input: {
+        subscribe(listener: (status: { hosts: (typeof peer)[] }) => void) {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
         },
-        source: 'usb',
-      }),
-      refreshConnectionState: async () => {},
-      screenshot: async () => ({
-        jpeg,
-        width: 200,
-        height: 400,
-        sequence: 1,
-        receivedAt: Date.now(),
-      }),
-      execute: async (action: unknown) => {
-        calls.push(action);
+        listPeers: async () => [peer],
       },
-      destroySession: async () => {},
-    }),
-    false,
+      open: async () => ({
+        screenshot: async () => ({
+          jpeg,
+          width: 200,
+          height: 400,
+          sequence: 1,
+          receivedAt: Date.now(),
+        }),
+        execute: async (action: unknown) => {
+          calls.push(action);
+        },
+        close: async () => {},
+      }),
+      close: async () => {},
+    },
+    store,
   );
   const workspace = await workspaces.create();
-  const service = await runServer(0, {
-    accessToken: token,
-    listDevices: async () => profiles,
-    workspaces,
-  });
+  const service = await runServer(0, { accessToken: token, workspaces });
   onTestFinished(() => service.close());
   const playground = await launchIOSHIDPlayground({
     port: 0,
@@ -86,6 +100,13 @@ test('Playground discovers, claims, previews and releases one device from the se
       headers: { 'Content-Type': 'application/json', ...headers },
       body: JSON.stringify(body),
     });
+  const device = await post(
+    host,
+    `${workspace.apiBase}/session`,
+    { id: profile.id, source: 'saved' },
+    { 'X-Midscene-Playground': 'setup' },
+  );
+  assert.equal(device.status, 200, await device.text());
   const input = { host, token, deviceId: 'phone-1' };
   const auth = { Authorization: `Bearer ${token}` };
   const list = async () =>
@@ -122,4 +143,18 @@ test('Playground discovers, claims, previews and releases one device from the se
     200,
   );
   assert.equal((await list())[0].status, 'available');
+
+  assert.equal((await post(origin, '/session', input)).status, 200);
+  const status = async () =>
+    (await (await fetch(`${origin}/ios-hid/session-status`)).json()).ended;
+  assert.equal(await status(), false);
+  for (const notify of listeners) notify({ hosts: [] });
+  const interrupted = await fetch(`${origin}/screenshot`);
+  assert.equal(interrupted.ok, false);
+  assert.equal(await status(), true);
+  assert.equal(
+    (await fetch(`${origin}/session`, { method: 'DELETE' })).status,
+    200,
+  );
+  assert.equal(await status(), false);
 });

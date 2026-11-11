@@ -8,7 +8,11 @@ import {
   playgroundForSessionManager,
 } from '@midscene/playground';
 import express from 'express';
-import { iosHIDPlatform, serviceOptions } from './platform.js';
+import {
+  RemoteSessionManager,
+  iosHIDPlatform,
+  serviceOptions,
+} from './platform.js';
 
 export { iosHIDPlatform };
 
@@ -43,6 +47,13 @@ export async function launchIOSHIDPlayground(
       const app = server.app as express.Express;
       app.get('/', (_req, res) => {
         res.set('Cache-Control', 'no-store').type('html').send(page);
+      });
+      app.get('/ios-hid/session-status', (_req, res) => {
+        const manager = platform.sessionManager;
+        res.set('Cache-Control', 'no-store').json({
+          ended:
+            manager instanceof RemoteSessionManager && manager.sessionEnded,
+        });
       });
       app.use('/ios-hid/ui', express.static(connectionPage, { index: false }));
       app.post(

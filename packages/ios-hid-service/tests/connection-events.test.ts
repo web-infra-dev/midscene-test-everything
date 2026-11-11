@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
-import type { ConnectionState } from '@midscene/ios-hid';
-import { IOSHIDDevice } from '@midscene/ios-hid';
 import { rstest, test } from '@rstest/core';
 import { DeviceConnection } from '../dist/device-connection.js';
+import { LocalDevice } from '../dist/hardware/runtime/local-device.js';
+import type { ConnectionState } from '../dist/hardware/types.js';
 
 test('connection callbacks publish setup, ready, failure and teardown without state polling', async () => {
   let update!: (state: ConnectionState) => void;
   let finish!: () => void;
   rstest
-    .spyOn(IOSHIDDevice.prototype, 'connect')
+    .spyOn(LocalDevice.prototype, 'connect')
     .mockImplementation(async (options) => {
       assert.ok(options?.onState);
       update = options.onState;
@@ -17,9 +17,11 @@ test('connection callbacks publish setup, ready, failure and teardown without st
       });
     });
   rstest
-    .spyOn(IOSHIDDevice.prototype, 'destroy')
+    .spyOn(LocalDevice.prototype, 'destroy')
     .mockImplementation(async () => {});
-  const manager = new DeviceConnection();
+  const manager = new DeviceConnection(
+    {} as ConstructorParameters<typeof DeviceConnection>[0],
+  );
   const snapshots: ReturnType<DeviceConnection['getSnapshot']>[] = [];
   const unsubscribe = manager.onStateChange(() =>
     snapshots.push(manager.getSnapshot()),
@@ -35,7 +37,7 @@ test('connection callbacks publish setup, ready, failure and teardown without st
     id: 'lease',
     phase: 'setup-required',
     setupKind: 'camera',
-    setupUrl: 'http://127.0.0.1:1234/setup/camera-session',
+    setupId: 'camera-session',
   });
   assert.equal(snapshots.at(-1)!.state!.setupKind, 'camera');
   assert.equal(snapshots.at(-1)!.state!.setupId, 'camera-session');
@@ -69,31 +71,40 @@ test('recovery waits for a fresh frame; failure can be retried', async () => {
     device: { id: 'phone', name: 'iPhone' },
   };
   rstest
-    .spyOn(IOSHIDDevice.prototype, 'connect')
+    .spyOn(LocalDevice.prototype, 'connect')
     .mockImplementation(async (options) => {
       options?.onState?.(ready);
     });
   const destroy = rstest
-    .spyOn(IOSHIDDevice.prototype, 'destroy')
+    .spyOn(LocalDevice.prototype, 'destroy')
     .mockImplementation(async () => {});
-  let finishFrame!: (value: string) => void;
+  const frame = {
+    jpeg: Buffer.alloc(1),
+    width: 1,
+    height: 1,
+    sequence: 1,
+    receivedAt: 1,
+  };
+  let finishFrame!: (value: typeof frame) => void;
   const screenshot = rstest
-    .spyOn(IOSHIDDevice.prototype, 'screenshotBase64')
+    .spyOn(LocalDevice.prototype, 'screenshot')
     .mockImplementation(
       () =>
-        new Promise<string>((resolve) => {
+        new Promise<typeof frame>((resolve) => {
           finishFrame = resolve;
         }),
     );
   rstest
-    .spyOn(IOSHIDDevice.prototype, 'getConnectionState')
+    .spyOn(LocalDevice.prototype, 'getConnectionState')
     .mockImplementation(async () => ready);
   rstest
-    .spyOn(IOSHIDDevice.prototype, 'refreshConnection')
+    .spyOn(LocalDevice.prototype, 'refreshConnection')
     .mockImplementation(async (options) => {
       options?.onState?.(ready);
     });
-  const manager = new DeviceConnection();
+  const manager = new DeviceConnection(
+    {} as ConstructorParameters<typeof DeviceConnection>[0],
+  );
   await manager.connect({
     source: 'usb',
     deviceId: 'usb',
@@ -106,7 +117,7 @@ test('recovery waits for a fresh frame; failure can be retried', async () => {
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(manager.getSnapshot().refreshing, true);
   assert.equal(manager.getConnectionState()!.phase, 'connecting');
-  finishFrame('image');
+  finishFrame(frame);
   await recovery;
   assert.equal(manager.getConnectionState()!.phase, 'ready');
   assert.equal(manager.getSnapshot().refreshing, false);
@@ -114,7 +125,7 @@ test('recovery waits for a fresh frame; failure can be retried', async () => {
   screenshot.mockRejectedValueOnce(new Error('Camera unavailable'));
   await assert.rejects(manager.refreshDevice(), /Camera unavailable/);
   assert.equal(manager.getConnectionState()!.phase, 'failed');
-  screenshot.mockResolvedValue('image');
+  screenshot.mockResolvedValue(frame);
   await manager.refreshDevice();
   assert.equal(manager.getConnectionState()!.phase, 'ready');
   await manager.destroySession();

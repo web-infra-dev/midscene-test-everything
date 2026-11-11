@@ -1,19 +1,5 @@
-export { IOSHIDDevice } from './device.js';
 export { IOSHIDAgent } from './agent.js';
-export { HostClient } from './client/host-client.js';
-export type {
-  IOSHIDDeviceOptions,
-  ScreenOptions,
-  ScreenFrame,
-  InputAction,
-  DeviceConfig,
-  ConnectionState,
-  ConnectOptions,
-  AirPlaySetupInfo,
-} from './types.js';
-
-export { ensureLocalHost as connectIOSHIDHost } from './client/ensure-local-host.js';
-export type { TaskRequest, TaskState } from './types.js';
+export type { InputAction, Point, ScreenFrame } from './types.js';
 
 export {
   IOSHIDServiceDevice,
