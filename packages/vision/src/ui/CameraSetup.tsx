@@ -52,6 +52,9 @@ export interface CameraSetupProps {
   baseUrl: string;
   onComplete?: (settings: CameraScreenSettings) => void;
   controlsTarget?: HTMLElement;
+  continueLabel?: string;
+  savingLabel?: string;
+  onConfirm?: (settings: CameraScreenSettings) => Promise<void>;
 }
 /** The same phone pairing view, screen editor and preview used by arm setup. */
 export function CameraSetup({
@@ -62,6 +65,9 @@ export function CameraSetup({
   baseUrl,
   onComplete,
   controlsTarget,
+  continueLabel,
+  savingLabel,
+  onConfirm,
 }: CameraSetupProps) {
   const selectId = useId();
   const [state, setState] = useState<State>();
@@ -93,6 +99,7 @@ export function CameraSetup({
   const detecting = useRef(false);
   const attempted = useRef('');
   const setupId = baseUrl.split('/').filter(Boolean).at(-1)!;
+
   async function request(path: string, value?: unknown) {
     const response = await fetch(`${baseUrl}${path}`, {
       method: value === undefined ? 'GET' : 'POST',
@@ -198,7 +205,13 @@ export function CameraSetup({
   ]);
   useEffect(() => {
     setAccuracy(undefined);
-    if (!settings || !state?.phoneConnected || stage !== 'screen' || busy)
+    if (
+      !settings ||
+      !state?.phoneConnected ||
+      stage !== 'screen' ||
+      busy ||
+      onConfirm
+    )
       return;
     let stopped = false;
     const timer = setTimeout(() => {
@@ -218,7 +231,7 @@ export function CameraSetup({
       stopped = true;
       clearTimeout(timer);
     };
-  }, [checkKey, stage, busy]);
+  }, [checkKey, stage, busy, onConfirm]);
   async function run(work: () => Promise<void>) {
     setBusy(true);
     setError('');
@@ -284,7 +297,7 @@ export function CameraSetup({
   const detectionActions = renderDetectionActions?.({
     markers: detect,
     ai: detectAI,
-    busy: detectingAction,
+    busy: detectingAction || (Boolean(onConfirm) && saving),
     markersDisabled: !cameraId || !state?.phoneConnected || busy,
     aiDisabled: busy || !src,
   }) ?? (
@@ -304,6 +317,7 @@ export function CameraSetup({
       onChange={(value) => {
         setCorrection(value);
         setHasResult(true);
+        if (onConfirm) setError('');
       }}
       disabled={busy}
       translate={t}
@@ -322,6 +336,19 @@ export function CameraSetup({
     ) : (
       <div className="vision-result-empty">校正后将在这里显示手机画面</div>
     );
+  const canConfirm =
+    settings &&
+    (onConfirm ? hasResult : Boolean(accuracy && state?.phoneConnected));
+  const confirmLabel =
+    (saving && savingLabel) || continueLabel || t('Save and Continue');
+  async function confirmSettings() {
+    if (!settings) return;
+    if (onConfirm) await onConfirm(settings);
+    else await request('/confirm', settings);
+    setStage('saved');
+    onComplete?.(settings);
+  }
+
   const controls = (
     <div className="vision-screen-controls">
       {!selectedCameraId && !fullPage && (
@@ -374,17 +401,11 @@ export function CameraSetup({
       {stage === 'screen' && !fullPage && (
         <Button
           type="primary"
-          disabled={!settings || !accuracy || !state?.phoneConnected}
+          disabled={!canConfirm}
           loading={busy}
-          onClick={() =>
-            void run(async () => {
-              await request('/confirm', settings);
-              setStage('saved');
-              onComplete?.(settings!);
-            })
-          }
+          onClick={() => void run(confirmSettings)}
         >
-          {t('Save and Continue')}
+          {confirmLabel}
         </Button>
       )}
       {stage === 'saved' && <output>{t('Saved')}</output>}
@@ -507,17 +528,11 @@ export function CameraSetup({
                 verified={Boolean(accuracy)}
                 detecting={detectingAction}
                 saving={saving}
-                disabled={
-                  !settings || !accuracy || !state?.phoneConnected || busy
-                }
-                continueLabel={t('Save and Continue')}
+                disabled={!canConfirm || busy || stage === 'saved'}
+                continueLabel={confirmLabel}
                 onContinue={() => {
                   setSaving(true);
-                  void run(async () => {
-                    await request('/confirm', settings);
-                    setStage('saved');
-                    onComplete?.(settings!);
-                  }).finally(() => setSaving(false));
+                  void run(confirmSettings).finally(() => setSaving(false));
                 }}
               />
             )}

@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { CameraStreamManager, cameraBackend } from '@midscene/robotics-vision';
+import type { CameraSetupPreview } from '@midscene/robotics-vision/setup';
 import { directory } from '../../settings.js';
 import { HIDInputManager, type HIDInputSession } from '../input/session.js';
 import { AirPlayScreenSession } from '../screen/airplay.js';
@@ -50,10 +51,16 @@ export class IOSHIDRuntime {
     return 'airplay';
   }
 
-  openScreen(config: DeviceConfig): Promise<ScreenSession> {
-    return this.track(this.createScreen(config));
+  openScreen(
+    config: DeviceConfig,
+    cameraPreview?: CameraSetupPreview,
+  ): Promise<ScreenSession> {
+    return this.track(this.createScreen(config, cameraPreview));
   }
-  private async createScreen(config: DeviceConfig): Promise<ScreenSession> {
+  private async createScreen(
+    config: DeviceConfig,
+    cameraPreview?: CameraSetupPreview,
+  ): Promise<ScreenSession> {
     const key = this.screenKey(config);
     const release = this.reserve([key]);
     let source: ScreenSession | undefined;
@@ -61,7 +68,13 @@ export class IOSHIDRuntime {
       if (config.screen.source === 'usb')
         source = await USBScreenSession.open(config.screen.deviceId!);
       else if (config.screen.source === 'camera')
-        source = await CameraScreenSession.open(this.cameras, config.camera!);
+        source = cameraPreview
+          ? CameraScreenSession.fromStream(
+              cameraPreview.stream,
+              config.camera!,
+              cameraPreview.release,
+            )
+          : await CameraScreenSession.open(this.cameras, config.camera!);
       else source = await AirPlayScreenSession.open(config.id, config.name);
       this.lifetime.signal.throwIfAborted();
       const opened = source;

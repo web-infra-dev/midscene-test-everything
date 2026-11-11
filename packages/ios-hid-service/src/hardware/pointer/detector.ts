@@ -1,9 +1,25 @@
 import sharp from 'sharp';
 import type { Point, ScreenFrame } from '../types.js';
+import { alignPointerFrame, registrationMargin } from './registration.js';
 
 export interface PointerCandidate extends Point {
   area: number;
   strength: number;
+  bounds: { left: number; top: number; right: number; bottom: number };
+}
+
+export function pointerNear(
+  candidate: PointerCandidate,
+  point: Point,
+  tolerance: number,
+) {
+  const { left, top, right, bottom } = candidate.bounds;
+  return (
+    Math.hypot(
+      Math.max(left - point.x, 0, point.x - right),
+      Math.max(top - point.y, 0, point.y - bottom),
+    ) < tolerance
+  );
 }
 
 async function frameDifference(before: ScreenFrame, after: ScreenFrame) {
@@ -15,17 +31,55 @@ async function frameDifference(before: ScreenFrame, after: ScreenFrame) {
   const decode = (frame: ScreenFrame) =>
     sharp(frame.jpeg).resize(width, height).greyscale().raw().toBuffer();
   const [a, b] = await Promise.all([decode(before), decode(after)]);
-  const difference = new Uint8Array(width * height);
-  let changed = 0;
-  for (let i = 0; i < difference.length; i++) {
-    difference[i] = Math.abs(a[i] - b[i]);
-    if (difference[i] >= 14) changed++;
+  let { difference, changed } = pixelDifference(a, b, width, height);
+  let compared = width * height;
+  // Skip registration when the raw difference is already mostly stationary.
+  if (changed > width * height * 0.02 && Math.min(width, height) >= 32) {
+    const aligned = await alignPointerFrame(a, b, width, height);
+    if (aligned) {
+      // Compare the same interior on both sides. The warp's outer pixels
+      // have no matching observation in the other frame.
+      const raw = pixelDifference(a, b, width, height, registrationMargin);
+      const registered = pixelDifference(
+        a,
+        aligned,
+        width,
+        height,
+        registrationMargin,
+      );
+      if (registered.changed < raw.changed * 0.5) {
+        difference = registered.difference;
+        changed = registered.changed;
+        compared =
+          (width - 2 * registrationMargin) * (height - 2 * registrationMargin);
+      }
+    }
   }
-  if (changed > difference.length * 0.12)
+  if (changed > compared * 0.12)
     throw new Error(
       'Screen changed during pointer measurement. Keep a static screen visible.',
     );
   return { difference, width, height, scale };
+}
+
+function pixelDifference(
+  before: Uint8Array,
+  after: Uint8Array,
+  width: number,
+  height: number,
+  margin = 0,
+) {
+  const difference = new Uint8Array(width * height);
+  let changed = 0;
+  for (let y = margin; y < height - margin; y++) {
+    for (let x = margin; x < width - margin; x++) {
+      const i = y * width + x;
+      const delta = Math.abs(before[i] - after[i]);
+      difference[i] = delta;
+      if (delta >= 14) changed++;
+    }
+  }
+  return { difference, changed };
 }
 
 export interface PointerPositionScore {
@@ -136,6 +190,12 @@ export async function detectPointerChanges(
       y: sy / end / scale,
       area: end,
       strength: strength / end,
+      bounds: {
+        left: minX / scale,
+        top: minY / scale,
+        right: (maxX + 1) / scale,
+        bottom: (maxY + 1) / scale,
+      },
     });
   }
   return candidates;

@@ -817,10 +817,20 @@ export function ConnectionPanel({
                 (source !== 'airplay' && (loading || !selectedAvailable))
               }
             >
-              {source === 'airplay' ? '启动 AirPlay 接收器' : '连接设备'}
+              {source === 'airplay'
+                ? '启动 AirPlay 接收器'
+                : source === 'camera' && connection.phase === 'connecting'
+                  ? '正在验证指针…'
+                  : '连接设备'}
             </Button>
           )}
         </Form>
+        {source === 'camera' && connection.phase === 'connecting' && (
+          <output>请保持手机和摄像头静止，屏幕保持明亮。</output>
+        )}
+        {!pending && source === 'camera' && connection.error && (
+          <Alert type="warning" message={connection.error} />
+        )}
         {!pending &&
           source === 'camera' &&
           selectedAvailable &&

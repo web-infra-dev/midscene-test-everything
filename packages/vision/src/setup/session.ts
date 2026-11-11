@@ -20,29 +20,42 @@ import { ScreenPhoneServer } from '../phone/server.js';
 import { sameLayout } from '../phone/session.js';
 import type { CameraScreenSettings } from '../screen.js';
 
+export interface CameraSetupPreview {
+  stream: CameraStream;
+  transfer(): void;
+  release(): Promise<void>;
+}
+
 export interface CameraSetupOptions {
   screenDetector?: typeof detectScreenWithModel;
   cameraId?: string;
   initialValue?: CameraScreenSettings;
   streams?: CameraStreamManager;
-  onConfirm(settings: CameraScreenSettings): Promise<void>;
+  phone?: ScreenPhoneServer;
+  reuseValidatedSettings?: boolean;
+  onConfirm(
+    settings: CameraScreenSettings,
+    preview?: CameraSetupPreview,
+  ): Promise<void>;
 }
 
 /** Mountable in an existing server; owns only streams it creates. */
 export class CameraSetupSession {
   readonly id = randomUUID();
-  private phone = new ScreenPhoneServer();
+  private phone: ScreenPhoneServer;
   readonly result: Promise<CameraScreenSettings>;
   private resolve!: (value: CameraScreenSettings) => void;
   private reject!: (reason: Error) => void;
   private streams: CameraStreamManager;
   private stream?: CameraStream;
   private ownsStream = false;
+  private validatedSettings?: string;
   private settled = false;
   private closing = false;
   private pending: Promise<unknown> = Promise.resolve();
 
   constructor(private options: CameraSetupOptions) {
+    this.phone = options.phone ?? new ScreenPhoneServer();
     this.streams = options.streams ?? new CameraStreamManager(cameraBackend());
     this.result = new Promise((resolve, reject) => {
       this.resolve = resolve;
@@ -67,7 +80,7 @@ export class CameraSetupSession {
       return;
     }
     if (req.method === 'GET' && path === '/state') {
-      await this.phone.start();
+      if (!this.options.phone) await this.phone.start();
       const cameras = await listCameras({ includeBuiltIn: true });
       if (
         this.options.cameraId &&
@@ -82,7 +95,9 @@ export class CameraSetupSession {
             : cameras,
           selectedCameraId: this.options.cameraId,
           initialValue: this.options.initialValue,
-          phone: this.phone.status(),
+          phone: this.phone.status(
+            this.options.phone ? req.socket.localPort : undefined,
+          ),
           layout: this.phone.session.update?.layout,
           phoneConnected: this.phone.session.connected(),
         }),
@@ -230,6 +245,11 @@ export class CameraSetupSession {
           height: capture.height,
           fps: capture.fps,
         };
+        const settingsKey = JSON.stringify([this.stream.id, settings]);
+        if (path === '/confirm' && this.validatedSettings === settingsKey) {
+          await this.confirm(settings, res);
+          return;
+        }
         // Transform also validates output dimensions and pixel budget.
         const jpeg = await new PerspectiveTransformer().transform(frame.jpeg, {
           points: settings.correction.points,
@@ -256,12 +276,9 @@ export class CameraSetupSession {
           res.end(JSON.stringify({ accuracy }));
           return;
         }
-        await this.options.onConfirm(settings);
-        await this.releaseStream();
-        this.settled = true;
-        this.resolve(settings);
-        res.setHeader('Content-Type', 'application/json');
-        res.end('{}');
+        if (this.options.reuseValidatedSettings)
+          this.validatedSettings = settingsKey;
+        await this.confirm(settings, res);
         return;
       }
       if (path === '/cancel') {
@@ -276,11 +293,38 @@ export class CameraSetupSession {
     await operation;
   }
 
+  private async confirm(settings: CameraScreenSettings, res: ServerResponse) {
+    await this.options.onConfirm(settings, this.confirmationPreview());
+    await this.releaseStream();
+    this.settled = true;
+    this.resolve(settings);
+    res.setHeader('Content-Type', 'application/json');
+    res.end('{}');
+  }
+
+  private confirmationPreview(): CameraSetupPreview | undefined {
+    const stream = this.stream;
+    if (!stream || !this.ownsStream) return;
+    // The editor owns capture until the caller has successfully opened a session.
+    let transferred = false;
+    return {
+      stream,
+      transfer: () => {
+        this.ownsStream = false;
+        transferred = true;
+      },
+      release: async () => {
+        if (transferred) await this.streams.delete(stream.id);
+      },
+    };
+  }
+
   private async releaseStream() {
     if (this.stream && this.ownsStream)
       await this.streams.delete(this.stream.id);
     this.stream = undefined;
     this.ownsStream = false;
+    this.validatedSettings = undefined;
   }
 
   async close() {
@@ -294,7 +338,7 @@ export class CameraSetupSession {
     try {
       await this.releaseStream();
     } finally {
-      await this.phone.close();
+      if (!this.options.phone) await this.phone.close();
     }
   }
 }

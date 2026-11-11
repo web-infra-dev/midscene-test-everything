@@ -41,12 +41,17 @@ test('Service recovery reuses the exact camera binding without opening setup and
     { ...saved, name: 'Bluetooth phone', modelName: undefined },
   ]);
   await manager.close(manager.get(initial.id));
+  const reconnect = manager.begin({ id: saved.id });
+  await manager.get(reconnect.id).opening;
+  assert.equal(manager.get(reconnect.id).state.phase, 'ready');
+  assert.equal(manager.get(reconnect.id).setup, undefined);
+  await manager.close(manager.get(reconnect.id));
   saved.bluetoothPeerId = undefined;
   const incomplete = manager.begin({ id: saved.id }, true);
   await manager.get(incomplete.id).opening;
   assert.equal(manager.get(incomplete.id).state.phase, 'failed');
   assert.equal(manager.get(incomplete.id).setup, undefined);
-  assert.equal(opened.length, 1);
+  assert.equal(opened.length, 2);
 });
 
 test('AirPlay recovery automatically resumes the saved binding when mirroring returns', async () => {

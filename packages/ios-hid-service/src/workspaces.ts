@@ -6,6 +6,7 @@ import { DeviceConnection } from './device-connection.js';
 import { DeviceConfigStore } from './hardware/config/store.js';
 import { ConnectionManager } from './hardware/runtime/connections.js';
 import { IOSHIDRuntime } from './hardware/runtime/runtime.js';
+import type { PhoneCalibration } from './phone-calibration.js';
 import { mountSetupRoutes } from './setup-routes.js';
 
 type Entry = {
@@ -159,7 +160,12 @@ export class DeviceWorkspaces {
       await entry.closeSetup();
     }
   }
-  mount(app: Router, inUse: (deviceId: string) => boolean = () => false) {
+  mount(
+    app: Router,
+    inUse: (deviceId: string) => boolean = () => false,
+    phoneCalibration?: PhoneCalibration,
+  ) {
+    this.connections.phoneCalibration = phoneCalibration;
     const allowed = (req: Request) =>
       req.get('x-midscene-playground') === 'workspace';
     if (!this.healthTimer) {

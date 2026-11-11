@@ -84,7 +84,7 @@ test('measured diagonals retain their own gain and unmeasured reports are reject
   );
 });
 
-function delayedPhone(gain: (trial: number) => number = () => 1) {
+function delayedPhone(gain: (trial: number) => number = () => 1, offsetX = 0) {
   const model = curveModel({ a: 1.4, b: 0.08 }, { a: 1.4, b: 0.08 });
   let point = { x: 260, y: 450 };
   let displayed = { ...point };
@@ -125,7 +125,7 @@ function delayedPhone(gain: (trial: number) => number = () => 1) {
   const transport = {
     moveTo: async (target: Point) => {
       previous = { ...displayed };
-      point = { ...target };
+      point = { x: target.x + offsetX, y: target.y };
       frames = 0;
       moving = false;
       anchorSeen = 0;
@@ -206,4 +206,26 @@ test('inconsistent repeated moves are rejected instead of fitting a noisy curve'
     ),
     /inconsistent across repeated moves/,
   );
+}, 60_000);
+
+test('a tracked pointer can settle outside the expected anchor region', async () => {
+  accelerateTimers();
+  const phone = delayedPhone(() => 1, 24);
+  const validation = await validateMotionModel(
+    phone.screen,
+    phone.transport,
+    phone.model,
+    new AbortController().signal,
+    {
+      position: {
+        x: 260,
+        y: 450,
+        area: 200,
+        strength: 187,
+        bounds: { left: 252, top: 442, right: 268, bottom: 458 },
+      },
+    },
+  );
+  assert.equal(validation.samples.length, 3);
+  assert.ok(validation.maxErrorPx < 3);
 }, 60_000);

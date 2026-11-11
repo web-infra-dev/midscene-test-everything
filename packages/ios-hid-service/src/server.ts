@@ -9,6 +9,7 @@ import { ModelConfigManager } from '@midscene/shared/env';
 import express, { type Request } from 'express';
 import { ControlError, ControlSessions } from './control-sessions.js';
 import type { DeviceConfig } from './hardware/types.js';
+import { PhoneCalibration } from './phone-calibration.js';
 import { ensureToken, label } from './settings.js';
 import { DeviceWorkspaces } from './workspaces.js';
 
@@ -181,15 +182,19 @@ export async function runServer(
   port: number,
   {
     accessToken,
-    workspaces = new DeviceWorkspaces(),
-    listDevices = () => workspaces.listDevices(),
+    workspaces: suppliedWorkspaces,
+    listDevices,
   }: {
     accessToken?: string;
     listDevices?: () => Promise<DeviceConfig[]>;
     workspaces?: DeviceWorkspaces;
   } = {},
 ) {
-  const token = Buffer.from(`Bearer ${accessToken ?? (await ensureToken())}`);
+  const serviceToken = accessToken ?? (await ensureToken());
+  const token = Buffer.from(`Bearer ${serviceToken}`);
+  const phoneCalibration = new PhoneCalibration(serviceToken);
+  const workspaces = suppliedWorkspaces ?? new DeviceWorkspaces();
+  const savedDevices = listDevices ?? (() => workspaces.listDevices());
   const { version } = JSON.parse(
     await readFile(new URL('../package.json', import.meta.url), 'utf8'),
   );
@@ -228,7 +233,7 @@ export async function runServer(
     next();
   });
   api.get('/devices', (_req, res) => {
-    void listDevices()
+    void savedDevices()
       .then((devices) =>
         res.json({
           devices: devices.map(({ id, name, screen }) => ({
@@ -249,6 +254,11 @@ export async function runServer(
   });
   api.use('/sessions', sessions.router());
   app.use('/api/v1', api);
+  app.get('/phone-calibration', (req, res) => {
+    const phone = phoneCalibration.authenticate(req);
+    if (phone) phone.handle(req, res);
+    else res.status(403).end();
+  });
   app.use((req, res, next) => {
     if (localRequest(req)) next();
     else
@@ -307,9 +317,16 @@ export async function runServer(
       );
     },
   );
-  workspaces.mount(app, (id) => sessions.busy(id));
+  workspaces.mount(app, (id) => sessions.busy(id), phoneCalibration);
   app.use(express.static(fileURLToPath(new URL('./ui/', import.meta.url))));
   const server = createServer(app);
+  server.on('upgrade', (req, stream, head) => {
+    const phone = req.url?.startsWith('/phone-calibration/session?')
+      ? phoneCalibration.authenticate(req)
+      : undefined;
+    if (phone) phone.upgrade(req, stream, head);
+    else stream.destroy();
+  });
   try {
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject);
@@ -338,6 +355,7 @@ export async function runServer(
         await sessions.close();
         await workspaces.close();
       } finally {
+        await phoneCalibration.close();
         await closed;
       }
     },

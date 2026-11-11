@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { createCameraSetup } from '@midscene/robotics-vision/setup';
+import type { PhoneCalibration } from '../../phone-calibration.js';
 import {
   type DeviceConfigStore,
   DeviceSelectionRequired,
@@ -26,6 +27,7 @@ export interface Connection {
   closing?: Promise<void>;
 }
 export class ConnectionManager {
+  phoneCalibration?: PhoneCalibration;
   private entries = new Map<string, Connection>();
   constructor(
     private runtime: IOSHIDRuntime,
@@ -175,14 +177,24 @@ export class ConnectionManager {
         c.state.phase = 'setup-required';
         const setup = createCameraSetup({
           streams: this.runtime.cameras,
+          reuseValidatedSettings: true,
+          phone: config.bluetoothPeerId
+            ? this.phoneCalibration?.forPeer(config.bluetoothPeerId)
+            : undefined,
           cameraId: config.screen.cameraId,
           initialValue:
             !config.screen.cameraId ||
             config.screen.cameraId === config.camera?.cameraId
               ? config.camera
               : undefined,
-          onConfirm: async (settings) => {
+          onConfirm: async (settings, cameraPreview) => {
+            if (!cameraPreview)
+              throw new Error('摄像头正在被其他会话使用，请释放后重试。');
+            c.lifetime.signal.throwIfAborted();
             config.camera = settings;
+            const screen = await this.runtime.openScreen(config, cameraPreview);
+            await this.openSession(c, screen);
+            cameraPreview.transfer();
           },
         });
         c.setup = setup;
@@ -196,6 +208,8 @@ export class ConnectionManager {
           c.state.setupId = undefined;
           c.state.setupKind = undefined;
         }
+        if (!c.lifetime.signal.aborted) c.state.phase = 'ready';
+        return;
       }
       if (c.state.phase === 'closed') return;
     }
@@ -204,7 +218,6 @@ export class ConnectionManager {
     if (!restore || config.screen.source === 'airplay') {
       if (
         config.screen.source === 'airplay' ||
-        config.screen.source === 'camera' ||
         !config.bluetoothPeerId ||
         (config.screen.source === 'usb' && !config.screen.deviceId)
       ) {
@@ -228,35 +241,41 @@ export class ConnectionManager {
       await preview?.close();
       return;
     }
-    const peer = (await this.runtime.input.listPeers()).find(
-      (peer) => peer.id === config.bluetoothPeerId,
-    );
-    if (peer) config.name = peer.name;
-    config.modelName = undefined;
     c.state.phase = 'connecting';
-    const session = await this.runtime.open(
-      config,
-      preview,
-      c.lifetime.signal,
-      async () => {
-        c.lifetime.signal.throwIfAborted();
-        await this.store.save(config);
-      },
-    );
-    if ((c.state.phase as string) === 'closed') {
-      await session.close();
-      return;
-    }
-    c.session = session;
-    c.state.device = {
-      id: config.id,
-      name: config.name,
-      modelName: config.modelName,
-    };
-    await this.store.save(config);
-    c.lifetime.signal.throwIfAborted();
-    c.state.phase = 'ready';
+    await this.openSession(c, preview);
+    if (!c.lifetime.signal.aborted) c.state.phase = 'ready';
   }
+
+  private async openSession(c: Connection, preview?: ScreenSession) {
+    const { config } = c;
+    const { signal } = c.lifetime;
+    let session: DeviceSession | undefined;
+    const save = async () => {
+      signal.throwIfAborted();
+      await this.store.save(config);
+    };
+    try {
+      const peer = (await this.runtime.input.listPeers()).find(
+        (peer) => peer.id === config.bluetoothPeerId,
+      );
+      if (peer) config.name = peer.name;
+      config.modelName = undefined;
+      session = await this.runtime.open(config, preview, signal, save);
+      await save();
+      signal.throwIfAborted();
+      c.session = session;
+      c.state.device = {
+        id: config.id,
+        name: config.name,
+        modelName: config.modelName,
+      };
+    } catch (error) {
+      if (session) await session.close();
+      else await preview?.close();
+      throw error;
+    }
+  }
+
   close(c: Connection): Promise<void> {
     c.closing ??= (async () => {
       c.state.phase = 'closed';

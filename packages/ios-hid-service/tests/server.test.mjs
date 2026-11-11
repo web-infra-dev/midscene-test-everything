@@ -410,3 +410,59 @@ test('update preparation refuses active leases and gates new control once idle',
   assert.equal((await acquire()).status, 503);
   assert.equal((await prepare(local)).status, 503);
 });
+
+test('the same phone calibration URL works before setup and after a service restart', async (t) => {
+  let calibration;
+  const options = {
+    accessToken: 'test-token',
+    workspaces: {
+      mount(_app, _inUse, phoneCalibration) {
+        calibration = phoneCalibration;
+      },
+      async close() {},
+    },
+  };
+  let service = await runServer(0, options);
+  t.after(() => service?.close());
+  const phone = calibration.forPeer('phone');
+  const [link] = phone.status(service.port).links;
+  assert.ok(link);
+  assert.equal(calibration.forPeer('phone'), phone);
+  assert.notEqual(calibration.forPeer('other-phone'), phone);
+  const page = new URL(link.url);
+  page.hostname = '127.0.0.1';
+  const request = () =>
+    new Promise((resolve, reject) => {
+      get(page, { headers: { Host: `mac-mini.local:${page.port}` } }, (res) => {
+        res.resume();
+        res.once('end', () => resolve(res.statusCode));
+        res.once('error', reject);
+      }).once('error', reject);
+    });
+  assert.equal(await request(), 200);
+  assert.equal((await fetch(new URL(page.pathname, page))).status, 403);
+  const socketURL = new URL(page);
+  socketURL.protocol = 'ws:';
+  socketURL.pathname = '/phone-calibration/session';
+  const connect = async () => {
+    const socket = new WebSocket(socketURL);
+    await new Promise((resolve, reject) => {
+      socket.addEventListener('open', resolve, { once: true });
+      socket.addEventListener('error', reject, { once: true });
+    });
+    return socket;
+  };
+  const socket = await connect();
+  const port = service.port;
+  await service.close();
+  service = undefined;
+  service = await runServer(port, options);
+  assert.equal(await request(), 200);
+  assert.equal(
+    calibration.forPeer('phone').status(port).links[0].url,
+    link.url,
+  );
+  const reconnected = await connect();
+  reconnected.close();
+  socket.close();
+});

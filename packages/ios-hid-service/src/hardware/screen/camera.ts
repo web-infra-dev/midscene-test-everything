@@ -1,6 +1,7 @@
 import {
   CameraScreen,
   type CameraScreenSettings,
+  type CameraStream,
   type CameraStreamManager,
 } from '@midscene/robotics-vision';
 import type { ScreenSession } from './source.js';
@@ -17,9 +18,16 @@ export class CameraScreenSession implements ScreenSession {
       deviceId: settings.cameraId,
       ...settings.capture,
     });
-    return new CameraScreenSession(new CameraScreen(stream, settings), () =>
+    return CameraScreenSession.fromStream(stream, settings, () =>
       streams.delete(stream.id),
     );
+  }
+  static fromStream(
+    stream: CameraStream,
+    settings: CameraScreenSettings,
+    release: () => Promise<void>,
+  ) {
+    return new CameraScreenSession(new CameraScreen(stream, settings), release);
   }
   async getFrame(options = {}) {
     const frame = await this.screen.getFrame(options);

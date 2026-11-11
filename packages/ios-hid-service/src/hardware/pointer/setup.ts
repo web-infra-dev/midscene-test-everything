@@ -1,6 +1,11 @@
 import type { ScreenSession } from '../screen/source.js';
 import type { Point, ScreenFrame } from '../types.js';
-import { scorePointerPositions } from './detector.js';
+import {
+  type PointerCandidate,
+  detectPointerChanges,
+  pointerNear,
+  scorePointerPositions,
+} from './detector.js';
 import { type PointerTurn, pointerToScreen } from './mapping.js';
 
 export interface PointerTransport {
@@ -14,14 +19,21 @@ export async function measurePointerTurn(
   screen: ScreenSession,
   input: PointerTransport,
   signal: AbortSignal,
-): Promise<{ turn: PointerTurn; width: number; height: number }> {
+): Promise<{
+  turn: PointerTurn;
+  width: number;
+  height: number;
+  position?: PointerCandidate;
+}> {
   const votes = [0, 0, 0, 0];
   let frame = await screen.getFrame({ fresh: true, allowUnchanged: true });
-  for (const point of [
+  const probes = [
     { x: 0.27, y: 0.32 },
     { x: 0.68, y: 0.61 },
     { x: 0.38, y: 0.72 },
-  ]) {
+  ];
+  let position: PointerCandidate | undefined;
+  for (const point of probes) {
     signal.throwIfAborted();
     const before = frame;
     await input.absolute(point);
@@ -49,8 +61,24 @@ export async function measurePointerTurn(
         best.mean >= 8 &&
         best.fraction >= 0.2 &&
         best.mean > second.mean * 1.5 + 3
-      )
+      ) {
         matched.add(best.turn);
+        if (point === probes.at(-1)) {
+          const expected = pointerToScreen(point, best.turn);
+          const candidates = await detectPointerChanges(before, frame);
+          const nearby = candidates.filter((candidate) =>
+            pointerNear(
+              candidate,
+              {
+                x: expected.x * (frame.width - 1),
+                y: expected.y * (frame.height - 1),
+              },
+              Math.max(10, Math.min(frame.width, frame.height) * 0.025),
+            ),
+          );
+          if (nearby.length === 1) position = nearby[0];
+        }
+      }
       if (matched.size === 1) break;
     }
     for (const turn of matched) votes[turn]++;
@@ -62,5 +90,10 @@ export async function measurePointerTurn(
     throw new Error(
       'Cannot reliably locate the mouse pointer. Enable AssistiveTouch, keep the phone still on a static bright screen, then retry.',
     );
-  return { turn: matches[0], width: frame.width, height: frame.height };
+  return {
+    turn: matches[0],
+    width: frame.width,
+    height: frame.height,
+    position,
+  };
 }

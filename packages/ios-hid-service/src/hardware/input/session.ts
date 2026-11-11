@@ -7,10 +7,12 @@ import {
 import {
   MotionValidationError,
   type PointerMotionModel,
+  type PointerTracking,
   correctMotionModel,
   measureMotionModel,
   planRelativeDrag,
   validateMotionModel,
+  warmUpPointer,
 } from '../pointer/motion-model.js';
 import {
   DRAG_REPORT_LIMIT,
@@ -144,17 +146,27 @@ export class HIDInputSession {
         return;
       }
     }
-    this.mapping = await measurePointerTurn(
+    // Warm up before the direction probes, so the last observed position
+    // remains valid when the first motion probe starts.
+    await this.absolute({ x: 0.2, y: 0.3 }, signal);
+    await warmUpPointer({ relative: (delta) => this.relative(delta) }, signal);
+    const { position, ...mapping } = await measurePointerTurn(
       screen,
       { absolute: (point) => this.absolute(point, signal) },
       signal,
     );
+    this.mapping = mapping;
     this.motion = undefined;
     // New or changed bindings require measurement; ordinary reconnects reuse
     // the previously validated orientation and movement table above.
-    await this.prepareMotion(screen, signal);
+    await this.prepareMotion(screen, signal, { position });
   }
-  private async prepareMotion(screen: ScreenSession, signal: AbortSignal) {
+  private async prepareMotion(
+    screen: ScreenSession,
+    signal: AbortSignal,
+    warmedTracking?: PointerTracking,
+  ) {
+    const tracking = warmedTracking ?? {};
     const config = this.profileConfig;
     const mapping = this.mapping!;
     const assertGeometry = async () => {
@@ -182,6 +194,7 @@ export class HIDInputSession {
           transport,
           cached.model,
           signal,
+          tracking,
         );
       } catch {
         signal.throwIfAborted();
@@ -200,7 +213,12 @@ export class HIDInputSession {
       config.pointerMotion = undefined;
       await this.persistProfile?.();
     }
-    const measured = await measureMotionModel(screen, transport, signal);
+    const measured = await measureMotionModel(
+      screen,
+      transport,
+      signal,
+      warmedTracking,
+    );
     let validation;
     // Learn stable discrepancies, then test again with new moves. Never turn a
     // failed sample itself into a passing validation or save unchecked data.
@@ -211,6 +229,7 @@ export class HIDInputSession {
           transport,
           measured.model,
           signal,
+          tracking,
         );
         break;
       } catch (error) {

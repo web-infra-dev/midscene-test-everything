@@ -1,6 +1,10 @@
 import type { ScreenSession } from '../screen/source.js';
 import type { Point } from '../types.js';
-import { detectPointerChanges } from './detector.js';
+import {
+  type PointerCandidate,
+  detectPointerChanges,
+  pointerNear,
+} from './detector.js';
 import { type PointerTurn, screenDeltaToPointer } from './mapping.js';
 import {
   CALIBRATION_REPORTS,
@@ -37,6 +41,49 @@ export function predictMovement(
   };
 }
 
+export interface PointerTracking {
+  position?: PointerCandidate;
+}
+
+function selectAnchor(
+  changes: PointerCandidate[],
+  previous: PointerCandidate | undefined,
+  expected: Point,
+  tolerance: number,
+) {
+  if (previous) {
+    const old = changes.filter((candidate) =>
+      pointerNear(candidate, previous, tolerance),
+    );
+    if (old.length === 1) {
+      const others = changes.filter(
+        (candidate) =>
+          candidate !== old[0] &&
+          candidate.area >= old[0].area * 0.4 &&
+          candidate.area <= old[0].area * 2.5,
+      );
+      if (others.length === 1) return others[0];
+    }
+    changes = changes.filter((candidate) => !old.includes(candidate));
+  }
+  const nearby = changes.filter((candidate) =>
+    pointerNear(candidate, expected, tolerance),
+  );
+  return nearby.length === 1 ? nearby[0] : undefined;
+}
+
+export async function warmUpPointer(
+  transport: Pick<RelativeTransport, 'relative'>,
+  signal: AbortSignal,
+) {
+  // iOS may damp the first relative reports after establishing the channel.
+  for (let i = 0; i < 12; i++) {
+    signal.throwIfAborted();
+    await transport.relative({ x: 6, y: 0 });
+    await pause(REPORT_INTERVAL_MS);
+  }
+}
+
 /** Hover only. Identify both ends rather than trusting the requested anchor. */
 async function probe(
   screen: ScreenSession,
@@ -45,6 +92,7 @@ async function probe(
   reports: number,
   cross: number,
   signal: AbortSignal,
+  tracking: PointerTracking,
 ): Promise<MotionSample> {
   signal.throwIfAborted();
   const frame = await screen.getFrame({ fresh: true, allowUnchanged: true });
@@ -52,11 +100,14 @@ async function probe(
     x: frame.width * (delta.x ? 0.2 : cross),
     y: frame.height * (delta.y ? 0.2 : cross),
   };
+  const previous = tracking.position;
+  tracking.position = undefined;
   await transport.moveTo(origin);
   const tolerance = Math.max(10, Math.min(frame.width, frame.height) * 0.025);
   let before = frame;
-  let previousAnchor: Point | undefined;
+  let previousAnchor: PointerCandidate | undefined;
   let anchorFrames = 0;
+  let lastSequence = frame.sequence;
   // The absolute report can arrive well before its video frame. Verify that the
   // anchor itself has appeared and settled before sending relative reports.
   for (let attempt = 0; attempt < 24; attempt++) {
@@ -69,6 +120,8 @@ async function probe(
     });
     if (before.width !== frame.width || before.height !== frame.height)
       throw new Error('Screen geometry changed during pointer measurement');
+    if (before.sequence <= lastSequence) continue;
+    lastSequence = before.sequence;
     let changes;
     try {
       changes = await detectPointerChanges(frame, before);
@@ -77,10 +130,7 @@ async function probe(
       anchorFrames = 0;
       continue;
     }
-    const anchors = changes.filter(
-      (p) => Math.hypot(p.x - origin.x, p.y - origin.y) < tolerance,
-    );
-    const anchor = anchors.length === 1 ? anchors[0] : undefined;
+    const anchor = selectAnchor(changes, previous, origin, tolerance);
     anchorFrames =
       anchor &&
       previousAnchor &&
@@ -91,10 +141,11 @@ async function probe(
     previousAnchor = anchor;
     if (anchorFrames >= 2) break;
   }
-  if (anchorFrames < 2)
+  if (anchorFrames < 2 || !previousAnchor)
     throw new Error(
       'Pointer start position did not settle. Keep a static screen visible and check video latency.',
     );
+  const observedAnchor = previousAnchor;
   let lastStart = 0;
   const started = performance.now();
   for (let i = 0; i < reports; i++) {
@@ -117,6 +168,8 @@ async function probe(
       allowUnchanged: true,
       timeoutMs: 3000,
     });
+    if (after.sequence <= lastSequence) continue;
+    lastSequence = after.sequence;
     let changes;
     try {
       changes = await detectPointerChanges(before, after);
@@ -131,7 +184,11 @@ async function probe(
     }
 
     const anchors = changes.filter(
-      (p) => Math.hypot(p.x - origin.x, p.y - origin.y) < tolerance,
+      (candidate) =>
+        Math.hypot(
+          candidate.x - observedAnchor.x,
+          candidate.y - observedAnchor.y,
+        ) < tolerance,
     );
     if (anchors.length !== 1) {
       previousEnd = undefined;
@@ -167,6 +224,7 @@ async function probe(
           : 0;
       previousEnd = end;
       if (stableFrames < 3) continue;
+      tracking.position = end;
       return {
         delta,
         reports,
@@ -228,15 +286,13 @@ export async function measureMotionModel(
   screen: ScreenSession,
   transport: RelativeTransport,
   signal: AbortSignal,
+  warmedTracking?: PointerTracking,
 ): Promise<{ model: PointerMotionModel; samples: MotionSample[] }> {
-  // iOS may damp the first relative reports after establishing the channel.
-  // Warm up without pressing a button, then return to measured probe anchors.
-  const frame = await screen.getFrame({ fresh: true, allowUnchanged: true });
-  await transport.moveTo({ x: frame.width * 0.2, y: frame.height * 0.3 });
-  for (let i = 0; i < 12; i++) {
-    signal.throwIfAborted();
-    await transport.relative({ x: 6, y: 0 });
-    await pause(REPORT_INTERVAL_MS);
+  const tracking = warmedTracking ?? {};
+  if (!warmedTracking) {
+    const frame = await screen.getFrame({ fresh: true, allowUnchanged: true });
+    await transport.moveTo({ x: frame.width * 0.2, y: frame.height * 0.3 });
+    await warmUpPointer(transport, signal);
   }
   const model: PointerMotionModel = { reports: [] };
   const samples: MotionSample[] = [];
@@ -253,6 +309,7 @@ export async function measureMotionModel(
           reports,
           cross,
           signal,
+          tracking,
         );
         break;
       } catch (error) {
@@ -303,6 +360,7 @@ export async function validateMotionModel(
   transport: RelativeTransport,
   model: PointerMotionModel,
   signal: AbortSignal,
+  tracking: PointerTracking = {},
 ): Promise<MotionValidation> {
   const frame = await screen.getFrame();
   const samples: MotionSample[] = [];
@@ -348,6 +406,7 @@ export async function validateMotionModel(
           count,
           cross,
           signal,
+          tracking,
         );
         break;
       } catch (error) {
