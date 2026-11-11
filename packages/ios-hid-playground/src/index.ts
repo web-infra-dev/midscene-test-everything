@@ -15,19 +15,24 @@ export { iosHIDPlatform };
 export async function launchIOSHIDPlayground(
   options: LaunchPlaygroundOptions = {},
 ) {
-  const connectionPage = fileURLToPath(new URL('../public/', import.meta.url));
+  const connectionPage = fileURLToPath(new URL('./ui/', import.meta.url));
   const require = createRequire(import.meta.url);
   const upstreamStatic = resolve(
     dirname(require.resolve('@midscene/playground')),
     '../../static',
   );
-  const upstreamPage = await readFile(
-    join(options.staticPath ?? upstreamStatic, 'index.html'),
-    'utf8',
+  const [upstreamPage, connectionHtml] = await Promise.all([
+    readFile(join(options.staticPath ?? upstreamStatic, 'index.html'), 'utf8'),
+    readFile(join(connectionPage, 'connect.html'), 'utf8'),
+  ]);
+  const connectionAssets = connectionHtml.match(
+    /<link\b[^>]*href="\/ios-hid\/ui\/[^"]+"[^>]*>|<script\b[^>]*src="\/ios-hid\/ui\/[^"]+"[^>]*><\/script>/g,
   );
+  if (!connectionAssets?.length)
+    throw new Error('Missing iOS HID Playground connection assets.');
   const page = upstreamPage.replace(
     '</head>',
-    '<link rel="stylesheet" href="/ios-hid/ui/connect.css"><script src="/ios-hid/ui/connect.js" defer></script></head>',
+    `${connectionAssets.join('')}</head>`,
   );
   const platform = await iosHIDPlatform.prepare(undefined);
   const launched = await playgroundForSessionManager().launch({

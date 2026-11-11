@@ -9,9 +9,6 @@
   "scripts": {
     "build": "rslib build",
     "typecheck": "tsc --noEmit -p tsconfig.build.json && tsc --noEmit -p tsconfig.tests.json",
-    "host": "node dist/host/main.js",
-    "stop:host": "node dist/cli.js stop",
-    "status": "node dist/cli.js status",
     "test": "rstest run"
   },
   "exports": {
@@ -36,8 +33,5 @@
     "typescript": "^5.8.3",
     "@rslib/core": "^0.18.3",
     "@rstest/core": "0.12.0"
-  },
-  "bin": {
-    "midscene-ios-hid": "dist/cli.js"
   }
 }

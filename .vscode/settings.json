@@ -14,5 +14,5 @@
   "[yaml]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
-  "cSpell.words": ["midscene", "rsbuild"]
+  "cSpell.words": ["IOSHID", "midscene", "rsbuild"]
 }

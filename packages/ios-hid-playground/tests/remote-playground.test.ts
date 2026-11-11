@@ -61,11 +61,13 @@ test('Playground discovers, claims, previews and releases one device from the se
   const origin = `http://127.0.0.1:${playground.port}`;
   const host = `http://127.0.0.1:${service.port}`;
   const setup = await (await fetch(origin)).text();
-  assert.match(setup, /\/ios-hid\/ui\/connect\.js/);
-  const extension = await (
-    await fetch(`${origin}/ios-hid/ui/connect.js`)
-  ).text();
-  assert.match(extension, /name="token" type="password"/);
+  const connectionBundle = setup.match(
+    /src="(\/ios-hid\/ui\/[^"]*\/connect\.[^"]+\.js)"/,
+  )?.[1];
+  assert.ok(connectionBundle, 'the connection page includes its React bundle');
+  const extension = await fetch(origin + connectionBundle);
+  assert.equal(extension.status, 200);
+  await extension.arrayBuffer();
   const upstream = setup;
   const bundle = upstream.match(/src="(\/static\/js\/index\.[^"]+\.js)"/)?.[1];
   assert.ok(bundle, 'the task page serves the upstream Playground bundle');
