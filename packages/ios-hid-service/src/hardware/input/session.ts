@@ -298,7 +298,9 @@ export class HIDInputSession {
     if (config) {
       config.pointerMotion = {
         version: MOTION_VERSION,
-        absoluteCorrection: this.absoluteCorrection,
+        ...(this.absoluteCorrection && {
+          absoluteCorrection: this.absoluteCorrection,
+        }),
         binding,
         ...mapping,
         reportIntervalMs: REPORT_INTERVAL_MS,

@@ -78,7 +78,7 @@ test('nonlinear diagonal paths and all pointer rotations preserve their endpoint
     }
 }, 60_000);
 
-test('ordinary drags start quickly and slow down at the end', () => {
+test('ordinary drags ease out while retaining motion at release', () => {
   const plan = planRelativeDrag(
     { x: 0, y: 0 },
     { x: 80, y: 0 },
@@ -89,7 +89,9 @@ test('ordinary drags start quickly and slow down at the end', () => {
   const third = Math.floor(plan.reports.length / 3);
   const first = plan.reports.slice(0, third).reduce((n, p) => n + p.x, 0);
   const last = plan.reports.slice(-third).reduce((n, p) => n + p.x, 0);
-  assert.ok(first > last * 2);
+  assert.ok(first > last);
+  assert.ok(last > first / 2);
+  assert.ok(plan.reports.at(-1)!.x > 0);
   assert.throws(
     () => planRelativeDrag({ x: 0, y: 0 }, { x: 0, y: 0 }, 300, linear, 0),
     /different endpoints/,
