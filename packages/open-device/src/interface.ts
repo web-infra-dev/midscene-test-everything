@@ -4,6 +4,8 @@ import {
   AbstractInterface,
   type InputPrimitives,
   defineAction,
+  defineActionDoubleClick,
+  defineActionScroll,
   defineActionsFromInputPrimitives,
 } from '@midscene/core/device';
 import type { DeviceProfile, InputAction, ScreenFrame } from './protocol.js';
@@ -76,10 +78,49 @@ export abstract class OpenDeviceInterface extends AbstractInterface {
             }
           : undefined,
     };
-    this.actions = [
+    const actions: DeviceAction[] = [
       ...defineActionsFromInputPrimitives(this.inputPrimitives, {
         size: () => this.size(),
       }),
+      ...(supports('doubleTap')
+        ? [
+            {
+              ...defineActionDoubleClick((point) =>
+                this.dispatch({ type: 'doubleTap', point }),
+              ),
+              name: 'DoubleTap',
+              description: 'Double-tap the element at the same point.',
+              interfaceAlias: 'aiDoubleTap',
+              supportedBySystemOne: false,
+            },
+          ]
+        : []),
+      ...(supports('scroll')
+        ? [
+            {
+              ...defineActionScroll(
+                ({ direction = 'down', distance, locate, scrollType }) => {
+                  if (direction !== 'up' && direction !== 'down')
+                    throw new Error('Only vertical scrolling is supported');
+                  if (scrollType && scrollType !== 'singleAction')
+                    throw new Error('Only single scroll actions are supported');
+                  const center = locate?.center;
+                  return this.dispatch({
+                    type: 'scroll',
+                    direction,
+                    steps:
+                      distance == null
+                        ? undefined
+                        : Math.min(24, Math.max(1, Math.round(distance / 80))),
+                    point: center ? { x: center[0], y: center[1] } : undefined,
+                  });
+                },
+              ),
+              description:
+                'Scroll up or down in one action. Locate the scrollable region when there are multiple scroll areas.',
+            },
+          ]
+        : []),
       ...(supports('home')
         ? [
             defineAction({
@@ -99,7 +140,8 @@ export abstract class OpenDeviceInterface extends AbstractInterface {
             }),
           ]
         : []),
-    ].map((action) => ({
+    ];
+    this.actions = actions.map((action) => ({
       ...action,
       ...(action.name === 'Input' && capabilities.inputGuidance
         ? { description: capabilities.inputGuidance }

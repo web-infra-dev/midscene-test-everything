@@ -1,7 +1,15 @@
 ## Summary
 
-<!-- Describe what changed and why. Link the related issue, if any. -->
+<!-- Briefly describe the change and why it is needed. -->
 
-## Validation
+## Checklist
 
-<!-- List the checks you ran and their results. For hardware changes, describe simulated and hardware checks separately. -->
+<!-- Check the items you verified. Add a note for anything skipped or not applicable. -->
+
+- [ ] Lint passes (`pnpm lint:check`)
+- [ ] Build and typecheck pass (`pnpm build`, `pnpm typecheck`)
+- [ ] Relevant tests pass (`pnpm test` or a filtered suite)
+- [ ] Documentation is updated, if applicable
+- [ ] Hardware changes are verified, if applicable
+
+<!-- For hardware changes, list simulated and physical test results separately. -->

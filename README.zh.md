@@ -28,6 +28,8 @@ pnpm build
 pnpm exec tsx examples/open-device.ts
 ```
 
+iPhone Use 支持双击 `doubleTap`、长按 `longPress`、垂直滚动 `scroll` 和拖放 `dragAndDrop`。长按默认按住 700 毫秒。
+
 示例通过 `agentFromOpenDevice()` 读取当前屏幕。两个服务都可以在 `/api/docs/` 打开 Swagger UI，在 `/api/openapi.json` 查看接口定义。
 
 [协议草稿](./packages/open-device/rfc/index.html) · [MIT 许可证](./LICENSE)

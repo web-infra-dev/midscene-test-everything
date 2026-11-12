@@ -55,7 +55,11 @@ export async function runServer(
     'back',
     'clearInput',
     'tap',
+    'doubleTap',
+    'longPress',
     'swipe',
+    'scroll',
+    'dragAndDrop',
     'typeText',
     'key',
   ] as const;

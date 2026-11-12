@@ -36,3 +36,29 @@ test('Device and Agent advertise ASCII Input while retaining the standard action
     await agent.destroy();
   }
 });
+
+test('DoubleTap is advertised by the Agent only for supported devices', async () => {
+  assert.ok(
+    !new TestDevice().actionSpace().some(({ name }) => name === 'DoubleTap'),
+  );
+  const phone = new TestDevice({ doubleTap: true });
+  const signal = new AbortController().signal;
+  const calls: InputAction[] = [];
+  phone.execute = async (action, options) => {
+    assert.equal(options?.signal, signal);
+    calls.push(action);
+  };
+  const agent = new OpenDeviceAgent(phone);
+  try {
+    const doubleTap = agent.interface
+      .actionSpace()
+      .find(({ name }) => name === 'DoubleTap');
+    assert.ok(doubleTap);
+    await doubleTap.call({ locate: { center: [12, 34] } }, {
+      signal,
+    } as Parameters<typeof doubleTap.call>[1]);
+    assert.deepEqual(calls, [{ type: 'doubleTap', point: { x: 12, y: 34 } }]);
+  } finally {
+    await agent.destroy();
+  }
+});

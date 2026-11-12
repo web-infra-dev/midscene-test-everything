@@ -61,7 +61,11 @@ test('LAN clients can discover saved devices with a token, while setup stays loc
           'back',
           'clearInput',
           'tap',
+          'doubleTap',
+          'longPress',
           'swipe',
+          'scroll',
+          'dragAndDrop',
           'typeText',
           'key',
         ],
@@ -208,7 +212,11 @@ test(
           'back',
           'clearInput',
           'tap',
+          'doubleTap',
+          'longPress',
           'swipe',
+          'scroll',
+          'dragAndDrop',
           'typeText',
           'key',
         ],
@@ -232,7 +240,12 @@ test(
         .status,
       200,
     );
-    assert.deepEqual(actions, [{ type: 'home' }]);
+    const doubleTap = { type: 'doubleTap', point: { x: 0, y: 0 } };
+    assert.equal(
+      (await post(`${session}/actions`, doubleTap, authorization)).status,
+      200,
+    );
+    assert.deepEqual(actions, [{ type: 'home' }, doubleTap]);
     const remoteFrame = await (
       await fetch(`${session}/screenshot`, { headers: authorization })
     ).json();

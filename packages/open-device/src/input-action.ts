@@ -11,6 +11,15 @@ export const inputAction = z.discriminatedUnion('type', [
   z.object({ type: z.literal('tap'), point }).strict(),
   z
     .object({
+      type: z.literal('scroll'),
+      direction: z.enum(['up', 'down']),
+      steps: z.number().int().min(1).max(24).optional(),
+      point: point.optional(),
+    })
+    .strict(),
+  z.object({ type: z.literal('doubleTap'), point }).strict(),
+  z
+    .object({
       type: z.literal('longPress'),
       point,
       durationMs,

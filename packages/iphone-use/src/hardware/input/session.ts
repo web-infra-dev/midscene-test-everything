@@ -1,3 +1,4 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import { NativeHIDClient } from '../native/client.js';
 import {
   type AbsolutePointerCorrection,
@@ -378,7 +379,20 @@ export class HIDInputSession {
         durationMs: 700,
       };
     }
-    if (action.type === 'tap') {
+    if (
+      action.type === 'tap' ||
+      action.type === 'doubleTap' ||
+      action.type === 'longPress'
+    ) {
+      const pressCount = action.type === 'doubleTap' ? 2 : 1;
+      const duration =
+        action.type === 'longPress'
+          ? (action.durationMs ?? 700)
+          : action.type === 'doubleTap'
+            ? 220
+            : 60;
+      if (!Number.isFinite(duration) || duration < 0 || duration > 5000)
+        throw new Error('Long press duration must be between 0 and 5000 ms');
       if (!this.mapping) await this.verify(screen, signal);
       const frame = await screen.getFrame();
       const m = this.mapping!;
@@ -399,14 +413,18 @@ export class HIDInputSession {
       )
         throw new Error('Tap outside screen');
       await this.moveTo(p, signal);
-      await pause(120);
-      signal.throwIfAborted();
-      try {
-        await this.native.send(this.peer, 3, [1, 0, 0, 0]);
-        await pause(60);
-      } finally {
-        await this.native.send(this.peer, 3, [0, 0, 0, 0]);
+      await delay(120, undefined, { signal });
+      for (let press = 0; press < pressCount; press++) {
+        if (press > 0) await delay(120, undefined, { signal });
+        signal.throwIfAborted();
+        try {
+          await this.native.send(this.peer, 3, [1, 0, 0, 0]);
+          await delay(duration, undefined, { signal });
+        } finally {
+          await this.native.send(this.peer, 3, [0, 0, 0, 0]);
+        }
       }
+      signal.throwIfAborted();
       return;
     }
     if (action.type === 'key') {
@@ -433,7 +451,10 @@ export class HIDInputSession {
       }
       return;
     }
-    if (action.type === 'swipe') {
+    if (action.type === 'scroll') {
+      const steps = action.steps ?? 4;
+      if (!Number.isInteger(steps) || steps < 1 || steps > 24)
+        throw new Error('Scroll steps must be between 1 and 24');
       if (!this.mapping) await this.verify(screen, signal);
       const frame = await screen.getFrame();
       if (
@@ -441,7 +462,33 @@ export class HIDInputSession {
         frame.height !== this.mapping!.height
       )
         throw new Error('Screen geometry changed; reconnect');
-      const duration = action.durationMs ?? 350;
+      await this.moveTo(
+        action.point ?? {
+          x: Math.floor(frame.width / 2),
+          y: Math.floor(frame.height / 2),
+        },
+        signal,
+      );
+      await delay(120, undefined, { signal });
+      const wheel = action.direction === 'up' ? 1 : 255;
+      for (let step = 0; step < steps; step++) {
+        if (step > 0) await delay(16, undefined, { signal });
+        signal.throwIfAborted();
+        await this.native.send(this.peer, 3, [0, 0, 0, wheel]);
+      }
+      signal.throwIfAborted();
+      return;
+    }
+    if (action.type === 'swipe' || action.type === 'dragAndDrop') {
+      const dragging = action.type === 'dragAndDrop';
+      if (!this.mapping) await this.verify(screen, signal);
+      const frame = await screen.getFrame();
+      if (
+        frame.width !== this.mapping!.width ||
+        frame.height !== this.mapping!.height
+      )
+        throw new Error('Screen geometry changed; reconnect');
+      const duration = action.durationMs ?? (dragging ? 600 : 350);
       if (!Number.isFinite(duration) || duration < 100 || duration > 5000)
         throw new Error('Swipe duration must be between 100 and 5000 ms');
       // Validate both endpoints before pressing any button.
@@ -469,6 +516,7 @@ export class HIDInputSession {
       try {
         signal.throwIfAborted();
         await this.relative({ x: 0, y: 0 }, 1);
+        if (dragging) await delay(500, undefined, { signal });
         let lastStart = 0;
         for (const report of plan.reports) {
           if (lastStart)
@@ -482,7 +530,8 @@ export class HIDInputSession {
       } finally {
         await this.relative({ x: 0, y: 0 }, 0);
       }
-      await this.moveTo(action.to, signal);
+      signal.throwIfAborted();
+      if (!dragging) await this.moveTo(action.to, signal);
       return;
     }
     throw new Error('Unknown input action');

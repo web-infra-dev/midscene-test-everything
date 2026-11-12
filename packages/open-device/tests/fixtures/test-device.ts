@@ -2,10 +2,11 @@ import { OpenDeviceInterface } from '../../dist/interface.js';
 import type { InputAction, ScreenFrame } from '../../dist/protocol.js';
 
 export class TestDevice extends OpenDeviceInterface {
-  constructor() {
+  constructor({ doubleTap = false } = {}) {
     super({
       actions: [
         'tap',
+        ...(doubleTap ? (['doubleTap'] as const) : []),
         'swipe',
         'home',
         'back',

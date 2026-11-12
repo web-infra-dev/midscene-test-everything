@@ -107,3 +107,86 @@ test('navigation obeys the service fresh-frame gate and pre-cancellation', async
     });
   assert.equal(sent, 0);
 });
+
+test('Long press holds at the requested point and releases on cancellation', async () => {
+  const point = { x: 120, y: 300 };
+  for (const cancel of [false, true]) {
+    const abort = new AbortController();
+    const reports: { report: number; bytes: number[]; at: number }[] = [];
+    const positions: Point[] = [];
+    const input = new HIDInputSession(
+      {
+        send: async (_peer: string, report: number, bytes: number[]) => {
+          reports.push({ report, bytes, at: performance.now() });
+          if (cancel && bytes[0] === 1) abort.abort();
+          return true;
+        },
+      } as unknown as ConstructorParameters<typeof HIDInputSession>[0],
+      'phone',
+    );
+    // biome-ignore lint/complexity/useLiteralKeys: Seed the verified mapping without a camera.
+    input['mapping'] = { turn: 0, width: 1000, height: 2000 };
+    input.moveTo = async (target) => {
+      positions.push(target);
+    };
+    const result = input.execute(
+      { type: 'longPress', point, durationMs: cancel ? 5000 : undefined },
+      screen,
+      abort.signal,
+    );
+    if (cancel) await assert.rejects(result, { name: 'AbortError' });
+    else await result;
+    assert.deepEqual(positions, [point]);
+    assert.deepEqual(
+      reports.map(({ report, bytes }) => ({ report, bytes })),
+      [
+        { report: 3, bytes: [1, 0, 0, 0] },
+        { report: 3, bytes: [0, 0, 0, 0] },
+      ],
+    );
+    const heldMs = reports[1].at - reports[0].at;
+    if (cancel) assert.ok(heldMs < 1000, 'cancellation releases promptly');
+    else assert.ok(heldMs >= 690, 'default hold is approximately 700 ms');
+  }
+});
+
+test('Double tap moves once and releases any active press on cancellation', async () => {
+  const point = { x: 120, y: 300 };
+  for (const cancelAfterReport of [0, 2, 3]) {
+    const abort = new AbortController();
+    const reports: number[][] = [];
+    const positions: Point[] = [];
+    const input = new HIDInputSession(
+      {
+        send: async (_peer: string, report: number, bytes: number[]) => {
+          assert.equal(report, 3);
+          reports.push(bytes);
+          if (reports.length === cancelAfterReport) abort.abort();
+          return true;
+        },
+      } as unknown as ConstructorParameters<typeof HIDInputSession>[0],
+      'phone',
+    );
+    // biome-ignore lint/complexity/useLiteralKeys: Seed the verified mapping without a camera.
+    input['mapping'] = { turn: 0, width: 1000, height: 2000 };
+    input.moveTo = async (target) => {
+      positions.push(target);
+    };
+    const result = input.execute(
+      { type: 'doubleTap', point },
+      screen,
+      abort.signal,
+    );
+    if (cancelAfterReport) await assert.rejects(result, { name: 'AbortError' });
+    else await result;
+    assert.deepEqual(positions, [point]);
+    const click = [
+      [1, 0, 0, 0],
+      [0, 0, 0, 0],
+    ];
+    assert.deepEqual(
+      reports,
+      cancelAfterReport === 2 ? click : [...click, ...click],
+    );
+  }
+});

@@ -358,6 +358,8 @@ y = (pointerY - top) × screenshotHeight / displayHeight</code></pre>
         <table>
           <tr><th>Type</th><th>Additional fields</th><th>Intent</th></tr>
           <tr><td><code>tap</code></td><td><code>point</code></td><td>Tap one location.</td></tr>
+          <tr><td><code>doubleTap</code></td><td><code>point</code></td><td>Tap twice at the same point as one action.</td></tr>
+          <tr><td><code>scroll</code></td><td><code>direction</code> (up or down), optional <code>steps</code> (1–24) and <code>point</code></td><td>Scroll vertically. The visible distance per step depends on the device.</td></tr>
           <tr><td><code>longPress</code></td><td><code>point</code>, optional <code>durationMs</code></td><td>Press and hold.</td></tr>
           <tr><td><code>swipe</code></td><td><code>from</code>, <code>to</code>, optional <code>durationMs</code></td><td>Swipe between two locations.</td></tr>
           <tr><td><code>dragAndDrop</code></td><td><code>from</code>, <code>to</code>, optional <code>durationMs</code></td><td>Drag between two locations.</td></tr>
