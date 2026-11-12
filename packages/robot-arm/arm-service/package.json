@@ -1,0 +1,63 @@
+{
+  "name": "@midscene/arm-service",
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "node -e \"const { rmSync } = require('node:fs'); for (const dir of ['dist/server', 'dist/cli']) rmSync(dir, { recursive: true, force: true });\" && tsc -p tsconfig.server.json && rsbuild build",
+    "typecheck": "tsc --noEmit -p tsconfig.server.json && tsc --noEmit",
+    "test": "rstest run",
+    "prepack": "pnpm build",
+    "start": "node dist/cli/index.js",
+    "dev": "pnpm --filter @midscene/arm-service... -r build && pnpm start",
+    "dev:mock": "pnpm run dev --mock"
+  },
+  "dependencies": {
+    "@midscene/preview-controls": "workspace:*",
+    "@midscene/robotics-shared": "workspace:*",
+    "@midscene/arm-kit": "workspace:*",
+    "@midscene/shared": "1.17.5",
+    "antd": "^5.21.6",
+    "lucide-react": "0.553.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "zustand": "^5.0.0",
+    "@midscene/open-device": "workspace:*",
+    "@midscene/arm-adapter-mg400": "workspace:*",
+    "@clack/prompts": "^0.11.0",
+    "@midscene/device-manager-ui": "workspace:*",
+    "@midscene/robotics-vision": "workspace:*"
+  },
+  "devDependencies": {
+    "@rsbuild/core": "^1.6.15",
+    "@rsbuild/plugin-less": "^1.5.0",
+    "@rsbuild/plugin-node-polyfill": "1.4.2",
+    "@rsbuild/plugin-react": "^1.4.1",
+    "@rsbuild/plugin-svgr": "^1.2.2",
+    "@types/react": "^18.3.1",
+    "@types/react-dom": "^18.3.1",
+    "less": "^4.2.0",
+    "typescript": "^5.8.3",
+    "@rstest/core": "0.12.0",
+    "@types/node": "^22.0.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/server/index.d.ts",
+      "import": "./dist/server/index.js"
+    },
+    "./ui": "./src/ui/ui.ts",
+    "./session": {
+      "types": "./dist/server/session.d.ts",
+      "import": "./dist/server/session.js"
+    },
+    "./i18n": "./src/ui/i18n.ts",
+    "./host": {
+      "types": "./dist/server/index.d.ts",
+      "import": "./dist/server/index.js"
+    }
+  },
+  "files": ["dist/server", "dist/ui", "src/ui", "dist/cli"],
+  "bin": {
+    "arm-service": "dist/cli/index.js"
+  }
+}

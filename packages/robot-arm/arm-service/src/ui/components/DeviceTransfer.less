@@ -1,0 +1,48 @@
+.transfer-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-top: 12px;
+}
+.transfer-endpoint {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fafafa;
+}
+.transfer-arrow {
+  align-self: center;
+  color: #8c8c8c;
+}
+.transfer-waypoint {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.transfer-waypoint label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+  color: #6b7280;
+}
+.transfer-waypoint .ant-input-number {
+  width: 100%;
+}
+.transfer-editor > .ant-tag {
+  align-self: flex-start;
+  margin: 0;
+  white-space: normal;
+}
+@media (max-width: 600px) {
+  .transfer-waypoint {
+    flex-wrap: wrap;
+  }
+  .transfer-waypoint > .ant-typography {
+    width: 100%;
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "name": "@midscene/arm-kit",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "native", "assets/phone"],
+  "scripts": {
+    "build": "rslib build",
+    "typecheck": "tsc --noEmit -p tsconfig.build.json",
+    "test": "rstest run",
+    "prepack": "pnpm --filter @midscene/robotics-shared build && pnpm build"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./internal/*": {
+      "types": "./dist/*.d.ts",
+      "import": "./dist/*.js"
+    },
+    "./contracts": {
+      "types": "./dist/contracts.d.ts",
+      "import": "./dist/contracts.js"
+    },
+    "./adapter-development": {
+      "types": "./dist/adapter-development.d.ts",
+      "import": "./dist/adapter-development.js"
+    }
+  },
+  "dependencies": {
+    "@midscene/robotics-shared": "workspace:*",
+    "@midscene/shared": "1.17.5",
+    "ws": "8.22.1",
+    "js-aruco2": "2.0.0",
+    "sharp": "^0.34.3",
+    "@midscene/robotics-vision": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/ws": "8.18.2",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.3",
+    "@rslib/core": "^0.18.3",
+    "@rstest/core": "0.12.0"
+  }
+}

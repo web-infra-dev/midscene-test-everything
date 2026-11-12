@@ -32,160 +32,91 @@ importers:
       pretty-quick:
         specifier: 3.1.3
         version: 3.1.3(prettier@3.9.10)
-
-  apps/playground:
-    dependencies:
-      '@clack/prompts':
-        specifier: ^0.11.0
-        version: 0.11.0
-      '@midscene/arm-adapter-mg400':
-        specifier: workspace:*
-        version: link:../../packages/adapter-mg400
-      '@midscene/arm-kit':
-        specifier: workspace:*
-        version: link:../../packages/arm-kit
-      '@midscene/arm-kit-playground':
-        specifier: workspace:*
-        version: link:../../packages/playground
-    devDependencies:
-      '@rsbuild/core':
-        specifier: ^1.6.15
-        version: 1.7.6
-      '@rstest/core':
-        specifier: 0.12.0
-        version: 0.12.0(core-js@3.47.0)
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.20.5
       tsx:
         specifier: ^4.20.6
         version: 4.23.15
-      typescript:
-        specifier: ^5.8.3
-        version: 5.9.3
 
   examples:
     dependencies:
-      '@midscene/arm-adapter-mg400':
+      '@midscene/open-device':
         specifier: workspace:*
-        version: link:../packages/adapter-mg400
-      '@midscene/arm-kit':
-        specifier: workspace:*
-        version: link:../packages/arm-kit
+        version: link:../packages/open-device
+
+  packages/iphone-use:
+    dependencies:
       '@midscene/core':
         specifier: 1.17.5
         version: 1.17.5(ws@8.22.1)
-      '@midscene/ios-hid':
+      '@midscene/device-manager-ui':
         specifier: workspace:*
-        version: link:../packages/ios-hid
-
-  packages/adapter-mg400:
-    dependencies:
-      '@awo00/smb2':
-        specifier: 1.1.1
-        version: 1.1.1
-      '@midscene/arm-kit':
+        version: link:../shared/manager-ui
+      '@midscene/open-device':
         specifier: workspace:*
-        version: link:../arm-kit
+        version: link:../open-device
+      '@midscene/robotics-vision':
+        specifier: workspace:*
+        version: link:../shared/vision
       '@midscene/shared':
         specifier: 1.17.5
         version: 1.17.5
-    devDependencies:
-      '@rslib/core':
-        specifier: ^0.18.3
-        version: 0.18.6(typescript@5.9.3)
-      '@rstest/core':
-        specifier: 0.12.0
-        version: 0.12.0(core-js@3.47.0)
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.20.5
-      typescript:
-        specifier: ^5.8.3
-        version: 5.9.3
-
-  packages/arm-kit:
-    dependencies:
-      '@midscene/arm-calibration-ui':
-        specifier: workspace:*
-        version: link:../calibration-ui
-      '@midscene/core':
-        specifier: 1.17.5
-        version: 1.17.5(ws@8.22.1)
-      '@midscene/robotics-shared':
-        specifier: workspace:*
-        version: link:../shared
-      '@midscene/robotics-vision':
-        specifier: workspace:*
-        version: link:../vision
-      '@midscene/shared':
-        specifier: 1.17.5
-        version: 1.17.5
-      js-aruco2:
-        specifier: 2.0.0
-        version: 2.0.0
-      sharp:
-        specifier: ^0.34.3
-        version: 0.34.5
-      ws:
-        specifier: 8.22.1
-        version: 8.22.1
-    devDependencies:
-      '@rslib/core':
-        specifier: ^0.18.3
-        version: 0.18.6(typescript@5.9.3)
-      '@rstest/core':
-        specifier: 0.12.0
-        version: 0.12.0(core-js@3.47.0)
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.20.5
-      '@types/ws':
-        specifier: 8.18.2
-        version: 8.18.2
-      typescript:
-        specifier: ^5.8.3
-        version: 5.9.3
-
-  packages/calibration-ui:
-    dependencies:
-      '@arco-design/web-react':
-        specifier: 2.66.18
-        version: 2.66.18(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
-      '@midscene/core':
-        specifier: 1.17.5
-        version: 1.17.5(ws@8.22.1)
-      '@midscene/robotics-shared':
-        specifier: workspace:*
-        version: link:../shared
-      '@midscene/robotics-vision':
-        specifier: workspace:*
-        version: link:../vision
+      '@techstark/opencv-js':
+        specifier: 5.0.0-release.1
+        version: 5.0.0-release.1
       antd:
         specifier: ^5.21.6
         version: 5.29.3(date-fns@2.30.0)(moment@2.31.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
-      lucide-react:
-        specifier: 0.553.0
-        version: 0.553.0(react@18.3.1)
-      zustand:
-        specifier: ^5.0.0
-        version: 5.0.16(@types/react@18.3.31)(react@18.3.1)
+      commander:
+        specifier: 13.1.0
+        version: 13.1.0
+      express:
+        specifier: 4.22.3
+        version: 4.22.3
+      pacote:
+        specifier: ^21
+        version: 21.5.3
+      react:
+        specifier: 18.3.1
+        version: 18.3.1
+      react-dom:
+        specifier: 18.3.1
+        version: 18.3.1(react@18.3.1)
+      react-resizable-panels:
+        specifier: 2.0.22
+        version: 2.0.22(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      sharp:
+        specifier: ^0.34.3
+        version: 0.34.5
+      zod:
+        specifier: 3.25.76
+        version: 3.25.76
     devDependencies:
       '@rsbuild/core':
         specifier: ^1.6.15
         version: 1.7.6
       '@rsbuild/plugin-less':
         specifier: ^1.5.0
-        version: 1.6.4(@rsbuild/core@1.7.6)(@rspack/core@2.2.9)
+        version: 1.6.4(@rsbuild/core@1.7.6)(@rspack/core@2.2.9(@swc/helpers@0.5.24))
+      '@rsbuild/plugin-node-polyfill':
+        specifier: 1.4.2
+        version: 1.4.2(@rsbuild/core@1.7.6)
       '@rsbuild/plugin-react':
         specifier: ^1.4.1
         version: 1.4.6(@rsbuild/core@1.7.6)
-      '@rslib/core':
-        specifier: ^0.18.3
-        version: 0.18.6(typescript@5.9.3)
+      '@rsbuild/plugin-svgr':
+        specifier: ^1.2.2
+        version: 1.3.1(@rsbuild/core@1.7.6)(typescript@5.9.3)
       '@rstest/core':
         specifier: 0.12.0
         version: 0.12.0(core-js@3.47.0)
+      '@types/express':
+        specifier: ^4.17.0
+        version: 4.17.25
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.5
+      '@types/pacote':
+        specifier: 11.1.8
+        version: 11.1.8
       '@types/react':
         specifier: ^18.3.1
         version: 18.3.31
@@ -195,27 +126,24 @@ importers:
       less:
         specifier: ^4.2.0
         version: 4.9.1
-      react:
-        specifier: 18.3.1
-        version: 18.3.1
-      react-dom:
-        specifier: 18.3.1
-        version: 18.3.1(react@18.3.1)
       typescript:
         specifier: ^5.8.3
         version: 5.9.3
 
-  packages/ios-hid:
+  packages/open-device:
     dependencies:
       '@midscene/core':
         specifier: 1.17.5
         version: 1.17.5(ws@8.22.1)
-      '@midscene/robotics-shared':
-        specifier: workspace:*
-        version: link:../shared
       '@midscene/shared':
         specifier: 1.17.5
         version: 1.17.5
+      swagger-ui-dist:
+        specifier: ^5.32.0
+        version: 5.34.1
+      zod:
+        specifier: 3.25.76
+        version: 3.25.76
     devDependencies:
       '@rslib/core':
         specifier: ^0.18.3
@@ -230,17 +158,17 @@ importers:
         specifier: ^5.8.3
         version: 5.9.3
 
-  packages/ios-hid-playground:
+  packages/open-device-playground:
     dependencies:
-      '@midscene/ios-hid':
+      '@midscene/open-device':
         specifier: workspace:*
-        version: link:../ios-hid
+        version: link:../open-device
       '@midscene/playground':
         specifier: 1.17.5
         version: 1.17.5(ws@8.22.1)
       '@midscene/preview-controls':
         specifier: workspace:*
-        version: link:../preview-controls
+        version: link:../shared/preview-controls
       express:
         specifier: 4.22.3
         version: 4.22.3
@@ -285,63 +213,119 @@ importers:
         specifier: ^5.8.3
         version: 5.9.3
 
-  packages/ios-hid-service:
+  packages/robot-arm/adapter-mg400:
     dependencies:
-      '@midscene/arm-kit-playground':
+      '@awo00/smb2':
+        specifier: 1.1.1
+        version: 1.1.1
+      '@midscene/arm-kit':
         specifier: workspace:*
-        version: link:../playground
-      '@midscene/core':
-        specifier: 1.17.5
-        version: 1.17.5(ws@8.22.1)
-      '@midscene/ios-hid':
-        specifier: workspace:*
-        version: link:../ios-hid
-      '@midscene/robotics-vision':
-        specifier: workspace:*
-        version: link:../vision
+        version: link:../arm-kit
       '@midscene/shared':
         specifier: 1.17.5
         version: 1.17.5
-      '@techstark/opencv-js':
-        specifier: 5.0.0-release.1
-        version: 5.0.0-release.1
+    devDependencies:
+      '@rslib/core':
+        specifier: ^0.18.3
+        version: 0.18.6(typescript@5.9.3)
+      '@rstest/core':
+        specifier: 0.12.0
+        version: 0.12.0(core-js@3.47.0)
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.5
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+
+  packages/robot-arm/arm-kit:
+    dependencies:
+      '@midscene/robotics-shared':
+        specifier: workspace:*
+        version: link:../../shared/utils
+      '@midscene/robotics-vision':
+        specifier: workspace:*
+        version: link:../../shared/vision
+      '@midscene/shared':
+        specifier: 1.17.5
+        version: 1.17.5
+      js-aruco2:
+        specifier: 2.0.0
+        version: 2.0.0
+      sharp:
+        specifier: ^0.34.3
+        version: 0.34.5
+      ws:
+        specifier: 8.22.1
+        version: 8.22.1
+    devDependencies:
+      '@rslib/core':
+        specifier: ^0.18.3
+        version: 0.18.6(typescript@5.9.3)
+      '@rstest/core':
+        specifier: 0.12.0
+        version: 0.12.0(core-js@3.47.0)
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.5
+      '@types/ws':
+        specifier: 8.18.2
+        version: 8.18.2
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+
+  packages/robot-arm/arm-service:
+    dependencies:
+      '@clack/prompts':
+        specifier: ^0.11.0
+        version: 0.11.0
+      '@midscene/arm-adapter-mg400':
+        specifier: workspace:*
+        version: link:../adapter-mg400
+      '@midscene/arm-kit':
+        specifier: workspace:*
+        version: link:../arm-kit
+      '@midscene/device-manager-ui':
+        specifier: workspace:*
+        version: link:../../shared/manager-ui
+      '@midscene/open-device':
+        specifier: workspace:*
+        version: link:../../open-device
+      '@midscene/preview-controls':
+        specifier: workspace:*
+        version: link:../../shared/preview-controls
+      '@midscene/robotics-shared':
+        specifier: workspace:*
+        version: link:../../shared/utils
+      '@midscene/robotics-vision':
+        specifier: workspace:*
+        version: link:../../shared/vision
+      '@midscene/shared':
+        specifier: 1.17.5
+        version: 1.17.5
       antd:
         specifier: ^5.21.6
         version: 5.29.3(date-fns@2.30.0)(moment@2.31.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
-      commander:
-        specifier: 13.1.0
-        version: 13.1.0
-      express:
-        specifier: 4.22.3
-        version: 4.22.3
-      pacote:
-        specifier: ^21
-        version: 21.5.3
+      lucide-react:
+        specifier: 0.553.0
+        version: 0.553.0(react@18.3.1)
       react:
         specifier: 18.3.1
         version: 18.3.1
       react-dom:
         specifier: 18.3.1
         version: 18.3.1(react@18.3.1)
-      react-resizable-panels:
-        specifier: 2.0.22
-        version: 2.0.22(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
-      sharp:
-        specifier: ^0.34.3
-        version: 0.34.5
-      swagger-ui-dist:
-        specifier: ^5.32.0
-        version: 5.34.1
-      zod:
-        specifier: 3.25.76
-        version: 3.25.76
+      zustand:
+        specifier: ^5.0.0
+        version: 5.0.16(@types/react@18.3.31)(react@18.3.1)
     devDependencies:
       '@rsbuild/core':
         specifier: ^1.6.15
         version: 1.7.6
       '@rsbuild/plugin-less':
         specifier: ^1.5.0
-        version: 1.6.4(@rsbuild/core@1.7.6)(@rspack/core@2.2.9)
+        version: 1.6.4(@rsbuild/core@1.7.6)(@rspack/core@2.2.9(@swc/helpers@0.5.24))
       '@rsbuild/plugin-node-polyfill':
         specifier: 1.4.2
         version: 1.4.2(@rsbuild/core@1.7.6)
@@ -354,15 +338,9 @@ importers:
       '@rstest/core':
         specifier: 0.12.0
         version: 0.12.0(core-js@3.47.0)
-      '@types/express':
-        specifier: ^4.17.0
-        version: 4.17.25
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.5
-      '@types/pacote':
-        specifier: 11.1.8
-        version: 11.1.8
       '@types/react':
         specifier: ^18.3.1
         version: 18.3.31
@@ -376,29 +354,17 @@ importers:
         specifier: ^5.8.3
         version: 5.9.3
 
-  packages/playground:
+  packages/shared/manager-ui:
     dependencies:
       '@ant-design/icons':
         specifier: ^5.3.1
         version: 5.6.1(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
-      '@midscene/arm-calibration-ui':
-        specifier: workspace:*
-        version: link:../calibration-ui
-      '@midscene/arm-kit':
-        specifier: workspace:*
-        version: link:../arm-kit
       '@midscene/core':
         specifier: 1.17.5
         version: 1.17.5(ws@8.22.1)
       '@midscene/playground':
         specifier: 1.17.5
         version: 1.17.5(ws@8.22.1)
-      '@midscene/preview-controls':
-        specifier: workspace:*
-        version: link:../preview-controls
-      '@midscene/robotics-shared':
-        specifier: workspace:*
-        version: link:../shared
       '@midscene/shared':
         specifier: 1.17.5
         version: 1.17.5
@@ -417,9 +383,6 @@ importers:
       dayjs:
         specifier: ^1.11.11
         version: 1.11.23
-      lucide-react:
-        specifier: 0.553.0
-        version: 0.553.0(react@18.3.1)
       react:
         specifier: 18.3.1
         version: 18.3.1
@@ -436,27 +399,18 @@ importers:
         specifier: ^5.0.0
         version: 5.0.16(@types/react@18.3.31)(react@18.3.1)
     devDependencies:
-      '@rsbuild/core':
-        specifier: ^1.6.15
-        version: 1.7.6
       '@rsbuild/plugin-less':
         specifier: ^1.5.0
-        version: 1.6.4(@rsbuild/core@1.7.6)(@rspack/core@2.2.9)
-      '@rsbuild/plugin-node-polyfill':
-        specifier: 1.4.2
-        version: 1.4.2(@rsbuild/core@1.7.6)
+        version: 1.6.4(@rsbuild/core@2.2.14(core-js@3.47.0))(@rspack/core@2.2.9)
       '@rsbuild/plugin-react':
         specifier: ^1.4.1
-        version: 1.4.6(@rsbuild/core@1.7.6)
-      '@rsbuild/plugin-svgr':
-        specifier: ^1.2.2
-        version: 1.3.1(@rsbuild/core@1.7.6)(typescript@5.9.3)
+        version: 1.4.6(@rsbuild/core@2.2.14(core-js@3.47.0))
+      '@rslib/core':
+        specifier: ^0.18.3
+        version: 0.18.6(typescript@5.9.3)
       '@rstest/core':
         specifier: 0.12.0
         version: 0.12.0(core-js@3.47.0)
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.20.5
       '@types/react':
         specifier: ^18.3.1
         version: 18.3.31
@@ -470,7 +424,7 @@ importers:
         specifier: ^5.8.3
         version: 5.9.3
 
-  packages/preview-controls:
+  packages/shared/preview-controls:
     devDependencies:
       '@types/react':
         specifier: ^18.3.1
@@ -482,7 +436,7 @@ importers:
         specifier: ^5.8.3
         version: 5.9.3
 
-  packages/shared:
+  packages/shared/utils:
     devDependencies:
       '@rslib/core':
         specifier: ^0.18.3
@@ -491,7 +445,7 @@ importers:
         specifier: ^5.8.3
         version: 5.9.3
 
-  packages/vision:
+  packages/shared/vision:
     dependencies:
       '@arco-design/web-react':
         specifier: 2.66.18
@@ -501,7 +455,7 @@ importers:
         version: 1.1.0
       '@midscene/robotics-shared':
         specifier: workspace:*
-        version: link:../shared
+        version: link:../utils
       antd:
         specifier: ^5.21.6
         version: 5.29.3(date-fns@2.30.0)(moment@2.31.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -526,7 +480,7 @@ importers:
         version: 1.7.6
       '@rsbuild/plugin-less':
         specifier: ^1.5.0
-        version: 1.6.4(@rsbuild/core@1.7.6)(@rspack/core@2.2.9)
+        version: 1.6.4(@rsbuild/core@1.7.6)(@rspack/core@2.2.9(@swc/helpers@0.5.24))
       '@rsbuild/plugin-react':
         specifier: ^1.4.1
         version: 1.4.6(@rsbuild/core@1.7.6)
@@ -5891,7 +5845,7 @@ snapshots:
     transitivePeerDependencies:
       - '@module-federation/runtime-tools'
 
-  '@rsbuild/plugin-less@1.6.4(@rsbuild/core@1.7.6)(@rspack/core@2.2.9)':
+  '@rsbuild/plugin-less@1.6.4(@rsbuild/core@1.7.6)(@rspack/core@2.2.9(@swc/helpers@0.5.24))':
     dependencies:
       deepmerge: 4.3.1
       less: 4.9.1
@@ -5899,6 +5853,19 @@ snapshots:
       reduce-configs: 1.1.2
     optionalDependencies:
       '@rsbuild/core': 1.7.6
+    transitivePeerDependencies:
+      - '@rspack/core'
+      - supports-color
+      - webpack
+
+  '@rsbuild/plugin-less@1.6.4(@rsbuild/core@2.2.14(core-js@3.47.0))(@rspack/core@2.2.9)':
+    dependencies:
+      deepmerge: 4.3.1
+      less: 4.9.1
+      less-loader: 12.3.3(@rspack/core@2.2.9)(less@4.9.1)
+      reduce-configs: 1.1.2
+    optionalDependencies:
+      '@rsbuild/core': 2.2.14(core-js@3.47.0)
     transitivePeerDependencies:
       - '@rspack/core'
       - supports-color
@@ -5938,6 +5905,15 @@ snapshots:
       react-refresh: 0.18.0
     optionalDependencies:
       '@rsbuild/core': 1.7.6
+    transitivePeerDependencies:
+      - webpack-hot-middleware
+
+  '@rsbuild/plugin-react@1.4.6(@rsbuild/core@2.2.14(core-js@3.47.0))':
+    dependencies:
+      '@rspack/plugin-react-refresh': 1.6.2(react-refresh@0.18.0)
+      react-refresh: 0.18.0
+    optionalDependencies:
+      '@rsbuild/core': 2.2.14(core-js@3.47.0)
     transitivePeerDependencies:
       - webpack-hot-middleware
 

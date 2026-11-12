@@ -1,210 +1,33 @@
 # Midscene Robotics
 
-English · [简体中文](./README.zh.md) · [Midscene.js](https://midscenejs.com/)
+[中文](./README.zh.md)
 
-Let Midscene operate physical touchscreens with a camera and a robot arm, or an iPhone through Mac Bluetooth HID. Includes a browser Playground, a Node.js SDK and a DOBOT MG400 adapter.
+Use Midscene to operate an iPhone over Bluetooth or a touchscreen with a robot arm. Both connect to the same Open Device Playground and SDK.
 
-## Quick Start
+## Quick start
 
-Prepare an MG400 with a stylus, a camera and a touchscreen. Use Node.js `^20.19.0 || ^22.12.0 || >=24.0.0` and pnpm 9.3.0.
+From the repository root:
 
 ```sh
 pnpm install
 pnpm build
-pnpm dev
 ```
 
-Open the printed URL. Playground checks `192.168.1.6` and `192.168.2.6` and connects automatically to the only MG400 accepting Dashboard commands. If only one controller responds and it refuses those commands, the adapter requests TCP/IP development mode and verifies the change with a fresh mode query. Choose **Skip to cameras** even while discovery is running. Both entry points use the same camera workspace. Use **Connect robot** in the sidebar to connect later; connecting or disconnecting keeps the workspace open and preserves the selected camera and view when available. For a custom address, ports or network setup, start with `pnpm dev --manual`. Once connected, follow calibration and configure a model to run tasks. Confirm workspace clearance before movement; use **Stop robot** to stop. After **Stop robot** or an emergency stop, including one reported by the controller, confirm the arm is stationary and the stop condition has cleared, then select **Check Recovery**. Restarting the service does not clear this requirement. After other interruptions, the controller checks readiness and fresh pose feedback as soon as the operation ends. Status refreshes and new requests retry the check if feedback is still unavailable.
+| Device | Start the service | Manager | Get the token |
+| --- | --- | --- | --- |
+| Robot arm (DOBOT MG400) | `pnpm --filter @midscene/arm-service start` | [localhost:5173](http://localhost:5173/) | **Robot settings → Open Device** |
+| iPhone (on the Mac connected to the phone) | `pnpm iphone-use install` | [localhost:5801](http://localhost:5801/) | `pnpm iphone-use token` |
 
-To work on the camera without a controller, run `pnpm dev:mock` (or set `ARM_PLAYGROUND_MOCK=1` before `pnpm dev`). Playground starts a simulated MG400 that publishes the model's setup defaults and connects immediately. The simulator never opens a controller connection or moves hardware, so it can drive the interface, screen calibration setup and camera mapping without a robot; its results are not physical evidence. Cameras stay real.
+Add the device and follow the setup steps in its manager. Then run `pnpm dev:playground`, open [localhost:5800](http://localhost:5800/), and enter the service URL and token to select a device.
 
-Choose **Detect screen markers** in the camera preview or **Screen Calibration** in robot settings. Both use the phone already paired with that camera. Phone pairing links automatically prefer the computer’s active Wi-Fi and exclude the controller’s wired subnet and virtual interfaces. Select **Connect Phone** and scan the QR code on the phone to open the calibration page. Keep it in the foreground; if the phone disconnects, reopen that page. You can skip the arm connection, detect the markers, and save the perspective first. On connection, a returning phone’s result goes to its bound screen; a new phone can use the unclaimed default screen. Opening that screen’s calibration continues on the same phone without scanning again. A different phone cannot overwrite a bound screen. The phone asks for a wake lock first. Android creates no wake video, so the browser cannot hand fullscreen to its media player, and uses the system wake lock only on HTTPS. Tap **Enter full screen** on the phone: Android opens the browser's element fullscreen and keeps whatever orientation the phone had, without forcing a rotation. On HarmonyOS, enter full screen when prompted. Playground compensates for the top status bar HarmonyOS can retain in full screen. On iOS, use Safari’s **Share → Add to Home Screen**, then open the page from its icon. If prompted in Camera Mapping, tap the iPhone page once and keep it still for marker detection. The preview hides its saved outline while the page position is unknown. On iPhone, the Safe Position checkerboard extends behind the status bar and sizes its first row to accommodate the top safe area. Detection waits for the required display mode and visible markers before capturing frames. The paired phone stays in full screen when you return to the Playground home page and can be reused for the next run.
+## Scripts and API
 
-Playground decodes the same eight camera frames for all target screens and fits each screen independently. If too few frames pass, it captures up to two more batches for the affected screens. High-confidence results can apply automatically. Review weaker or partial results and retry only the affected screens. Image-based movement still requires a valid perspective and page mapping. With or without the robot, **Edit perspective** opens a fresh frame of the selected camera. In camera-only mode, detection also opens the perspective editor with original and corrected views. Compare the images, edit the four corners, choose the output size and rotation, then select **Use this result**. After saving, the camera stage switches to the corrected stream at the saved screen aspect ratio. Use **Original** or **Corrected** to switch views. In camera-only mode, **Clear perspective correction** deletes the saved screen outline, output size and rotation and returns to the original view. When connected, clearing a perspective from the preview or the **Camera Mapping** checklist releases the selected screen’s mapping and keeps its saved perspective.
-
-Automatic screen drift detection is currently disabled in Playground and the SDK. Previously recorded drift warnings do not block screenshots, taps or calibration. Calibration still requires a recent frame at the saved camera resolution and a matching mapping fingerprint.
-
-The green outline shows the applied perspective. If page mapping fails, the phone keeps its markers visible so you can retry **Confirm Camera Mapping**. Camera mapping requires any four of the six phone markers to decode uniquely. If a marker is missing, the camera retries once with contrast enhancement. All visible markers contribute to the final mapping. To measure accuracy, the camera fits the outer markers and checks any visible inner markers against that fit. With both inner markers hidden, only fit error is available. The first mapping check after upgrading from a version that scored all markers together measures the markers again before caching the result. Each marker’s error is the distance at its worst-matching corner. Relative to the phone viewport’s short edge, the review targets are 0.75% mean and 1% maximum for fit markers, and 1.5% mean and 2% maximum for independent check markers. These errors measure camera mapping accuracy. Screen Calibration measures physical touch accuracy separately. The mapping stays available for review when an error exceeds the target’s 10% allowance.
-
-The wizard follows Touch Tool → Camera Mapping → Teach Installation → Screen Calibration. The step bar stays at the top. Switching screens on the same camera keeps the live preview and the selected preview tab in place while checking the selected screen. The current controls stay visible and pause until the new screen’s configuration and calibration status are ready. The selected phone briefly shows a blue border and a selection label. The controls and live camera preview scroll together, side by side on wide screens and with the preview above the controls on narrow screens. In the preview pane, switch between **Live Preview** and **Setup illustration** without leaving the current step. In Teach Installation, record the calibration reference 20–50 mm above the screen. Choose **Teach Camera Boundary**, move straight towards the camera while leaving clearance for the full arm, and record the boundary at least 20 mm from the reference. Confirm the clear corridor and save installation teaching. Teaching is shared by screens using the same robot, tool and camera; changed robot or tool geometry requires teaching again. Moving to either taught position, including the return to the reference before automatic sampling, uses the configured action speed and acceleration. If the measured tool tip starts up to 0.5 mm beyond the camera boundary, the first travel waypoint is projected back onto the taught plane. A larger starting offset blocks the move. The reference defines the minimum free-travel height and contact exploration remains bounded below it.
-
-The raw camera preview marks the calibration reference with a blue circle and the recorded Safe Position with an amber diamond. Before the screen geometry is fitted, the reference appears at the mapped screen centre. After fitting, the markers show the stylus tip projected vertically onto the screen plane. A purple triangle marks the recorded camera-side boundary point when its projection is in view. Off-camera positions are labelled “outside frame”, with the camera-side boundary shown at the edge of the preview.
-
-For a straight-down MG400 stylus, you can leave **Stylus Length** blank. After payload confirmation and installation teaching, automatic calibration fits the flange poses at screen contact. The physical stylus length stays unknown. If you replace or remount the stylus, repeat teaching and screen calibration. Enter a measured length to use tip coordinates. When you reopen robot settings, the wizard uses saved progress to open the next step, or opens **Screen Calibration** if the earlier steps are complete. Select an earlier step in the header to edit it. Enable uses the saved payload and still requires operator confirmation. An unconfigured screen on the same robot can reuse the measurements across cameras when the saved setups agree on the tool. If all previous screens were archived, the wizard can reuse their tool measurements when they agree.
-
-Collect samples, fit and automatically check the boundary. If confirmed touch readings fail the sampling or fitting checks, the arm checks the return route, lifts vertically and returns to the recorded calibration reference before retry. A stop, lost connection, uncertain phone reading or unconfirmed move interrupts automatic return. With valid teaching, calibration preflights both lateral camera-avoidance exits before the opposite side, lifts to the taught travel height and moves at 10% of the configured motion speed and acceleration. Only measured arrival records the Safe Position. Parking clears the combined footprint of known screens, including gaps between them. Unreachable candidates fall back to manual Safe Position recording; a failed submitted move interrupts calibration.
-
-At each stationary probe position, the arm waits for two matching phone readings at least 100 ms apart. When the phone initially reports no contact at the descent limit, final press or slide endpoint, the arm waits a full phone reporting interval (750 ms) before requesting confirmation. Late contact or a change in coordinates gets one more reading at the same height. A missing acknowledgement after five seconds, a cancelled pointer, or a brief contact lost during a press stops sampling at that position. The failure audit’s `detail.phoneObservations` records the recent probe heights, purposes, phone reply sequences and elapsed times from each request to its reply, including browser processing.
-
-The grid RMS and maximum independent touch error are shown in millimetres and as percentages of the measured screen’s short edge. Measurement review, fast boundary verification and automatic acceptance all use targets of 1.5% and 2%, respectively. With 10% relative slack, the grid RMS triggers review above 1.65% and the independent maximum above 2.20%. Height errors use the 2 mm surface compensation range. Each quality target has 10% relative slack, so 54% coverage meets the 60% coverage target with slack. Larger deviations retain the samples and fit for review. Choose **Continue to boundary verification** to use those samples, or restart collection. Boundary verification and a measured Safe Position are required before saving. Batches with quality warnings wait for manual acceptance.
-
-In **Camera Mapping**, open the phone page on each device, then choose the page and observing camera on the computer. A QR code can open the page. Each browser keeps a stable page identity. The first marker pass covers the connected screens together. When adding a phone to an existing setup, calibration uses the screen it claimed during pairing. A released phone gets a new screen if it still has no binding. After applying, **Original** shows all saved screen outlines. Choose a screen and select **Corrected** to see only its live rectified image at the saved aspect ratio. This preview is available before physical screen calibration. **Restore Home** releases the page session. **Clear Perspective** keeps the saved result for that screen. In the marker list, **Remove** archives that screen and releases its phone for pairing again. Refreshing or reopening calibration lists only the remaining screens. In the phone dialog, **Remove page** also deletes the offline phone’s saved identity and its bound screen’s perspective.
-
-With the arm connected and a screen calibrated and mapped, turn on **Control** in the robot status bar. Click to tap, hold for at least 500 ms to long press, or drag to swipe; gestures execute on release. Once the arm is ready again, continue with the next gesture. In **Original**, the screen under the pointer is the target; in **Corrected**, the selected screen is the target. When switching screens from a completed batch, Playground can reuse a confirmed common observation pose or plan a route within the confirmed travel corridor. It checks the current arm pose and validates any travel before starting the gesture. If neither automatic option is available, configure a verified route for that direction in robot settings. Control is unavailable while a task or calibration runs, or when the robot is not motion-ready.
-
-After installation teaching, Screen Calibration opens at **Collect calibration points**. The taught screen reuses its reference. For another screen without a known start, record the tip position 20–50 mm above its centre before sampling. This keeps the shared camera boundary and travel height. After a service restart, opening the screen reconnects its paired phone. The wizard reuses a valid saved perspective and restores its page mapping when the phone layout, camera fingerprint, and tool geometry match. If only the page mapping is missing, it checks the markers in the saved corrected image and continues after the mapping succeeds. A missing or invalid perspective opens Camera Mapping for detection. Connecting the arm runs the motion preconditions the calibration queue needs, so the robot status bar reports a missing or unconfirmed tool payload before any screen work starts. When connecting to an already enabled MG400, Playground briefly waits for fresh controller feedback to confirm the existing tool payload. A batch checks controller readiness and the selected saved payload before it enters the queue and again before each screen starts sampling. Before the first motion of each screen, guided calibration (including batches) briefly waits for transient controller connection or payload feedback loss. It resumes after confirming the saved payload, checking robot readiness, and rebuilding the route from fresh pose feedback, provided the driver can establish that no motion command was dispatched. A channel reset drops the payload evidence, not the controller's configuration: each pre-motion gate and the checks between commands wait for the adapter to re-read and re-confirm the saved payload, so a reset during a batch no longer fails the run. Only a payload the controller actually reports as different, or evidence that never returns within that wait, still blocks motion. Use **Apply tool payload** in the robot status bar if the controller reports different parameters or cannot confirm the saved payload. The button is hidden once the load is confirmed. If only the phone or controller socket drops during collection, reconnecting the same setup returns it to sampling preparation after a fresh stationary, fault-free controller and pose check. Partial samples are discarded. Start sampling again explicitly. After pressing Stop or Emergency Stop, select **Check Recovery** once the arm is stationary and the stop condition has cleared. If a sampling move is interrupted or times out, the controller checks recovery automatically. Select **Restart Calibration** in the same screen to begin a new attempt. Confirm the workspace again before starting motion. With one mapped screen, **Screen Calibration** opens that screen directly. With multiple screens, **Calibrate [screen name]** starts only the selected screen. Cancel the current attempt before switching screens. A retry keeps that screen’s paired phone and camera mapping, starts with no samples, and only replaces its saved result after successful acceptance. **Calibrate multiple screens** opens a separate batch confirmation. Screen status refreshes faster while waiting for a phone or mapping and pauses during active sampling and shared parking. The batch progress keeps updating.
-
-The Screen Calibration step shows the original per-screen cards, planned order, placement prompts, run history and batch confirmation. A batch holds the same Controller queue throughout exploration and operator waits. A queued single-screen session cannot collect samples before it owns that queue. Accepted geometry provides measured starts; newly mapped screens can use a plane estimate from accepted screens or wait for manual placement. Fixed screens and any computed transfer corridor require confirmation before starting. The batch defaults to Regular (individual probes). Select Fast for sliding sampling and confirm that all screens are secured horizontally. Both modes default to automatic acceptance after passing their quality checks and full hover and contact boundary verification. Select per-screen manual acceptance if needed. The batch waits for the current phone page, then verifies and saves its screen before moving to the next. Before moving to a shared Safe Position, it checks that all paired phones can display the verification pattern. If this check fails, retry parking from the batch panel to keep the saved screen results. After the last screen, it searches for one shared Safe Position using measured outlines and conservative estimates for any skipped screens. The flange and tool tip must retreat from the taught camera boundary and finish at least 20 mm behind it. At each reachable candidate, paired phones briefly display an alternating checkerboard. Fresh camera frames must confirm the pattern across every screen before the position is recorded. Partial obstruction triggers another preflighted candidate, with at most three new candidates and a 500 mm XY limit from the measured search start. Exhausted candidates or an unavailable camera check stop the search. Verified screen results become available for tasks once the clear shared position is saved to all results. Retrying or resuming keeps the sampling mode and the recorded shared position. Retry or skip affects only the current screen. Stop preempts pending batch commands and exits Drag Mode before releasing the queue. Stopping retains completed results, and a service restart leaves the history stopped for explicit recovery. Resuming preserves the confirmed travel height and rechecks geometry, teaching, screen mappings and the current position against the confirmed corridor. After calibration, use the screen selector for preview and tasks. In the SDK, give each screen a distinct `id` and `screenId` in `RobotArmDevice`, with the same physical `camera`.
-
-The speaker icon controls safety warnings and progress tones. The calibration wizard stays open during automatic camera avoidance. When avoidance starts, a voice prompt asks you to stand clear. When a result is ready to save, a voice prompt asks you to confirm it. At the end of a batch, a prompt asks you to review the saved results. Speech also warns about other arm movement, drag mode, lost feedback, faults and stops. Setup instructions, routine calibration progress and results appear on screen. Each collected sample has a short tone.
-
-Targets use a 10% inset and aim to cover 60% of the full screen. **Fast** (sliding) is selected by default. **Regular** probes each point separately at 10% of the configured action speed and acceleration, then uses 25% for the final sampling press. During grid sampling, the phone mirrors the web diagram with nine numbered targets connected in sampling order, a blue ring around the current target and green dots at recorded touch locations. If the first fast grid point reports no touch, one retry moves the target 3 mm toward the measured initial touch without extending the descent limit. If fast collection fails, confirm the switch to Regular to start a fresh collection. In Fast mode, confirm in one checkbox that the screen is fixed and horizontal and the workspace is clear. Use **Previous Step** in arm calibration to review earlier measurements, then **Next** to return to the current step.
-
-Refreshing the single-screen calibration page reopens the current attempt, including its measurements or saved result. You can cancel while a boundary check is pending. If a run is interrupted, the page shows the affected step and offers **Check Recovery** when the controller requires it. In the standalone SDK page, choose **Finish Calibration** after saving to return the result to your script. Starting a new SDK calibration opens a fresh attempt even when the screen has a saved profile.
-
-Safe Position verification uses the phone's reported browser viewport and the observed checkerboard to exclude system bars outside the page. It tolerates scattered pattern misses while still requiring each interior tile to respond. If a capture yields a failed visibility measurement, the camera takes one more set of frames at the same position before the search continues. Saved screen results and pending shared Safe Position verification appear separately in the batch panel. When verification is pending, the operator can confirm the current shared Safe Position after checking the live view. The controller checks the stationary pose against the parking constraints and records the confirmation without moving the arm.
-
-When every screen on the camera is ready, select **Finish calibration and return** to return to the Playground. The workspace checks the current accepted calibration before opening tasks.
-
-The screen list and batch plan ignore tool settings from archived screens when checking which screens are calibrated. If a saved calibration no longer matches the current camera mapping, it is labelled **Calibration saved · Camera mapping changed** and is excluded from batch positioning.
-
-## SDK & Adapters
-
-See the [SDK example](./examples/mg400/run.mjs). `RobotArmDevice.perform(action)` executes an absolute tap, long press, swipe or drag in screen pixels; the Device resolves the accepted calibration and camera mapping itself and rejects points outside the screen. To support another arm, implement `RobotArmAdapter` from `@midscene/arm-kit/adapter-development`; refer to the [MG400 adapter](./packages/adapter-mg400/src/mg400.ts).
-
-## iOS HID (experimental)
-
-Requires macOS, Xcode Command Line Tools to compile the native helpers, and an iPhone. No phone app is required. Start the device service on the Mac connected to the phones and configure a device at `http://localhost:5801/`.
+Copy [.env.example](./.env.example) to `.env`, fill in the service and model settings, and run:
 
 ```sh
-pnpm ios-hid:service install
+pnpm exec tsx examples/open-device.ts
 ```
 
-Run `pnpm ios-hid:service token` in another terminal on that Mac to obtain the access credential. Start the task Playground on the computer running the Agent:
+The example uses `agentFromOpenDevice()` to read the current screen. Both services serve Swagger UI at `/api/docs/` and the OpenAPI schema at `/api/openapi.json`.
 
-```sh
-pnpm dev:ios-hid
-```
-
-Open `http://localhost:5800/`, enter the service address and token, click the refresh icon next to the phone selector, then select one available phone. After a successful refresh, the browser remembers the last service address and its token. Disconnect in Playground to release control or switch phones. The task page uses the official UI bundled with `@midscene/playground`. Add devices and recover offline connections in the management page.
-
-To run an Agent in a local script, use the SDK with a phone connected in the device manager.
-
-Run the [iOS HID example](./examples/ios-hid/run.mjs) with `node examples/ios-hid/run.mjs` after building. It loads the repository root `.env`, including `IOS_HID_SERVICE_TOKEN` and your model settings. Set `IOS_HID_DEVICE_ID` when multiple phones are configured. `IOS_HID_SERVICE_URL` defaults to `http://localhost:5801`.
-
-```js
-import { agentFromIOSHID } from '@midscene/ios-hid';
-
-const agent = await agentFromIOSHID({
-  host: 'http://localhost:5801',
-  deviceId: 'your-device-id',
-});
-
-try {
-  await agent.aiAct('Open Settings');
-} finally {
-  await agent.destroy();
-}
-```
-
-Set `IOS_HID_SERVICE_TOKEN` to the output of `hid-service token`, or pass `token` in the options. Omit `deviceId` when only one phone is configured. `agent.destroy()` releases control of the phone.
-
-Configure your Midscene model through its normal settings; credentials are not stored in device profiles. The device manager keeps source selection, pairing guidance and camera correction inside its own window. AirPlay setup keeps Bluetooth selection on the first page. Starting the receiver shows its name and PIN in the preview area; waiting for mirroring is a normal state, not a screenshot timeout. The first received frame enables verification. Receiver setup states use SSE without status polling. Receiver health uses client statistics and disconnect events to distinguish a static picture from missing video; new video restores the preview. Stop releases the receiver, and startup failures can be retried. Trust the Mac over USB, pair with this Mac in iPhone Bluetooth settings (using the Mac name displayed in the device manager), enable AssistiveTouch, preview the screen, and confirm the Bluetooth peer belongs to that phone. Keep a static, bright screen visible while pointer orientation is measured. The service generates device IDs. Scripts can use `deviceId` or `name` to select a saved profile.
-
-Pointer calibration waits for a stable start and endpoint in fresh video. When the background appears to shift, the service uses OpenCV to align small frame-to-frame translations before measuring pointer motion. Large shifts and scene changes still require a retry. Motion probes track the last observed pointer so a stable start can be measured even when its camera position differs from the requested position. Each movement is measured three times; a consistent majority is required before using the median trial. Repeated samples are saved with the motion profile, and predicted versus observed validation errors are logged to `midscene_run/log/ios-hid-pointer.log`. The accuracy threshold remains unchanged.
-
-AirPlay recovery reuses the screen-mirroring guide with the receiver name and pairing code, waits for the phone to mirror, then automatically checks the saved Bluetooth binding and input without another confirmation button. Receiver startup, state transitions and process failures are recorded in `midscene_run/log/ios-hid-airplay.log` in the device service working directory for diagnosing interruptions.
-
-The USB source selector displays `Phone name - Phone model` (for example, `My iPhone - iPhone 13`); connected devices use the Bluetooth phone name. There is no manual name field. Model metadata is read from an already trusted USB phone using the macOS MobileDevice framework. If metadata is unavailable or cannot be matched reliably, only the phone name is shown. SDK scripts can still supply `name` when selecting saved profiles.
-
-IOSHIDAgent includes concise English guidance for Chinese input through the on-screen keyboard: tap keys and candidates slowly and verify committed text. The default guidance is combined with the selected user aiAct context without changing other API contexts. The Input action also explicitly tells the planner to use visible suggestions or the on-screen keyboard for non-ASCII text. Unsupported text is rejected before clearing or typing, with guidance to choose another action. Direct Input still accepts ASCII only; this does not promise automatic Chinese input in every app.
-
-The device exposes `home()` and `back()` and registers `Home`/`Back` actions for the Agent. Home sends the external-keyboard Command+H shortcut (some iPhones ignore Consumer AC Home); Back performs a left-edge swipe and only works where iOS supports that gesture. Both use the same device queue, cancellation and fresh-frame checks as other input. AppSwitcher is not currently provided.
-
-During first setup or remeasurement, the device service verifies pointer orientation and measures a per-device report table from frame differences. Horizontal and vertical reports of 2, 4, 6 and 8 units, and diagonal reports of (2,2) and (4,4), are measured separately at the same nominal 16 ms cadence used for drags. Each measurement requires a stable start and endpoint and a consistent majority of three trials. Independent horizontal, vertical and diagonal probes check the table without clicking. A stable discrepancy can correct its measured table entry, but a new independent validation must pass before saving (at most three corrections). The planner uses only measured reports and their sign mirrors, never extrapolated quadratic values. This assumes directional symmetry; hover checks do not guarantee an app's scroll distance. Failed or inconsistent measurement still prevents connection readiness. The first swipe reuses this prepared table. Samples, repetitions, report displacements, geometry, validation errors and algorithm version are saved per device in `~/.midscene/ios-hid/service/devices.json`. Version 3 invalidates old quadratic profiles. Reconnect reuses a validated saved orientation and table when the binding and frame dimensions match, without moving the pointer. Missing, incompatible or explicitly discarded profiles trigger fresh measurement. Bindings include the Bluetooth peer, source, dimensions, orientation and camera correction. If AssistiveTouch Tracking Speed or the pointer orientation changes while frame dimensions remain unchanged, uncheck the saved-calibration option to remeasure; those settings cannot be read through HID. Keep a static, bright screen visible; no additional phone helper page is opened.
-
-Drags use relative reports of at most 8 HID units in vector length, nominally 16 ms apart, with a prompt start and gentle deceleration through release. The planner searches legal integer reports and carries quantization error forward. It can extend short planned durations up to 2 seconds (longer explicit requests remain supported up to 5 seconds). If the path still cannot be planned, it fails before pressing instead of sending an incomplete drag. The pointer is repositioned absolutely after release; this does not correct the app's scroll distance. These timing defaults still need testing across devices and apps.
-
-Sources are `usb`, `camera`, and `airplay`. Camera setup includes four-corner perspective correction. Scan the phone calibration link once per Bluetooth phone. You can reopen or refresh that link on subsequent setups and after a service restart at the same address and port. Confirming the image checks the four corners and starts pointer verification while keeping both previews on screen. If verification fails, adjust the corners or confirm again to retry with the same correction. AirPlay requires an external UxPlay 1.74+ executable on the device service's PATH, the necessary GStreamer decoders, and macOS AirPlay Receiver enabled for peer-to-peer discovery; the setup page shows the receiver name and pairing code. UxPlay is not bundled or installed automatically.
-
-Changing the source or USB device requires confirming the screen-to-Bluetooth binding again while preserving system Bluetooth pairing. For a new camera, confirm the corrected image for the selected Bluetooth phone in the camera editor. A specified `cameraId` limits the setup page to that camera; switching cameras requires new screen corners.
-
-Native processes are owned by the device service and started on demand: one shared Bluetooth helper and one persistent USB discovery helper; USB refresh requests reuse the same discovery session. Each active USB capture and camera stream has its own capture lifecycle. USB discovery alone does not start recording or prove that fresh screen frames are available. The discovery helper exits with the device service and is recreated on the next request after a crash.
-
-The device service owns capture and Bluetooth sessions independently of script lifetimes. The device manager configures and restores phones on that Mac. SDK and Playground clients use the token-protected `/api/v1` to list devices and acquire exclusive control of a connected phone. Releasing control leaves the phone connected in the manager. Devices configured with the standalone Host need to be added again in the device manager after upgrading.
-
-USB capture, BLE taps, measured swipes, English text input and input cancellation were exercised before the classic migration. Classic HID absolute pointer movement and independent routing to two connected iPhones have been verified. On one iPhone, connection-time orientation, relative movement measurement and independent axis/diagonal validation also passed and the profile was saved; taps, dragging, scrolling and keyboard input over the new transport still require hardware verification. Keyboard text currently supports the US ASCII layout and requires an English input method; unsupported text is rejected before typing. Pointer measurements use frame differences and may fail on animated or low-contrast screens. AirPlay integration and multi-phone concurrency still require real-device verification. The device service reserves each device's capture source and Bluetooth peer independently; the current AirPlay backend permits one receiver at a time.
-
-The device manager reuses the camera setup, marker detection and screen editor. It can preview multiple configured phones. A Playground control session is exclusive per phone and shares the manager's existing hardware connection. The manager can still preview a busy phone. Recovery and removal are available after control is released.
-
-Saved configurations are unique per Bluetooth peer and screen source (USB, AirPlay or camera). Connections reuse that pair automatically, and device names come from Bluetooth. Uncheck “使用已保存的校准配置” to repeat calibration and update the same record. Older duplicate records for a pair are consolidated when the device service loads its configuration, retaining the last saved record.
-
-The HID preview is interactive by default. Click or drag the phone image to control it. The preview shows the target or swipe path and whether the action is executing, completed, or failed.
-
-The iOS HID Playground uses a live MJPEG preview while the preview is open. It proxies the authenticated `GET /api/v1/sessions/{id}/preview` stream through its own server. The service shares one preview per device session, capped at 10 FPS. External camera previews are rectified in a worker. Agent screenshots still wait for the screen to settle after input.
-
-## iOS HID device service (experimental)
-
-The device service package is `@midscene/ios-hid-service`. Its two CLI names, `hid-service` and `midscene-hid-service`, run the same commands. To try the workspace build on the Mac connected to the phones:
-
-```sh
-pnpm build
-pnpm ios-hid:service install
-```
-
-Open the printed local setup URL, normally `http://localhost:5801/`. The manager provides multi-device setup, calibration, previews and recovery. When you first select an external camera, macOS may ask you to allow **Midscene Camera**. Grant access on the service Mac. If you already denied it, enable Midscene Camera in **System Settings → Privacy & Security → Camera**, then select the camera again.
-
-For an external camera, pointer setup measures four positions in the rectified image and verifies the correction at a fifth. The service reuses the saved correction on reconnect and measures it again after the camera geometry changes.
-
-```sh
-pnpm ios-hid:service status
-pnpm ios-hid:service stop
-pnpm ios-hid:service start
-pnpm ios-hid:service uninstall
-```
-
-`install` registers and starts a macOS LaunchAgent for the current user. The service starts at login and restarts after a crash. Closing the browser or terminal leaves it running. `stop` unloads it for the current login, and `uninstall` removes its login registration. The LaunchAgent references the current Node executable and built CLI, so reinstall it if those paths change. Logs are in `~/.midscene/ios-hid/service/service.log`. Use `install --port 5802` to choose another port. If you registered the earlier manager prototype, unload its `com.midscene.ios-hid-manager` LaunchAgent and remove the old plist from `~/Library/LaunchAgents` before installing.
-
-The service listens on `0.0.0.0:5801` by default. Open the local setup URL on the Mac to manage devices. For LAN clients, the CLI prints the Swagger UI URLs at `/api/docs`. The OpenAPI definition is at `/api/openapi.json`. To call `GET /api/v1/devices`, retrieve the credential on the Mac with `pnpm ios-hid:service token` and send it as `Authorization: Bearer <token>`. The response lists saved profile IDs, names and screen sources.
-
-The public API reports availability and supports exclusive device control sessions for phones connected in the manager. A session controls the connection it was issued for. It ends when that connection closes or after 30 seconds without a heartbeat. After reconnecting the phone, request a new session. After restarting the service, add the phones again to reuse their saved calibration.
-
-### Installing and updating from npm
-
-On the service Mac, once the package is published to npm:
-
-```sh
-npm install -g @midscene/ios-hid-service@latest
-hid-service install
-hid-service update --check
-hid-service update
-```
-
-Initial installation stages the CLI’s npm version under `~/.midscene/ios-hid/service/releases/`. Subsequent updates look up the npm `latest` tag. The global command forwards to the CLI in the version registered with LaunchAgent, so `hid-service help` follows that version. `update --check` compares versions without staging or restarting the service. An update preserves the port, token, device profiles and calibration. It checks for active control sessions before switching, verifies the new service and restores the previous registration if startup fails. Reconnect phones in the manager after the restart. Update progress is logged to `~/.midscene/ios-hid/service/update.log`.
-
-If an older running service cannot check for active sessions, stop it manually once it is idle and retry. For local development, rebuild the repository and use `pnpm ios-hid:service stop` and `pnpm ios-hid:service start` to reload a service installed from that checkout.
-
-## Project Structure
-
-```text
-packages/arm-kit/           Node.js SDK
-packages/adapter-mg400/     MG400 adapter
-packages/calibration-ui/    Calibration UI
-packages/shared/            @midscene/robotics-shared: browser-safe contracts and geometry
-packages/vision/            Shared camera capture, correction and setup UI
-packages/ios-hid/           Remote iOS HID SDK
-packages/ios-hid-playground/ iOS Playground using upstream @midscene/playground
-packages/ios-hid-service/    iOS HID device service, native helpers and macOS login CLI
-packages/playground/        Reusable Playground
-packages/preview-controls/  Shared preview action feedback UI
-apps/playground/            MG400 Playground launcher
-examples/package.json       Shared dependencies for the examples
-examples/mg400/             SDK examples
-examples/ios-hid/           iOS HID service SDK example
-```
-
-Calibration code is in `packages/arm-kit/src/calibration`: phone and camera setup, sample collection and fitting, and boundary verification.
-
-## License
-
-[MIT](./LICENSE).
-
-Bluetooth input uses classic HID. The connection panel displays the Mac's actual Bluetooth name and connected phone names; click a phone to bind it to the chosen screen source. A sole available phone is selected automatically. Occupied phones remain visible but disabled, and a disconnect never silently selects another phone. Control and interrupt channels must both be open to count as connected; pairing records alone do not count. Native connection/disconnection events reach the UI through SSE, with an initial snapshot and no Bluetooth-list polling. Phone names come from the classic peer; exact model names are not guaranteed, so they are omitted. Duplicate names include an address suffix. The HID service is named `Midscene iOS HID`, but classic pairing generally displays the Mac's system Bluetooth name; the app does not rename the Mac. Existing BLE pairing records may need to be forgotten on the phone before pairing again. Reconnect from the phone's Bluetooth settings if necessary; automatic Mac-initiated reconnection is not guaranteed. Old BLE motion profiles are remeasured. This backend uses private macOS Bluetooth entry points checked at runtime and has been verified on macOS 27.0.1; other macOS versions still need hardware validation.
-
-The arm and iOS HID share camera discovery, frame capture, automatic marker-based screen detection, perspective correction and the corner editor through `@midscene/robotics-vision`. The arm owns its calibration workflow and marker validation. The iOS HID service owns Bluetooth control, pointer calibration and its screen-setup validation.
-
-The new iOS HID and vision packages use Rstest. After building, run their suites with `pnpm --filter @midscene/ios-hid test`, `pnpm --filter @midscene/ios-hid-service test`, `pnpm --filter @midscene/ios-hid-playground test`, and `pnpm --filter @midscene/robotics-vision test`.
-
-AirPlay logs use a small native terminal launcher so UxPlay connection events and client statistics arrive immediately, separately from JPEG video. Swipe planning may extend short requested durations up to 2 seconds to stay within measured steps; the requested duration is a target, not a hard deadline.
-
-The device manager allows up to 3 minutes for USB/camera recovery because a rejected cached measurement may require full recalibration; AirPlay retains its 10-minute mirroring window.
+[Protocol draft](./packages/open-device/rfc/index.html) · [MIT license](./LICENSE)

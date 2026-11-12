@@ -13,17 +13,17 @@
     "format": "pretty-quick --staged",
     "format:ci": "pretty-quick --since HEAD~1",
     "projects": "nx show projects",
-    "dev": "pnpm --filter @midscene/arm-kit-playground-mg400 dev",
-    "dev:mock": "pnpm --filter @midscene/arm-kit-playground-mg400 dev:mock",
-    "build": "pnpm --filter \"./packages/*\" -r build",
+    "dev": "pnpm --filter @midscene/arm-service dev",
+    "dev:mock": "pnpm --filter @midscene/arm-service dev:mock",
+    "build": "pnpm --filter \"./packages/**\" -r build",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
     "prepare": "husky",
     "commitlint": "commitlint",
     "lint:staged": "lint-staged",
-    "dev:ios-hid": "pnpm --filter @midscene/ios-hid-playground start",
-    "ios-hid:release": "node packages/ios-hid-service/scripts/package-release.mjs",
-    "ios-hid:service": "pnpm --filter @midscene/ios-hid-service start"
+    "dev:playground": "pnpm --filter @midscene/open-device-playground start",
+    "iphone-use:release": "node packages/iphone-use/scripts/package-release.mjs",
+    "iphone-use": "pnpm --filter @midscene/iphone-use start"
   },
   "devDependencies": {
     "@biomejs/biome": "1.9.4",
@@ -33,10 +33,11 @@
     "lint-staged": "15.5.2",
     "nx": "22.1.3",
     "prettier": "^3.6.2",
-    "pretty-quick": "3.1.3"
+    "pretty-quick": "3.1.3",
+    "tsx": "^4.20.6"
   },
   "lint-staged": {
-    "!(packages/playground/src/ui/vendor/visualizer/**).{js,jsx,ts,tsx,mjs,cjs,json,css}": "pnpm exec biome check --write --no-errors-on-unmatched",
-    "!(packages/playground/src/ui/vendor/visualizer/**).{md,mdx,less,scss,yml,yaml}": "pnpm exec prettier --write"
+    "!(packages/shared/manager-ui/src/vendor/visualizer/**).{js,jsx,ts,tsx,mjs,cjs,json,css}": "pnpm exec biome check --write --no-errors-on-unmatched",
+    "!(packages/shared/manager-ui/src/vendor/visualizer/**).{md,mdx,less,scss,yml,yaml}": "pnpm exec prettier --write"
   }
 }

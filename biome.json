@@ -8,13 +8,15 @@
       "node_modules/**",
       ".pnpm-store/**",
       ".nx/**",
+      ".worktrees/**",
       "**/.midscene/**",
       "**/midscene_run/**",
       "**/dist/**",
       "**/coverage/**",
-      "packages/calibration-ui/lib/**",
-      "packages/playground/src/ui/vendor/visualizer/**",
-      "packages/playground/src/ui/vendor/playground-app/**"
+      "packages/**/calibration-ui/lib/**",
+      "packages/shared/manager-ui/lib/**",
+      "packages/shared/manager-ui/src/vendor/visualizer/**",
+      "packages/shared/manager-ui/src/vendor/playground-app/**"
     ]
   },
   "javascript": {

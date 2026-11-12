@@ -1,0 +1,108 @@
+.calibration-page {
+  --rv-border: #e7e9ed;
+  --rv-text: #24262b;
+  --rv-text-secondary: #7a7e87;
+  --rv-accent: #2b83ff;
+  --midscene-surface: #fff;
+  --midscene-surface-muted: #f5f6f7;
+  color: var(--rv-text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  min-height: 0;
+  background: var(--midscene-surface);
+  container-type: inline-size;
+  container-name: robot-setup;
+}
+.calibration-page.is-embedded {
+  height: 100%;
+}
+.calibration-shell-header {
+  flex: none;
+  padding: 22px 24px 14px;
+  border-bottom: 1px solid var(--rv-border);
+}
+.calibration-shell-heading {
+  max-width: 1060px;
+  margin: 0 auto 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+.calibration-shell-heading h2.ant-typography {
+  margin: 6px 0 0;
+  font-size: 24px;
+  line-height: 1.4;
+}
+.calibration-shell-progress {
+  max-width: 1060px;
+  margin: 0 auto;
+}
+.calibration-shell-progress .ant-steps {
+  width: min(100%, 560px);
+}
+.calibration-shell-body {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 24px;
+}
+.calibration-shell-content {
+  max-width: 1060px;
+  margin: 0 auto;
+}
+.calibration-shell-footer {
+  flex: none;
+  border-top: 1px solid var(--rv-border);
+  padding: 16px 24px;
+  background: var(--midscene-surface);
+}
+.calibration-shell-footer .arm-calibration-footer {
+  max-width: 1060px;
+  margin: 0 auto;
+  display: flex;
+  justify-content: flex-end;
+}
+.calibration-shell-footer .ant-space {
+  width: 100%;
+  justify-content: flex-end;
+}
+.calibration-tool-setup {
+  width: 100%;
+}
+.calibration-tool-setup .robot-setup-step-panel {
+  max-width: none;
+}
+.calibration-preview {
+  display: block;
+  width: 100%;
+  max-height: clamp(220px, calc(100dvh - 390px), 580px);
+  object-fit: contain;
+  background: var(--midscene-surface-muted);
+  border-radius: 8px;
+}
+.robot-web-calibration .calibration-preview {
+  max-height: clamp(220px, calc(100dvh - 450px), 520px);
+}
+.calibration-result-details summary {
+  cursor: pointer;
+  color: var(--rv-text-secondary);
+  margin-bottom: 8px;
+}
+@container robot-setup (max-width: 820px) {
+  .robot-setup-task-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 700px) {
+  .calibration-shell-header,
+  .calibration-shell-body,
+  .calibration-shell-footer {
+    padding: 16px;
+  }
+  .calibration-shell-heading h2.ant-typography {
+    font-size: 22px;
+  }
+}
