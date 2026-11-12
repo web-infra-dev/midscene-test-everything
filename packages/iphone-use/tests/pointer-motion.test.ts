@@ -244,6 +244,7 @@ test('connection measures and persists movement before the first swipe; reconnec
   assert.equal(next.saved(), 0, 'reuse does not rewrite validation timestamps');
 }, 60_000);
 
+// Allow for two full calibrations with image processing on CI runners.
 test('explicit reconfiguration refits changed pointer sensitivity before any drag', async () => {
   fastTimers();
   const config = phoneConfig();
@@ -261,7 +262,7 @@ test('explicit reconfiguration refits changed pointer sensitivity before any dra
   );
   assert.equal(next.saved(), 1, 'save only the verified replacement');
   assert.equal(next.pressed(), 0);
-}, 60_000);
+}, 120_000);
 
 test('failed revalidation clears stale disk data, and cancellation never starts a drag', async () => {
   fastTimers();
