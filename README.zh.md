@@ -133,6 +133,8 @@ USB 画面来源列表以「手机名 - 手机型号」（例如「我的 iPhone
 
 保存配置以「蓝牙设备 ID + 画面来源（USB、AirPlay 或摄像头）」唯一标识，连接时自动复用对应记录，设备名称使用蓝牙读取的手机名。取消勾选「使用已保存的校准配置」可重新校准并更新同一条记录。设备服务加载配置时会合并相同组合的历史重复记录，保留最近保存的一条。
 
+HID Playground 的手机预览默认可操作，点击或拖动画面即可控制手机。预览会显示落点、滑动轨迹和动作执行结果。
+
 iOS HID Playground 打开预览时，通过自己的后端转发设备服务的 `GET /api/v1/sessions/{id}/preview`，持续显示 MJPEG 画面。一个设备会话共用一路预览，最高 10 FPS。独立摄像头的预览在 Worker 中拉正，Agent 截图仍会等待输入后的画面稳定。
 
 ## iOS HID 设备服务（实验中）
@@ -190,6 +192,7 @@ packages/ios-hid/           远程 iOS HID SDK
 packages/ios-hid-playground/ 基于上游 @midscene/playground 的 iOS 工作台
 packages/ios-hid-service/    iOS HID 设备服务、原生助手与 macOS 常驻命令
 packages/playground/        可复用工作台
+packages/preview-controls/  共用预览动作反馈组件
 apps/playground/            MG400 工作台启动入口
 examples/package.json       示例共用的依赖配置
 examples/mg400/             SDK 示例

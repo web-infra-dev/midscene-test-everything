@@ -238,6 +238,9 @@ importers:
       '@midscene/playground':
         specifier: 1.17.5
         version: 1.17.5(ws@8.22.1)
+      '@midscene/preview-controls':
+        specifier: workspace:*
+        version: link:../preview-controls
       express:
         specifier: 4.22.3
         version: 4.22.3
@@ -390,6 +393,9 @@ importers:
       '@midscene/playground':
         specifier: 1.17.5
         version: 1.17.5(ws@8.22.1)
+      '@midscene/preview-controls':
+        specifier: workspace:*
+        version: link:../preview-controls
       '@midscene/robotics-shared':
         specifier: workspace:*
         version: link:../shared
@@ -460,6 +466,18 @@ importers:
       less:
         specifier: ^4.2.0
         version: 4.9.1
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+
+  packages/preview-controls:
+    devDependencies:
+      '@types/react':
+        specifier: ^18.3.1
+        version: 18.3.31
+      react:
+        specifier: 18.3.1
+        version: 18.3.1
       typescript:
         specifier: ^5.8.3
         version: 5.9.3

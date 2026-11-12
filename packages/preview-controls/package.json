@@ -1,0 +1,27 @@
+{
+  "name": "@midscene/preview-controls",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "files": ["dist", "src/preview-action-overlay.css"],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./styles.css": "./src/preview-action-overlay.css"
+  },
+  "sideEffects": ["**/*.css"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.1",
+    "react": "18.3.1",
+    "typescript": "^5.8.3"
+  }
+}

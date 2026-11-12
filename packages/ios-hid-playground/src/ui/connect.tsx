@@ -4,6 +4,7 @@ import { Button, Form, Input, Select } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './connect.css';
+import { mountPreviewFeedback } from './preview-feedback';
 
 const defaultHost = 'http://localhost:5801';
 const storageKey = 'midscene.ios-hid.connection';
@@ -297,6 +298,7 @@ function mountControls(connected: boolean, notice?: string) {
   };
   const root = document.getElementById('root');
   if (!root) return;
+  if (connected) mountPreviewFeedback(root);
   new MutationObserver(mount).observe(root, { childList: true, subtree: true });
   mount();
 }

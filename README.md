@@ -129,6 +129,8 @@ The device manager reuses the camera setup, marker detection and screen editor. 
 
 Saved configurations are unique per Bluetooth peer and screen source (USB, AirPlay or camera). Connections reuse that pair automatically, and device names come from Bluetooth. Uncheck “使用已保存的校准配置” to repeat calibration and update the same record. Older duplicate records for a pair are consolidated when the device service loads its configuration, retaining the last saved record.
 
+The HID preview is interactive by default. Click or drag the phone image to control it. The preview shows the target or swipe path and whether the action is executing, completed, or failed.
+
 The iOS HID Playground uses a live MJPEG preview while the preview is open. It proxies the authenticated `GET /api/v1/sessions/{id}/preview` stream through its own server. The service shares one preview per device session, capped at 10 FPS. External camera previews are rectified in a worker. Agent screenshots still wait for the screen to settle after input.
 
 ## iOS HID device service (experimental)
@@ -184,6 +186,7 @@ packages/ios-hid/           Remote iOS HID SDK
 packages/ios-hid-playground/ iOS Playground using upstream @midscene/playground
 packages/ios-hid-service/    iOS HID device service, native helpers and macOS login CLI
 packages/playground/        Reusable Playground
+packages/preview-controls/  Shared preview action feedback UI
 apps/playground/            MG400 Playground launcher
 examples/package.json       Shared dependencies for the examples
 examples/mg400/             SDK examples

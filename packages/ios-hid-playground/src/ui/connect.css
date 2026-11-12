@@ -28,3 +28,13 @@
   flex: none;
   padding-bottom: 12px;
 }
+
+.hid-preview-feedback {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+[data-midscene-device-interaction-layer="true"]:has(> .hid-preview-feedback) {
+  cursor: crosshair !important;
+}
