@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { DeviceConfig, Point } from '../types.js';
-import type { PointerTurn } from './mapping.js';
+import type { AbsolutePointerCorrection, PointerTurn } from './mapping.js';
 import type { PointerMotionModel } from './motion-model.js';
 
 // Measured report tables replace two-point quadratic curves.
@@ -36,6 +36,7 @@ export interface MotionValidation {
 }
 export interface PointerMotionProfile {
   version: number;
+  absoluteCorrection?: AbsolutePointerCorrection;
   binding: string;
   width: number;
   height: number;

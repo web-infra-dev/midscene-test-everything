@@ -146,6 +146,8 @@ pnpm ios-hid:service install
 
 首次选择独立摄像头时，macOS 可能会提示为 **Midscene Camera** 授权。请在运行服务的 Mac 上允许访问。如果之前拒绝过，在「系统设置 → 隐私与安全性 → 摄像头」启用 Midscene Camera，再重新选择摄像头。
 
+独立摄像头的鼠标校准会在拉正画面中测量四个位置，再用第五个位置验证点击补偿。重连时会复用已保存的补偿，摄像头几何配置变化后会重新测量。
+
 ```sh
 pnpm ios-hid:service status
 pnpm ios-hid:service stop

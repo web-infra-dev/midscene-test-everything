@@ -140,6 +140,8 @@ pnpm ios-hid:service install
 
 Open the printed local setup URL, normally `http://localhost:5801/`. The manager provides multi-device setup, calibration, previews and recovery. When you first select an external camera, macOS may ask you to allow **Midscene Camera**. Grant access on the service Mac. If you already denied it, enable Midscene Camera in **System Settings → Privacy & Security → Camera**, then select the camera again.
 
+For an external camera, pointer setup measures four positions in the rectified image and verifies the correction at a fifth. The service reuses the saved correction on reconnect and measures it again after the camera geometry changes.
+
 ```sh
 pnpm ios-hid:service status
 pnpm ios-hid:service stop

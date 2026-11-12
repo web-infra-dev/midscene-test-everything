@@ -1,8 +1,10 @@
 import { NativeHIDClient } from '../native/client.js';
 import {
+  type AbsolutePointerCorrection,
   type PointerTurn,
+  correctedScreenToPointer,
   screenDeltaToPointer,
-  screenToPointer,
+  validAbsoluteCorrection,
 } from '../pointer/mapping.js';
 import {
   MotionValidationError,
@@ -22,7 +24,10 @@ import {
   compatibleMotionProfile,
   motionBinding,
 } from '../pointer/motion-profile.js';
-import { measurePointerTurn } from '../pointer/setup.js';
+import {
+  measureAbsoluteCorrection,
+  measurePointerTurn,
+} from '../pointer/setup.js';
 import type { ScreenSession } from '../screen/source.js';
 import type { DeviceConfig, InputAction, Point } from '../types.js';
 
@@ -85,6 +90,7 @@ export class HIDInputSession {
   private lifetime = new AbortController();
   private motion?: PointerMotionModel;
   private lastAbsolute?: Point;
+  private absoluteCorrection?: AbsolutePointerCorrection;
   private mapping?: { turn: PointerTurn; width: number; height: number };
   private profileConfig?: DeviceConfig;
   private persistProfile?: () => Promise<void>;
@@ -124,6 +130,13 @@ export class HIDInputSession {
     signal.throwIfAborted();
     const config = this.profileConfig;
     const cached = config?.pointerMotion;
+    const isCamera = config?.screen.source === 'camera';
+    const transport = {
+      absolute: (point: Point) => this.absolute(point, signal),
+    };
+    this.mapping = undefined;
+    this.motion = undefined;
+    this.absoluteCorrection = undefined;
     if (config && cached) {
       const frame = await screen.getFrame({
         fresh: true,
@@ -140,6 +153,32 @@ export class HIDInputSession {
         frame.height === cached.height &&
         compatibleMotionProfile(cached, motionBinding(config, geometry))
       ) {
+        if (isCamera) {
+          if (validAbsoluteCorrection(cached.absoluteCorrection)) {
+            this.absoluteCorrection = cached.absoluteCorrection;
+          } else {
+            // Existing profiles have no known cursor position on reconnect.
+            await transport.absolute({ x: 0.5, y: 0.5 });
+            await pause(400);
+            const { correction } = await measureAbsoluteCorrection(
+              screen,
+              transport,
+              geometry,
+              signal,
+            );
+            config.pointerMotion = {
+              ...cached,
+              absoluteCorrection: correction,
+            };
+            try {
+              await this.persistProfile?.();
+            } catch (error) {
+              config.pointerMotion = cached;
+              throw error;
+            }
+            this.absoluteCorrection = correction;
+          }
+        }
         signal.throwIfAborted();
         this.mapping = geometry;
         this.motion = cached.model;
@@ -152,14 +191,23 @@ export class HIDInputSession {
     await warmUpPointer({ relative: (delta) => this.relative(delta) }, signal);
     const { position, ...mapping } = await measurePointerTurn(
       screen,
-      { absolute: (point) => this.absolute(point, signal) },
+      transport,
       signal,
     );
+    const measured = isCamera
+      ? await measureAbsoluteCorrection(screen, transport, mapping, signal)
+      : undefined;
+    this.absoluteCorrection = measured?.correction;
     this.mapping = mapping;
-    this.motion = undefined;
-    // New or changed bindings require measurement; ordinary reconnects reuse
-    // the previously validated orientation and movement table above.
-    await this.prepareMotion(screen, signal, { position });
+    try {
+      await this.prepareMotion(screen, signal, {
+        position: measured?.position ?? position,
+      });
+    } catch (error) {
+      this.mapping = undefined;
+      this.absoluteCorrection = undefined;
+      throw error;
+    }
   }
   private async prepareMotion(
     screen: ScreenSession,
@@ -250,6 +298,7 @@ export class HIDInputSession {
     if (config) {
       config.pointerMotion = {
         version: MOTION_VERSION,
+        absoluteCorrection: this.absoluteCorrection,
         binding,
         ...mapping,
         reportIntervalMs: REPORT_INTERVAL_MS,
@@ -277,9 +326,10 @@ export class HIDInputSession {
     )
       throw new Error('Pointer target outside screen');
     await this.absolute(
-      screenToPointer(
+      correctedScreenToPointer(
         { x: point.x / (m.width - 1), y: point.y / (m.height - 1) },
         m.turn,
+        this.absoluteCorrection,
       ),
       signal,
     );
@@ -346,13 +396,7 @@ export class HIDInputSession {
         p.y >= m.height
       )
         throw new Error('Tap outside screen');
-      await this.absolute(
-        screenToPointer(
-          { x: p.x / (m.width - 1), y: p.y / (m.height - 1) },
-          m.turn,
-        ),
-        signal,
-      );
+      await this.moveTo(p, signal);
       await pause(120);
       signal.throwIfAborted();
       try {
