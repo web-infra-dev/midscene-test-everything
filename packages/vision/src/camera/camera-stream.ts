@@ -18,8 +18,17 @@ const FRAME_RATE_WINDOW = 60;
  */
 export const DEFAULT_STARTUP_TIMEOUT_MS = 15_000;
 
+/**
+ * A capture process normally exits within a few hundred milliseconds of
+ * SIGTERM. Keep a hard bound anyway: waiting forever here blocks the camera's
+ * serialized acquire/release queue, and every later preview and page reload
+ * then hangs behind it.
+ */
+export const DEFAULT_STOP_TIMEOUT_MS = 4_000;
+
 export class CameraStream extends EventEmitter {
   private source?: Awaited<ReturnType<CameraBackend['openStream']>>;
+  private closingSource?: Promise<void>;
   private state: CameraStreamInfo['state'] = 'starting';
   private latestFrame?: CameraFrame;
   private error?: string;
@@ -32,6 +41,7 @@ export class CameraStream extends EventEmitter {
     private readonly backend: CameraBackend,
     private options: ResolvedCameraStreamOptions,
     private readonly startupTimeoutMs = DEFAULT_STARTUP_TIMEOUT_MS,
+    private readonly stopTimeoutMs = DEFAULT_STOP_TIMEOUT_MS,
   ) {
     super();
   }
@@ -60,7 +70,14 @@ export class CameraStream extends EventEmitter {
     const previous = this.options;
     // `releaseSource`, not `stop`: the stream lives on, so its frame listeners
     // (for example an open MJPEG preview) must survive the swap.
-    await this.releaseSource();
+    if (!(await this.releaseSourceWithTimeout())) {
+      const error = new RobotVisionError(
+        'STREAM_FAILED',
+        'Camera process did not stop; reopen the camera',
+      );
+      this.fail(error);
+      throw error;
+    }
     this.options = next;
     this.state = 'starting';
     this.error = undefined;
@@ -156,6 +173,11 @@ export class CameraStream extends EventEmitter {
     };
   }
 
+  /** The latest frame already received when the phone reports its display. */
+  get currentFrame(): CameraFrame | undefined {
+    return this.state === 'running' ? this.latestFrame : undefined;
+  }
+
   async getFrame(
     options: {
       fresh?: boolean;
@@ -215,8 +237,34 @@ export class CameraStream extends EventEmitter {
     this.state = 'stopped';
     // Release long-lived preview responses before waiting for camera shutdown.
     this.emit('stopped');
-    await this.releaseSource();
-    this.removeAllListeners();
+    try {
+      await this.releaseSourceWithTimeout();
+    } finally {
+      this.removeAllListeners();
+    }
+  }
+
+  /**
+   * Bounds every path that waits for a capture process to exit. A source that
+   * never reports exit must not wedge this camera's serialized queue.
+   */
+  private async releaseSourceWithTimeout(): Promise<boolean> {
+    const closing = this.releaseSource().then(
+      () => true,
+      () => false,
+    );
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        closing,
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), this.stopTimeoutMs);
+          timer.unref?.();
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   /**
@@ -227,17 +275,27 @@ export class CameraStream extends EventEmitter {
   private async releaseSource(): Promise<void> {
     this.clearStartupTimer();
     this.starting?.abort(new Error('Camera stream closed'));
+    if (this.closingSource) return this.closingSource;
     const source = this.source;
     this.source = undefined;
-    if (source) await source.close();
+    if (!source) return;
+    this.closingSource = Promise.resolve()
+      .then(() => source.close())
+      .finally(() => {
+        this.closingSource = undefined;
+      });
+    await this.closingSource;
   }
 
   private fail(error: Error): void {
-    if (this.state === 'stopped') return;
+    if (this.state === 'stopped' || this.state === 'failed') return;
     this.clearStartupTimer();
     this.error = error.message;
     this.state = 'failed';
     this.emit('failed');
+    // A startup timeout or process error must not leave FFmpeg holding the
+    // camera; otherwise every later open fails until the process is killed.
+    void this.releaseSource().catch(() => undefined);
   }
 
   private clearStartupTimer(): void {

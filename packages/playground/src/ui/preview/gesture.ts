@@ -1,7 +1,7 @@
 import type {
   ScreenAction,
   ScreenPoint,
-} from '@midscene/arm-kit-shared/contracts';
+} from '@midscene/robotics-shared/contracts';
 import {
   type PreviewHit,
   type PreviewPoint,

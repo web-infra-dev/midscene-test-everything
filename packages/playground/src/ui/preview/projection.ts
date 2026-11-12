@@ -1,15 +1,15 @@
-import type { CameraCorrection } from '@midscene/arm-kit-shared/camera/profile';
+import type { CameraCorrection } from '@midscene/robotics-shared/camera/profile';
 import {
   applyHomography,
   computeHomography,
   destinationCorners,
   validateQuad,
-} from '@midscene/arm-kit-shared/camera/vision-geometry';
+} from '@midscene/robotics-shared/camera/vision-geometry';
 import type {
   PerspectiveRotation,
   PerspectiveTarget,
-} from '@midscene/arm-kit-shared/camera/vision-types';
-import type { ScreenPoint } from '@midscene/arm-kit-shared/contracts';
+} from '@midscene/robotics-shared/camera/vision-types';
+import type { ScreenPoint } from '@midscene/robotics-shared/contracts';
 
 export interface PreviewPoint {
   x: number;

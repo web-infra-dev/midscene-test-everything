@@ -4,7 +4,7 @@ import type {
   CalibrationBatchSamplingMode,
   CalibrationBatchState,
   WorkstationScreenState,
-} from '@midscene/arm-kit-shared/assisted-contracts';
+} from '@midscene/robotics-shared/assisted-contracts';
 import { markerRequest } from './marker-client';
 export class BatchClient {
   constructor(readonly cameraId: string) {}

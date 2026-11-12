@@ -35,12 +35,6 @@ export class CalibrationClient {
   constructor(private readonly options: CalibrationClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '');
   }
-  verifyModel(env: Record<string, string>) {
-    return this.request<import('@midscene/core').ConnectivityTestResult>(
-      '/camera/verify-model',
-      env,
-    );
-  }
   private async request<T>(path: string, body?: unknown): Promise<T> {
     const response = await (this.options.fetch ?? globalThis.fetch)(
       `${this.baseUrl}${path}`,

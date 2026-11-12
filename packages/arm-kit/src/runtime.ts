@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { supportsFlangeContact } from '@midscene/arm-kit-shared/setup-contracts';
+import { supportsFlangeContact } from '@midscene/robotics-shared/setup-contracts';
 import type { MotionTarget } from './application/context.js';
 import {
   assertCameraBoundary,

@@ -19,7 +19,7 @@ export function CameraCornerEditor({
   value: CameraCorrection;
   src: string;
   disabled: boolean;
-  onChange: (value: CameraCorrection) => void;
+  onChange?: (value: CameraCorrection) => void;
 }) {
   const frame = useRef<HTMLDivElement>(null);
   const drag = useRef<{ corner: (typeof corners)[number]; id: number }>();
@@ -46,7 +46,7 @@ export function CameraCornerEditor({
   const move = (corner: (typeof corners)[number], x: number, y: number) => {
     const point = pointAt(x, y);
     if (point && !disabled)
-      onChange({ ...value, points: { ...value.points, [corner]: point } });
+      onChange?.({ ...value, points: { ...value.points, [corner]: point } });
   };
   return (
     <figure className="camera-corner-editor">
@@ -122,7 +122,7 @@ export function CameraCornerEditor({
               if (!delta || disabled) return;
               event.preventDefault();
               const step = event.shiftKey ? 10 : 1;
-              onChange({
+              onChange?.({
                 ...value,
                 points: {
                   ...value.points,

@@ -65,6 +65,7 @@ export class PerspectiveTransformer {
       quadToArray(options.points),
     );
     const output = Buffer.allocUnsafe(targetWidth * targetHeight * 3);
+    const nearest = options.sampling === 'nearest';
 
     const source = decoded.data;
     for (let y = 0; y < targetHeight; y += 1) {
@@ -93,6 +94,13 @@ export class PerspectiveTransformer {
         }
         const x0 = Math.floor(sourceX);
         const y0 = Math.floor(sourceY);
+        if (nearest) {
+          const pixel = (y0 * sourceWidth + x0) * 3;
+          output[offset] = source[pixel];
+          output[offset + 1] = source[pixel + 1];
+          output[offset + 2] = source[pixel + 2];
+          continue;
+        }
         const x1 = Math.min(sourceWidth - 1, x0 + 1);
         const y1 = Math.min(sourceHeight - 1, y0 + 1);
         const dx = sourceX - x0;

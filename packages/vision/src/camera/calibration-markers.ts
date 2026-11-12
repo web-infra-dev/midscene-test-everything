@@ -1,6 +1,6 @@
 import type { CalibrationPageLayout } from '@midscene/robotics-shared/assisted-contracts';
-import aruco from 'js-aruco2';
 import sharp from 'sharp';
+import { decodeArucoMarkers } from './aruco-markers.js';
 import { RobotVisionError } from './errors.js';
 import {
   applyHomography,
@@ -14,25 +14,10 @@ import {
 } from './vision-geometry.js';
 import type { ScreenQuad } from './vision-types.js';
 
-const dictionaryName = 'ARUCO_MIP_36h12';
-const dictionary = new aruco.AR.Dictionary(dictionaryName);
-export const markerSvg = (id: number) => dictionary.generateSVG(id);
+export { markerSvg } from './aruco-markers.js';
 type Markers = CalibrationPageLayout['markers'];
 export async function detectCalibrationMarkers(jpeg: Buffer, markers: Markers) {
-  const { data, info } = await sharp(jpeg, { limitInputPixels: 16_777_216 })
-    .toColourspace('srgb')
-    .ensureAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-  const detector = new aruco.AR.Detector({
-    dictionaryName,
-    maxHammingDistance: 5,
-  });
-  const observed = detector.detect({
-    data,
-    width: info.width,
-    height: info.height,
-  });
+  const observed = await decodeArucoMarkers(jpeg);
   const pairs = markers.map((m) => {
     const matches = observed.filter((o) => o.id === m.code);
     if (matches.length !== 1)

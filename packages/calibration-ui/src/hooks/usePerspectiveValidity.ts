@@ -1,4 +1,4 @@
-import { SCREEN_DRIFT_DETECTION_ENABLED } from '@midscene/arm-kit-shared/contracts';
+import { SCREEN_DRIFT_DETECTION_ENABLED } from '@midscene/robotics-shared/contracts';
 import { useEffect, useState } from 'react';
 import {
   type PerspectiveObservation,

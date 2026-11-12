@@ -1,5 +1,5 @@
-import type { CalibrationPreviewPositions } from '@midscene/arm-kit-shared/assisted-contracts';
-import type { CameraCorrection } from '@midscene/arm-kit-shared/contracts';
+import type { CalibrationPreviewPositions } from '@midscene/robotics-shared/assisted-contracts';
+import type { CameraCorrection } from '@midscene/robotics-shared/contracts';
 import { useLayoutEffect, useRef, useState } from 'react';
 import { t } from '../../i18n';
 import { CalibrationPositionMarkers } from './CalibrationPositionMarkers';

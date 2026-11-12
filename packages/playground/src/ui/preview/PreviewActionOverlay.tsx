@@ -1,4 +1,4 @@
-import type { ScreenAction } from '@midscene/arm-kit-shared/contracts';
+import type { ScreenAction } from '@midscene/robotics-shared/contracts';
 import { useId } from 'react';
 import type { PreviewActionFeedback } from '../hooks/usePreviewControl';
 import { useLanguage } from '../i18n';

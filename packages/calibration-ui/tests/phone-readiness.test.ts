@@ -1,4 +1,4 @@
-import type { ScreenDeviceSummary } from '@midscene/arm-kit-shared/marker-contracts';
+import type { ScreenDeviceSummary } from '@midscene/robotics-shared/marker-contracts';
 import { expect, it } from '@rstest/core';
 import { deriveCameraPhoneReadiness } from '../src/hooks/useCameraPhoneReadiness';
 const page = (

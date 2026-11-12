@@ -1,5 +1,5 @@
-import type { EffectiveCapabilities } from '@midscene/arm-kit-shared/contracts';
-import { robotSetupDefaults } from '@midscene/arm-kit-shared/setup-contracts';
+import type { EffectiveCapabilities } from '@midscene/robotics-shared/contracts';
+import { robotSetupDefaults } from '@midscene/robotics-shared/setup-contracts';
 import { expect, it } from '@rstest/core';
 import { axialTool } from '../src/components/robot-arm/setup-draft';
 

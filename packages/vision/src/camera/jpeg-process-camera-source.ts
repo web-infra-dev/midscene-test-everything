@@ -60,10 +60,9 @@ export class JpegProcessCameraSource
     if (this.closePromise) return this.closePromise;
     this.intentionalClose = true;
     this.closePromise = new Promise<void>((resolve) => {
-      const forceTimer = setTimeout(() => this.child.kill('SIGKILL'), 2_000);
-      forceTimer.unref();
       const finish = () => {
         clearTimeout(forceTimer);
+        clearTimeout(deadline);
         this.child.off('exit', finish);
         this.child.off('close', finish);
         // Extra media pipes can be inherited by native subprocesses. Their EOF
@@ -73,6 +72,16 @@ export class JpegProcessCameraSource
         this.child.stdin.destroy();
         resolve();
       };
+      const forceTimer = setTimeout(() => {
+        try {
+          this.child.kill('SIGKILL');
+        } catch {
+          finish();
+        }
+      }, 2_000);
+      const deadline = setTimeout(finish, 3_500);
+      forceTimer.unref();
+      deadline.unref();
       if (
         this.processClosed ||
         this.child.exitCode !== null ||
@@ -83,7 +92,11 @@ export class JpegProcessCameraSource
       }
       this.child.once('exit', finish);
       this.child.once('close', finish);
-      this.child.kill('SIGTERM');
+      try {
+        this.child.kill('SIGTERM');
+      } catch {
+        finish();
+      }
     });
     return this.closePromise;
   }

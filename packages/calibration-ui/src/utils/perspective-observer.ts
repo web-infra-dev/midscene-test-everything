@@ -1,7 +1,7 @@
 import type {
   PerspectiveValidityCheck,
   PerspectiveValiditySummary,
-} from '@midscene/arm-kit-shared/contracts';
+} from '@midscene/robotics-shared/contracts';
 
 export interface PerspectiveObservation {
   summary?: PerspectiveValiditySummary;

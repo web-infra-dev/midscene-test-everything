@@ -2,14 +2,14 @@ import {
   CameraCornerEditor,
   CorrectedPreview,
 } from '@midscene/arm-calibration-ui';
-import { validateQuad } from '@midscene/arm-kit-shared/camera/vision-geometry';
+import { validateQuad } from '@midscene/robotics-shared/camera/vision-geometry';
 import {
   PERSPECTIVE_ROTATIONS,
   type PerspectiveRotation,
   type PerspectiveTarget,
   type ScreenQuad,
-} from '@midscene/arm-kit-shared/camera/vision-types';
-import type { CameraCorrection } from '@midscene/arm-kit-shared/contracts';
+} from '@midscene/robotics-shared/camera/vision-types';
+import type { CameraCorrection } from '@midscene/robotics-shared/contracts';
 import {
   Alert,
   Button,

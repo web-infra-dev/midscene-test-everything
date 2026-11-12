@@ -1,5 +1,5 @@
-import type { PerspectiveTarget } from '@midscene/arm-kit-shared/camera/vision-types';
-import type { CameraCorrection } from '@midscene/arm-kit-shared/contracts';
+import type { PerspectiveTarget } from '@midscene/robotics-shared/camera/vision-types';
+import type { CameraCorrection } from '@midscene/robotics-shared/contracts';
 import { App, Button } from 'antd';
 import { Eraser, ScanLine, SlidersHorizontal } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';

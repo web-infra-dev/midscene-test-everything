@@ -339,16 +339,18 @@
   .range-output {
     position: relative;
     display: grid;
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);
     place-items: center;
     color: var(--rv-text-secondary);
     width: 100%;
     height: 100%;
   }
-  .range-output > div {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    overflow: hidden;
+  .corrected-preview-canvas {
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
   }
   @media (max-width: 680px) {
     grid-template-columns: 1fr;

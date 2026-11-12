@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import type { CameraSessionManager } from '@midscene/arm-kit';
-import { CALIBRATION_MARKER_CODES } from '@midscene/arm-kit-shared/assisted-contracts';
 import { PhoneSocketServer } from '@midscene/arm-kit/internal/calibration-server/phone-socket';
 import {
   calibrationPhonePage,
@@ -11,6 +10,7 @@ import {
   captureScreenMarkers,
   screenBoundsProblem,
 } from '@midscene/arm-kit/internal/camera/calibration-markers';
+import { CALIBRATION_MARKER_CODES } from '@midscene/robotics-shared/assisted-contracts';
 
 /** One bound phone page and one observing camera; capture never changes the camera correction. */
 export class MarkerPreview {

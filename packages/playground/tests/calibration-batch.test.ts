@@ -1,9 +1,9 @@
 import type { ArmController } from '@midscene/arm-kit';
 import { RobotArmError } from '@midscene/arm-kit';
-import type { AssistedCalibrationState } from '@midscene/arm-kit-shared/assisted-contracts';
 import { ArmActionQueue } from '@midscene/arm-kit/internal/action-queue';
 import { registerControllerRuntime } from '@midscene/arm-kit/internal/controller-runtime';
 import { fixture, pose } from '@midscene/arm-kit/internal/testkit/fixtures';
+import type { AssistedCalibrationState } from '@midscene/robotics-shared/assisted-contracts';
 import { afterEach, expect, it, rstest } from '@rstest/core';
 import { CalibrationBatch } from '../src/server/calibration-batch.js';
 import type { PlaygroundDevices } from '../src/server/devices.js';

@@ -1,4 +1,4 @@
-import { supportsFlangeContact } from '@midscene/arm-kit-shared/setup-contracts';
+import { supportsFlangeContact } from '@midscene/robotics-shared/setup-contracts';
 import { Button, InputNumber, Modal, Space, Typography } from 'antd';
 import { useEffect, useId, useState } from 'react';
 import { createPortal } from 'react-dom';

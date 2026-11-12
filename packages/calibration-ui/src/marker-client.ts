@@ -7,13 +7,13 @@ import type {
   ScreenDeviceSummary,
   TargetDisplayCreateInput,
   TargetDisplaySession,
-} from '@midscene/arm-kit-shared/marker-contracts';
+} from '@midscene/robotics-shared/marker-contracts';
 import { t } from './i18n';
 export type {
   ScreenDeviceSummary,
   TargetDisplaySession,
   LanAddress,
-} from '@midscene/arm-kit-shared/marker-contracts';
+} from '@midscene/robotics-shared/marker-contracts';
 export class RobotVisionApiError extends Error {
   constructor(
     message: string,

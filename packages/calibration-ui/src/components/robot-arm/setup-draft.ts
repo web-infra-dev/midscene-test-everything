@@ -1,5 +1,5 @@
 // Measured tool geometry helpers migrated from robot-vision.
-import { supportsFlangeContact } from '@midscene/arm-kit-shared/setup-contracts';
+import { supportsFlangeContact } from '@midscene/robotics-shared/setup-contracts';
 import { t } from '../../i18n';
 import type { EffectiveCapabilities } from '../../robot-arm-api';
 export type SetupProfile = Record<string, any>;

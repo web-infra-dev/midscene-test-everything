@@ -18,10 +18,15 @@ export function cameraBackend(
   return registry;
 }
 export async function listCameras(
-  options: { refresh?: boolean; includeBuiltIn?: boolean } = {},
+  options: {
+    refresh?: boolean;
+    cachedOnly?: boolean;
+    includeBuiltIn?: boolean;
+  } = {},
 ): Promise<CameraDevice[]> {
   const cameras = await cameraBackend().listDevices({
     refresh: options.refresh,
+    cachedOnly: options.cachedOnly,
   });
   return options.includeBuiltIn
     ? cameras

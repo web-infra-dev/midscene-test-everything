@@ -2,8 +2,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CameraCorrection, CameraSessionManager } from '@midscene/arm-kit';
-import type { CalibrationPageLayout } from '@midscene/arm-kit-shared/assisted-contracts';
-import type { PerspectiveTarget } from '@midscene/arm-kit-shared/camera/vision-types';
+import type { CalibrationPageLayout } from '@midscene/robotics-shared/assisted-contracts';
+import type { PerspectiveTarget } from '@midscene/robotics-shared/camera/vision-types';
 import { saveStandaloneCorrection } from './camera-preview.js';
 
 export function phoneFingerprint(token: string) {

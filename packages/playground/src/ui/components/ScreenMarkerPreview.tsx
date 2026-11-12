@@ -1,5 +1,5 @@
-import type { PerspectiveRotation } from '@midscene/arm-kit-shared/camera/vision-types';
-import type { CameraCorrection } from '@midscene/arm-kit-shared/contracts';
+import type { PerspectiveRotation } from '@midscene/robotics-shared/camera/vision-types';
+import type { CameraCorrection } from '@midscene/robotics-shared/contracts';
 import {
   Alert,
   Button,

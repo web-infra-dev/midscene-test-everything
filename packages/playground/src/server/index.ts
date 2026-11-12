@@ -12,7 +12,6 @@ import {
   listCameras,
 } from '@midscene/arm-kit';
 import type { RobotArmAdapter } from '@midscene/arm-kit';
-import { SCREEN_DRIFT_DETECTION_ENABLED } from '@midscene/arm-kit-shared/contracts';
 import { controllerRuntime } from '@midscene/arm-kit/internal/controller-runtime';
 import {
   discoverWifiInterfaces,
@@ -24,6 +23,7 @@ import {
   robotAuditDirectory,
   robotDataRoot,
 } from '@midscene/arm-kit/internal/storage/layout';
+import { SCREEN_DRIFT_DETECTION_ENABLED } from '@midscene/robotics-shared/contracts';
 import { PlaygroundArmControls } from './arm-controls.js';
 import {
   type CameraPreviewView,

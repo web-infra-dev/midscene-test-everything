@@ -8,12 +8,6 @@ import {
   calibrationAccepted,
   semanticJson,
 } from '@midscene/arm-kit';
-import type {
-  CalibrationBatchPlan,
-  CalibrationBatchSamplingMode,
-  CalibrationBatchState,
-  WorkstationScreenState,
-} from '@midscene/arm-kit-shared/assisted-contracts';
 import { insideCameraParkingFootprint } from '@midscene/arm-kit/internal/calibration/camera-avoidance';
 import {
   confirmVisibilityPages,
@@ -31,6 +25,12 @@ import {
 } from '@midscene/arm-kit/internal/calibration/screen-position';
 import { controllerRuntime } from '@midscene/arm-kit/internal/controller-runtime';
 import { contactPoint, flangePose } from '@midscene/arm-kit/internal/domain';
+import type {
+  CalibrationBatchPlan,
+  CalibrationBatchSamplingMode,
+  CalibrationBatchState,
+  WorkstationScreenState,
+} from '@midscene/robotics-shared/assisted-contracts';
 import type { PlaygroundDevices } from './devices.js';
 
 const terminal = (status: string) => ['completed', 'skipped'].includes(status);

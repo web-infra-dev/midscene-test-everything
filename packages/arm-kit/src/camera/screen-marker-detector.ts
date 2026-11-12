@@ -1,4 +1,4 @@
-import { markerNoiseAllowancePx } from '@midscene/arm-kit-shared/marker-contracts';
+import { markerNoiseAllowancePx } from '@midscene/robotics-shared/marker-contracts';
 // Screen-outline detector from midscene-oss/robot-vision.
 import jsArUco from 'js-aruco2';
 import sharp from 'sharp';

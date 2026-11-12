@@ -5,7 +5,7 @@ import {
   type MarkerCalibrationDetectionResponse,
   type MarkerCalibrationSession,
   type MarkerCalibrationTarget,
-} from '@midscene/arm-kit-shared/marker-contracts';
+} from '@midscene/robotics-shared/marker-contracts';
 import {
   Alert,
   App,

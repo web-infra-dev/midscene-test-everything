@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import type { ServerResponse } from 'node:http';
 import type { CameraFrame, CameraSessionManager } from '@midscene/arm-kit';
-import type { CalibrationPageLayout } from '@midscene/arm-kit-shared/assisted-contracts';
-import type { PerspectiveTarget } from '@midscene/arm-kit-shared/camera/vision-types';
-import type { CameraCorrection } from '@midscene/arm-kit-shared/contracts';
 import type { CameraStream } from '@midscene/arm-kit/internal/camera/camera-stream';
+import type { CalibrationPageLayout } from '@midscene/robotics-shared/assisted-contracts';
+import type { PerspectiveTarget } from '@midscene/robotics-shared/camera/vision-types';
+import type { CameraCorrection } from '@midscene/robotics-shared/contracts';
 import type { DeviceEntry } from './devices.js';
 
 export type CameraPreviewView = 'raw' | 'corrected';

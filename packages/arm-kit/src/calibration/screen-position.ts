@@ -1,4 +1,4 @@
-import type { ImagePoint } from '@midscene/arm-kit-shared/camera/vision-types';
+import type { ImagePoint } from '@midscene/robotics-shared/camera/vision-types';
 import type {
   CalibrationProfile,
   CameraCorrection,

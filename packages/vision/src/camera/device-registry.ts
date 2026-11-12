@@ -56,7 +56,15 @@ export class DeviceRegistry implements CameraBackend {
     this.logger = options.logger;
   }
 
-  async list(options: { refresh?: boolean } = {}): Promise<DeviceListResult> {
+  async list(
+    options: { refresh?: boolean; cachedOnly?: boolean } = {},
+  ): Promise<DeviceListResult> {
+    // A connected workspace must not start a fresh enumeration while capture
+    // processes hold the devices; only an explicit refresh may probe again.
+    if (options.cachedOnly && this.devices) {
+      this.hits += 1;
+      return { devices: this.devices, cached: true, cachedAt: this.cachedAt };
+    }
     if (!options.refresh) {
       const cached = this.readCache();
       if (cached) {
@@ -79,7 +87,9 @@ export class DeviceRegistry implements CameraBackend {
     }
   }
 
-  listDevices(options: { refresh?: boolean } = {}): Promise<CameraDevice[]> {
+  listDevices(
+    options: { refresh?: boolean; cachedOnly?: boolean } = {},
+  ): Promise<CameraDevice[]> {
     return this.list(options).then((result) => result.devices);
   }
 

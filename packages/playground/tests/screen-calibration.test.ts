@@ -3,16 +3,16 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ArmController, type CameraSessionManager } from '@midscene/arm-kit';
-import { calibrationPageMarkers } from '@midscene/arm-kit-shared/assisted-contracts';
-import { markerCaptureRecommended } from '@midscene/arm-kit-shared/marker-contracts';
-import type {
-  MarkerCalibrationDetectionResponse,
-  TargetDisplaySession,
-} from '@midscene/arm-kit-shared/marker-contracts';
 import { markerSvg } from '@midscene/arm-kit/internal/camera/calibration-markers';
 import { CameraSession } from '@midscene/arm-kit/internal/camera/session';
 import { ProfileStore } from '@midscene/arm-kit/internal/runtime/profile-store';
 import { TestRobotAdapter } from '@midscene/arm-kit/internal/testkit/test-adapter';
+import { calibrationPageMarkers } from '@midscene/robotics-shared/assisted-contracts';
+import { markerCaptureRecommended } from '@midscene/robotics-shared/marker-contracts';
+import type {
+  MarkerCalibrationDetectionResponse,
+  TargetDisplaySession,
+} from '@midscene/robotics-shared/marker-contracts';
 import { afterEach, expect, it, rstest } from '@rstest/core';
 import sharp from 'sharp';
 import { PlaygroundDevices } from '../src/server/devices';

@@ -2,7 +2,7 @@ import type {
   DetectionFrame,
   MarkerCalibrationSession,
   MarkerCalibrationTarget,
-} from '@midscene/arm-kit-shared/marker-contracts';
+} from '@midscene/robotics-shared/marker-contracts';
 import { Alert, Button, Card, Modal, Space, Tag, Typography } from 'antd';
 import { Check, Crosshair, ScanLine } from 'lucide-react';
 import { useEffect } from 'react';

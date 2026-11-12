@@ -1,4 +1,4 @@
-import type { MarkerCalibrationDetectionResponse } from '@midscene/arm-kit-shared/marker-contracts';
+import type { MarkerCalibrationDetectionResponse } from '@midscene/robotics-shared/marker-contracts';
 import { RobotVisionApiError, type RobotVisionClient } from '../marker-client';
 
 function waitSecond(signal: AbortSignal) {

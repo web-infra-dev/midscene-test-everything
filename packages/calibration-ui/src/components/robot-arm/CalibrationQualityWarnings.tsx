@@ -1,8 +1,8 @@
 import type {
   AssistedCalibrationState,
   CalibrationQualityReading,
-} from '@midscene/arm-kit-shared/assisted-contracts';
-import { CALIBRATION_RELATIVE_SLACK } from '@midscene/arm-kit-shared/assisted-contracts';
+} from '@midscene/robotics-shared/assisted-contracts';
+import { CALIBRATION_RELATIVE_SLACK } from '@midscene/robotics-shared/assisted-contracts';
 import { Alert, Typography } from 'antd';
 import { t } from '../../i18n';
 

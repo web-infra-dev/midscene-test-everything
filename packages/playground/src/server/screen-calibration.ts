@@ -1,20 +1,6 @@
 import { randomInt, randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { type CameraCorrection, RobotArmError } from '@midscene/arm-kit';
-import {
-  CALIBRATION_PHONE_POLICY,
-  type CalibrationPageReply,
-  type CalibrationPageUpdate,
-} from '@midscene/arm-kit-shared/assisted-contracts';
-import {
-  MARKER_CALIBRATION_PROTOCOL,
-  MAX_MARKER_CALIBRATION_TARGETS,
-  type MarkerCalibrationCreateResult,
-  type MarkerCalibrationDetectionResponse,
-  type MarkerCalibrationTarget,
-  type ScreenDeviceSummary,
-  type TargetDisplaySession,
-} from '@midscene/arm-kit-shared/marker-contracts';
 import type { CalibrationHost } from '@midscene/arm-kit/internal/calibration-server/host';
 import { PhoneSocketServer } from '@midscene/arm-kit/internal/calibration-server/phone-socket';
 import {
@@ -28,6 +14,20 @@ import {
 import { recognizeScreenMarkers } from '@midscene/arm-kit/internal/camera/calibration-markers';
 import { MarkerCalibrationDetector } from '@midscene/arm-kit/internal/camera/screen-marker-detector';
 import { controllerRuntime } from '@midscene/arm-kit/internal/controller-runtime';
+import {
+  CALIBRATION_PHONE_POLICY,
+  type CalibrationPageReply,
+  type CalibrationPageUpdate,
+} from '@midscene/robotics-shared/assisted-contracts';
+import {
+  MARKER_CALIBRATION_PROTOCOL,
+  MAX_MARKER_CALIBRATION_TARGETS,
+  type MarkerCalibrationCreateResult,
+  type MarkerCalibrationDetectionResponse,
+  type MarkerCalibrationTarget,
+  type ScreenDeviceSummary,
+  type TargetDisplaySession,
+} from '@midscene/robotics-shared/marker-contracts';
 import type { PlaygroundDevices } from './devices.js';
 import { phoneFingerprint } from './preview-perspectives.js';
 

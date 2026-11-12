@@ -1,20 +1,20 @@
-import { armUiTheme } from '@midscene/arm-kit-shared';
-import type { CalibrationPreviewPositions } from '@midscene/arm-kit-shared/assisted-contracts';
+import { armUiTheme } from '@midscene/robotics-shared';
+import type { CalibrationPreviewPositions } from '@midscene/robotics-shared/assisted-contracts';
 import type {
   CalibrationBatchState,
   WorkstationScreenState,
-} from '@midscene/arm-kit-shared/assisted-contracts';
+} from '@midscene/robotics-shared/assisted-contracts';
 import {
   type CameraCorrection,
   SCREEN_DRIFT_DETECTION_ENABLED,
-} from '@midscene/arm-kit-shared/contracts';
-import { markerCaptureRecommended } from '@midscene/arm-kit-shared/marker-contracts';
+} from '@midscene/robotics-shared/contracts';
+import { markerCaptureRecommended } from '@midscene/robotics-shared/marker-contracts';
 import type {
   DetectionFrame,
   MarkerCalibrationCreateResult,
   MarkerCalibrationDetectionResponse,
   MarkerCalibrationTarget,
-} from '@midscene/arm-kit-shared/marker-contracts';
+} from '@midscene/robotics-shared/marker-contracts';
 import {
   Alert,
   App,

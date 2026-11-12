@@ -1,4 +1,4 @@
-import type { ScreenDeviceSummary } from '@midscene/arm-kit-shared/marker-contracts';
+import type { ScreenDeviceSummary } from '@midscene/robotics-shared/marker-contracts';
 /** A page for a different screen cannot satisfy this camera's saved bindings. */
 export function isRequiredPhonePage(
   device: ScreenDeviceSummary,

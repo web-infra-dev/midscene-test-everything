@@ -1,9 +1,9 @@
 import {
   type WebCalibrationMapping,
   mappingQualityWarnings,
-} from '@midscene/arm-kit-shared/assisted-contracts';
-import { measuredPerspectiveTarget } from '@midscene/arm-kit-shared/camera/vision-geometry';
-import type { CameraCorrection } from '@midscene/arm-kit-shared/contracts';
+} from '@midscene/robotics-shared/assisted-contracts';
+import { measuredPerspectiveTarget } from '@midscene/robotics-shared/camera/vision-geometry';
+import type { CameraCorrection } from '@midscene/robotics-shared/contracts';
 import { Alert, Button, Modal, Select, Space, Tag, Typography } from 'antd';
 import {
   Camera,

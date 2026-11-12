@@ -2,7 +2,7 @@ import {
   type ScreenOutlineEntry,
   ScreenOutlines,
 } from '@midscene/arm-calibration-ui';
-import type { CameraCorrection } from '@midscene/arm-kit-shared/contracts';
+import type { CameraCorrection } from '@midscene/robotics-shared/contracts';
 import { Button } from 'antd';
 import { Maximize, Minimize } from 'lucide-react';
 import {

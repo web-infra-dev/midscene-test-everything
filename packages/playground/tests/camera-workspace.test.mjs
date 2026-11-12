@@ -3,10 +3,10 @@ import { EventEmitter } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { calibrationPageMarkers } from '@midscene/arm-kit-shared/assisted-contracts';
 import { markerSvg } from '@midscene/arm-kit/internal/camera/calibration-markers';
 import { cameraBackend } from '@midscene/arm-kit/internal/camera/index';
 import { createFakeAdapter } from '@midscene/arm-kit/internal/testkit';
+import { calibrationPageMarkers } from '@midscene/robotics-shared/assisted-contracts';
 import { rstest, test } from '@rstest/core';
 import sharp from 'sharp';
 import {

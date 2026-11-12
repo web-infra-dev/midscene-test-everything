@@ -409,6 +409,8 @@ export function mountCalibrationPhonePage(
     const previous = state;
     state = next;
     const stages = {
+      waiting: 'waiting',
+      'touch-preview': 'position',
       markers: 'waiting',
       positioning: 'position',
       collect: 'collect',

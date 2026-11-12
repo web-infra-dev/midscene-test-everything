@@ -1,6 +1,6 @@
-import type { CalibrationPreviewPositions } from '@midscene/arm-kit-shared/assisted-contracts';
-import type { PerspectiveTarget } from '@midscene/arm-kit-shared/camera/vision-types';
-import type { CameraCorrection } from '@midscene/arm-kit-shared/contracts';
+import type { CalibrationPreviewPositions } from '@midscene/robotics-shared/assisted-contracts';
+import type { PerspectiveTarget } from '@midscene/robotics-shared/camera/vision-types';
+import type { CameraCorrection } from '@midscene/robotics-shared/contracts';
 import { create } from 'zustand';
 
 export type ScreenControlReason =

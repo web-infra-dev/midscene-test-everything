@@ -1,4 +1,4 @@
-import type { ScreenAction } from '@midscene/arm-kit-shared/contracts';
+import type { ScreenAction } from '@midscene/robotics-shared/contracts';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PreviewScreenProjection } from '../preview/projection';
 

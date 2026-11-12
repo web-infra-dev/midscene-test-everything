@@ -1,4 +1,3 @@
-import { cameraSetupErrorText } from '@midscene/robotics-vision/ui/camera-error';
 import { ConfigProvider } from 'antd';
 import enUS from 'antd/locale/en_US';
 import zhCN from 'antd/locale/zh_CN';
@@ -21,12 +20,6 @@ export function t(
   );
 }
 export function calibrationErrorText(message: string): string {
-  if (
-    /marker .*could not be decoded uniquely|calibration markers.*visible/i.test(
-      message,
-    )
-  )
-    return cameraSetupErrorText(message);
   const lostContact =
     /^(?:Refined press at Z|The refined press at Z) (-?[\d.]+) mm (?:did not maintain touch|did not produce a confirmed touch) after retry$/.exec(
       message,
