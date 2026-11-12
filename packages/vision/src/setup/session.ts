@@ -13,8 +13,6 @@ import {
   PerspectiveTransformer,
   resolveRotation,
 } from '../camera/perspective-transformer.js';
-import { detectScreenWithModel } from '../camera/screen-detector.js';
-import { verifyCameraModel } from '../camera/verify-model.js';
 import { validateQuad } from '../camera/vision-geometry.js';
 import { ScreenPhoneServer } from '../phone/server.js';
 import { sameLayout } from '../phone/session.js';
@@ -27,7 +25,6 @@ export interface CameraSetupPreview {
 }
 
 export interface CameraSetupOptions {
-  screenDetector?: typeof detectScreenWithModel;
   cameraId?: string;
   initialValue?: CameraScreenSettings;
   streams?: CameraStreamManager;
@@ -132,12 +129,6 @@ export class CameraSetupSession {
     const operation = this.pending.then(async () => {
       if (this.closing || this.settled)
         throw new Error('Camera setup finished');
-      if (path === '/verify-model') {
-        const result = await verifyCameraModel(value);
-        res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify(result));
-        return;
-      }
       if (path === '/select') {
         if (this.options.cameraId && value.cameraId !== this.options.cameraId)
           throw new Error('Select the camera requested by the script');
@@ -154,38 +145,6 @@ export class CameraSetupSession {
         await this.stream.getFrame({ timeoutMs: 15_000 });
         res.setHeader('Content-Type', 'application/json');
         res.end('{}');
-        return;
-      }
-      if (path === '/detect') {
-        if (!this.stream) throw new Error('Select a camera first');
-        const config = value.modelConfig;
-        if (
-          config !== undefined &&
-          (!config ||
-            typeof config !== 'object' ||
-            !['modelName', 'modelFamily', 'baseUrl', 'apiKey'].every(
-              (key) =>
-                typeof config[key] === 'string' && config[key].length <= 8192,
-            ))
-        )
-          throw new Error('Invalid detection model settings');
-        const frame = await this.stream.getFrame({
-          fresh: true,
-          timeoutMs: 10000,
-        });
-        const detection = await (
-          this.options.screenDetector ?? detectScreenWithModel
-        )(frame.jpeg, config);
-        const size = await sharp(frame.jpeg).metadata();
-        res.setHeader('Content-Type', 'application/json');
-        res.end(
-          JSON.stringify({
-            sourceWidth: size.width,
-            sourceHeight: size.height,
-            rotation: 0,
-            points: detection.points,
-          }),
-        );
         return;
       }
       if (path === '/markers') {
@@ -271,6 +230,23 @@ export class CameraSetupSession {
         );
         if (!sameLayout(layout, this.phone.session.assertConnected().layout))
           throw new Error('The phone page changed during marker detection');
+        for (const [label, quality, purpose] of [
+          ['Fit', accuracy.fit, 'fit'],
+          ['Independent check', accuracy.validation, 'check'],
+        ] as const) {
+          if (
+            quality.count !==
+              layout.markers.filter((marker) => marker.purpose === purpose)
+                .length ||
+            quality.count === 0 ||
+            quality.meanErrorCssPx > 2 ||
+            quality.maxErrorCssPx > 3
+          ) {
+            throw new Error(
+              `${label} error: keep all screen markers visible and aligned.`,
+            );
+          }
+        }
         if (path === '/check') {
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify({ accuracy }));

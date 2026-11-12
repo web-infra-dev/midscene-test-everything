@@ -93,6 +93,20 @@ const openAPI = {
         },
       },
     },
+    '/api/v1/sessions/{id}/preview': {
+      parameters: [sessionIdParameter],
+      get: {
+        summary: 'Stream the latest preview frames for a device',
+        security: sessionSecurity,
+        responses: {
+          '200': {
+            description: 'MJPEG preview stream',
+            content: { 'multipart/x-mixed-replace': {} },
+          },
+          '410': { description: 'Control session ended' },
+        },
+      },
+    },
     '/api/v1/sessions/{id}/actions': {
       parameters: [sessionIdParameter],
       post: {

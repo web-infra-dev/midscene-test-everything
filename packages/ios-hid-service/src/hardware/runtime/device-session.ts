@@ -1,6 +1,6 @@
 import type { HIDInputSession } from '../input/session.js';
 import { settledFrame } from '../screen/settled-frame.js';
-import type { ScreenSession } from '../screen/source.js';
+import type { PreviewReader, ScreenSession } from '../screen/source.js';
 import type { DeviceConfig, InputAction } from '../types.js';
 
 /** Owns one connected phone’s capture and serialized input. */
@@ -19,6 +19,16 @@ export class DeviceSession {
   ) {}
   verifyPointer() {
     return this.input.verify(this.screen);
+  }
+  openPreview(signal: AbortSignal): PreviewReader {
+    if (this.closed) throw new Error('Device session closed');
+    return (
+      this.screen.openPreview?.(signal) ?? {
+        getFrame: () =>
+          this.screen.getFrame({ allowUnchanged: true, timeoutMs: 2000 }),
+        close: async () => {},
+      }
+    );
   }
   screenshot() {
     if (this.closed) throw new Error('Device session closed');

@@ -38,6 +38,25 @@ class ServiceClient {
 
   private token: string;
 
+  async openPreview(path: string, signal: AbortSignal) {
+    const headersTimeout = new AbortController();
+    const timer = setTimeout(() => headersTimeout.abort(), 12_000).unref();
+    try {
+      const response = await fetch(`${this.base}/api/v1${path}/preview`, {
+        redirect: 'error',
+        headers: { Authorization: `Bearer ${this.token}` },
+        signal: AbortSignal.any([signal, headersTimeout.signal]),
+      });
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => {});
+        throw new ServiceError(response.status, '设备预览不可用。');
+      }
+      return response;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async request<T>(
     path: string,
     method = 'GET',
@@ -171,6 +190,18 @@ export class IOSHIDServiceDevice extends IOSHIDInterface {
       action,
       options?.signal,
     );
+  }
+
+  async openPreview(signal: AbortSignal) {
+    if (this.closed || this.ended)
+      throw new ServiceError(410, '设备控制会话已结束，请重新连接。');
+    try {
+      return await this.client.openPreview(this.path, signal);
+    } catch (error) {
+      if (error instanceof ServiceError && error.status === 410)
+        this.endSession();
+      throw error;
+    }
   }
 
   protected async getFrame(): Promise<ScreenFrame> {

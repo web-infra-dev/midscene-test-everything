@@ -75,4 +75,4 @@ Do not run bulk formatting over untouched upstream files: keep the provenance
 comparison useful. This directory is excluded from the repository's bulk lint
 and format commands; TypeScript/build and the host integration tests still run.
 
-The config-modal entry delegates to `@midscene/arm-calibration-ui/model-config` so task settings and camera calibration share the same form and Verify UI. Translation remains supplied by the Playground context.
+The config-modal entry delegates to `@midscene/arm-calibration-ui/model-config` for task model settings and verification. Translation remains supplied by the Playground context.

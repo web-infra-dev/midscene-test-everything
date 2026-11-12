@@ -260,6 +260,7 @@ export class DeviceConnection {
     return {
       signal,
       screenshot: () => session.screenshot(),
+      openPreview: (signal) => session.openPreview(signal),
       execute: async (action, cancellation) => {
         cancellation.throwIfAborted();
         if (this.screenError)

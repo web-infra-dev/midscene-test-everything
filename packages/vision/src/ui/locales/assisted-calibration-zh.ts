@@ -9,16 +9,8 @@ export const assistedCalibrationZh: Record<string, string> = {
     '边界验证已完成。请记录远离屏幕和摄像头的安全位置，记录前松开机械臂。',
 
   'Detect screen markers': '识别屏幕标记',
-  'Use AI detection': '使用 AI 检测',
-  'AI model settings': 'AI 模型设置',
   'Set up camera first': '先校正相机',
   'Save screen area': '保存屏幕范围',
-  'No phone page is connected. Use AI detection to locate the screen, then connect the phone before arm calibration.':
-    '尚未连接手机网页，可以先使用 AI 检测屏幕。机械臂标定前仍需连接手机。',
-  'Page detection is unavailable or inaccurate? Use AI detection, then check the screen edges.':
-    '网页识别失败或边框不准确时，可点击「使用 AI 检测」，再检查并调整四角。',
-  'AI detection uses a camera image to locate the full screen. Check the corners before saving.':
-    'AI 将根据相机画面识别完整屏幕。保存前请检查四角是否贴合显示区域。',
   'Grid RMS {0} mm · Holdout maximum {1} mm · Coverage {2}%':
     '网格均方根误差 {0} mm · 留出最大偏差 {1} mm · 覆盖率 {2}%',
   'Run inner contact boundary': '执行接触内框验证',

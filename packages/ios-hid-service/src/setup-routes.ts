@@ -116,16 +116,7 @@ export function mountSetupRoutes(
             ...(state.setupKind === 'camera' ? [''] : []),
           ]
         : req.method === 'POST'
-          ? [
-              'select',
-              'preview',
-              'confirm',
-              'cancel',
-              'markers',
-              'check',
-              'detect',
-              'verify-model',
-            ]
+          ? ['select', 'preview', 'confirm', 'cancel', 'markers', 'check']
           : [];
     if (!allowed.includes(action)) {
       res.status(404).end();

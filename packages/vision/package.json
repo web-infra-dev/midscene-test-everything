@@ -48,9 +48,7 @@
     "js-aruco2": "2.0.0",
     "ws": "8.22.1",
     "antd": "^5.21.6",
-    "@arco-design/web-react": "2.66.18",
-    "@midscene/core": "1.17.5",
-    "@midscene/shared": "1.17.5"
+    "@arco-design/web-react": "2.66.18"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

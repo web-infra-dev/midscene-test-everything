@@ -32,93 +32,6 @@ function response() {
   };
   return res as unknown as ServerResponse & { body: string; status: number };
 }
-test('AI detection uses a fresh raw frame and returns editable corners without saving credentials', async () => {
-  const jpeg = await sharp({
-    create: { width: 600, height: 800, channels: 3, background: 'white' },
-  })
-    .jpeg()
-    .toBuffer();
-  const config = {
-    modelName: 'mock',
-    modelFamily: 'qwen3.6',
-    baseUrl: 'http://model.test',
-    apiKey: 'test-only-key',
-  };
-  const points = {
-    topLeft: { x: 50, y: 50 },
-    topRight: { x: 550, y: 50 },
-    bottomRight: { x: 550, y: 750 },
-    bottomLeft: { x: 50, y: 750 },
-  };
-  let called = false;
-  let saved = false;
-  const session = new CameraSetupSession({
-    onConfirm: async () => {
-      saved = true;
-    },
-    screenDetector: async (bytes, model) => {
-      called = true;
-      assert.deepEqual(bytes, jpeg);
-      assert.deepEqual(model, config);
-      return {
-        points,
-        attempt: {
-          input: {
-            jpegBase64: jpeg.toString('base64'),
-            width: 600,
-            height: 800,
-            prompt: 'test',
-            modelName: config.modelName,
-            modelFamily: config.modelFamily,
-          },
-        },
-      };
-    },
-  });
-  // biome-ignore lint/complexity/useLiteralKeys: Bracket access preserves type checking for non-public test hooks.
-  session['stream'] = {
-    getFrame: async (options: { fresh?: boolean } = {}) => {
-      assert.equal(options.fresh, true);
-      return { jpeg };
-    },
-  } as CameraStream;
-  const res = response();
-  await session.handle(
-    request(session, { modelConfig: config }),
-    res,
-    '/detect',
-  );
-  assert.equal(called, true);
-  assert.equal(saved, false);
-  assert.deepEqual(JSON.parse(res.body), {
-    sourceWidth: 600,
-    sourceHeight: 800,
-    rotation: 0,
-    points,
-  });
-  assert.ok(!res.body.includes(config.apiKey));
-  await session.close();
-});
-test('rejects malformed model settings before invoking AI', async () => {
-  const session = new CameraSetupSession({
-    onConfirm: async () => {},
-    screenDetector: async () => {
-      assert.fail('must not invoke AI');
-    },
-  });
-  // biome-ignore lint/complexity/useLiteralKeys: Bracket access preserves type checking for non-public test hooks.
-  session['stream'] = {} as CameraStream;
-  await assert.rejects(
-    session.handle(
-      request(session, { modelConfig: { apiKey: 123 } }),
-      response(),
-      '/detect',
-    ),
-    /Invalid detection model/,
-  );
-  await session.close();
-});
-
 test('failed confirmation keeps capture available and retry can transfer it without rescanning', async () => {
   const width = 400;
   const height = 800;
@@ -151,10 +64,22 @@ test('failed confirmation keeps capture available and retry can transfer it with
       markers,
     },
   });
+  const margin = 40;
+  const detectionFrame = await sharp(jpeg)
+    .extend({
+      top: margin,
+      right: margin,
+      bottom: margin,
+      left: margin,
+      background: '#aaa',
+    })
+    .jpeg()
+    .toBuffer();
+  let detecting = true;
   const stream = {
     id: 'capture',
     deviceId: 'camera',
-    getFrame: async () => ({ jpeg }),
+    getFrame: async () => ({ jpeg: detecting ? detectionFrame : jpeg }),
     getOptions: () => ({ width, height, fps: 30 }),
   } as unknown as CameraStream;
   let stopped = 0;
@@ -203,6 +128,18 @@ test('failed confirmation keeps capture available and retry can transfer it with
   const confirm = (value: unknown) =>
     session.handle(request(session, value), response(), '/confirm');
   try {
+    const detected = response();
+    await session.handle(request(session, {}), detected, '/markers');
+    detecting = false;
+    const result = JSON.parse(detected.body);
+    assert.equal(result.width, width);
+    assert.equal(result.height, height);
+    assert.ok(
+      Math.hypot(
+        result.correction.points.topLeft.x - margin,
+        result.correction.points.topLeft.y - margin,
+      ) < 5,
+    );
     await assert.rejects(confirm(settings), /Pointer verification failed/);
     assert.equal(stopped, 0);
     const frame = response();

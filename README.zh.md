@@ -133,6 +133,8 @@ USB 画面来源列表以「手机名 - 手机型号」（例如「我的 iPhone
 
 保存配置以「蓝牙设备 ID + 画面来源（USB、AirPlay 或摄像头）」唯一标识，连接时自动复用对应记录，设备名称使用蓝牙读取的手机名。取消勾选「使用已保存的校准配置」可重新校准并更新同一条记录。设备服务加载配置时会合并相同组合的历史重复记录，保留最近保存的一条。
 
+iOS HID Playground 打开预览时，通过自己的后端转发设备服务的 `GET /api/v1/sessions/{id}/preview`，持续显示 MJPEG 画面。一个设备会话共用一路预览，最高 10 FPS。独立摄像头的预览在 Worker 中拉正，Agent 截图仍会等待输入后的画面稳定。
+
 ## iOS HID 设备服务（实验中）
 
 服务包名为 `@midscene/ios-hid-service`，提供 `hid-service` 和 `midscene-hid-service` 两个等价命令。在连接手机的 Mac 上，可以从仓库根目录试用：
@@ -202,7 +204,7 @@ examples/ios-hid/           iOS HID 设备服务 SDK 示例
 
 蓝牙输入使用经典 HID。连接页显示 Mac 实际蓝牙名称与已连接手机的名称，点击手机即可绑定到所选画面来源；只有一台可用手机时自动选中。已占用手机保留展示但不可选，断开时不会自动换选另一台。只有控制与中断通道都已连通才算已连接，仅有配对记录不算连接。原生连接、断开事件通过 SSE 推送，首次连接取得完整快照，不轮询蓝牙列表。名称来自经典蓝牙连接方，无法保证取得具体手机型号，因此不展示推测型号；同名手机附带地址后缀区分。HID 服务名为 `Midscene iOS HID`，经典蓝牙配对界面通常显示 Mac 系统蓝牙名称，应用不会修改电脑名称。迁移前的 BLE 配对记录可能需要在手机上忽略后重新配对；必要时从手机蓝牙设置重新连接，不保证 Mac 主动自动重连。旧 BLE 鼠标曲线会重新测量。该后端使用运行时检查的 macOS 私有蓝牙接口，已在 macOS 27.0.1 验证，其他系统版本仍需真机验证。
 
-机械臂和 iOS HID 通过 `@midscene/robotics-vision` 共用摄像头枚举、取帧、标记解码、透视拉正和四角编辑。机械臂维护自己的校准流程和标记校验，iOS HID 服务维护蓝牙控制、鼠标校准和设备画面校验。
+机械臂和 iOS HID 通过 `@midscene/robotics-vision` 共用摄像头枚举、取帧、屏幕标记自动识别、透视拉正和四角编辑。机械臂维护自己的校准流程和标记校验，iOS HID 服务维护蓝牙控制、鼠标校准和设备画面校验。
 
 新增的 iOS HID 和 vision 包统一使用 Rstest。构建后分别运行：`pnpm --filter @midscene/ios-hid test`、`pnpm --filter @midscene/ios-hid-service test`、`pnpm --filter @midscene/ios-hid-playground test`、`pnpm --filter @midscene/robotics-vision test`。
 

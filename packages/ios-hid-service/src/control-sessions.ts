@@ -2,10 +2,13 @@ import { randomUUID } from 'node:crypto';
 import type { InputAction, ScreenFrame } from '@midscene/ios-hid';
 import { type RequestHandler, Router, json } from 'express';
 import { z } from 'zod';
+import { ControlPreview } from './control-preview.js';
+import type { PreviewReader } from './hardware/screen/source.js';
 
 export type ControlledDevice = {
   signal: AbortSignal;
   screenshot(): Promise<ScreenFrame>;
+  openPreview(signal: AbortSignal): PreviewReader;
   execute(action: InputAction, signal: AbortSignal): Promise<void>;
 };
 
@@ -58,6 +61,7 @@ type Lease = {
   expires: number;
   disconnect: () => void;
   action?: Promise<void>;
+  preview?: ControlPreview;
   closing?: Promise<void>;
 };
 
@@ -195,6 +199,17 @@ export class ControlSessions {
           this.require(req.params.id);
         });
         res.json({ ...frame, jpeg: frame.jpeg.toString('base64') });
+      }),
+    );
+    router.get(
+      '/:id/preview',
+      handle((req, res) => {
+        const lease = this.require(req.params.id);
+        lease.preview ??= new ControlPreview(
+          (signal) => lease.device.openPreview(signal),
+          lease.lifetime.signal,
+        );
+        lease.preview.add(res);
       }),
     );
     router.post(

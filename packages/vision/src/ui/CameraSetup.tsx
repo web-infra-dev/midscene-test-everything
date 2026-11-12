@@ -15,7 +15,7 @@ import {
   Spin,
   Steps,
 } from 'antd';
-import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { CameraDevice } from '../camera/types.js';
 import type { CameraScreenSettings } from '../screen.js';
@@ -42,13 +42,6 @@ export interface CameraSetupProps {
   selectedCameraId?: string;
   fullPage?: boolean;
   onCancel?: () => void;
-  renderDetectionActions?: (props: {
-    markers: () => Promise<void>;
-    ai: (config?: unknown) => Promise<void>;
-    busy: boolean;
-    markersDisabled: boolean;
-    aiDisabled: boolean;
-  }) => ReactNode;
   baseUrl: string;
   onComplete?: (settings: CameraScreenSettings) => void;
   controlsTarget?: HTMLElement;
@@ -60,7 +53,6 @@ export interface CameraSetupProps {
 export function CameraSetup({
   fullPage,
   onCancel,
-  renderDetectionActions,
   selectedCameraId,
   baseUrl,
   onComplete,
@@ -108,7 +100,7 @@ export function CameraSetup({
           ? undefined
           : { 'Content-Type': 'application/json', 'X-Midscene-Setup': setupId },
       body: value === undefined ? undefined : JSON.stringify(value),
-      signal: AbortSignal.timeout(path === '/detect' ? 150000 : 30000),
+      signal: AbortSignal.timeout(30000),
     });
     if (!response.ok)
       throw Error((await response.json()).error ?? 'Camera request failed');
@@ -284,23 +276,7 @@ export function CameraSetup({
       stopped = true;
     };
   }, [baseUrl, selectedCameraId]);
-  async function detectAI(modelConfig?: unknown) {
-    setDetectingAction(true);
-    await run(async () => {
-      const result = await (await request('/detect', { modelConfig })).json();
-      setCorrection(result);
-      setHasResult(true);
-      setAccuracy(undefined);
-    });
-    setDetectingAction(false);
-  }
-  const detectionActions = renderDetectionActions?.({
-    markers: detect,
-    ai: detectAI,
-    busy: detectingAction || (Boolean(onConfirm) && saving),
-    markersDisabled: !cameraId || !state?.phoneConnected || busy,
-    aiDisabled: busy || !src,
-  }) ?? (
+  const detectionActions = (
     <Button
       size="small"
       loading={busy && detecting.current}

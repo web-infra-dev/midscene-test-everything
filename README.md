@@ -129,6 +129,8 @@ The device manager reuses the camera setup, marker detection and screen editor. 
 
 Saved configurations are unique per Bluetooth peer and screen source (USB, AirPlay or camera). Connections reuse that pair automatically, and device names come from Bluetooth. Uncheck “使用已保存的校准配置” to repeat calibration and update the same record. Older duplicate records for a pair are consolidated when the device service loads its configuration, retaining the last saved record.
 
+The iOS HID Playground uses a live MJPEG preview while the preview is open. It proxies the authenticated `GET /api/v1/sessions/{id}/preview` stream through its own server. The service shares one preview per device session, capped at 10 FPS. External camera previews are rectified in a worker. Agent screenshots still wait for the screen to settle after input.
+
 ## iOS HID device service (experimental)
 
 The device service package is `@midscene/ios-hid-service`. Its two CLI names, `hid-service` and `midscene-hid-service`, run the same commands. To try the workspace build on the Mac connected to the phones:
@@ -196,7 +198,7 @@ Calibration code is in `packages/arm-kit/src/calibration`: phone and camera setu
 
 Bluetooth input uses classic HID. The connection panel displays the Mac's actual Bluetooth name and connected phone names; click a phone to bind it to the chosen screen source. A sole available phone is selected automatically. Occupied phones remain visible but disabled, and a disconnect never silently selects another phone. Control and interrupt channels must both be open to count as connected; pairing records alone do not count. Native connection/disconnection events reach the UI through SSE, with an initial snapshot and no Bluetooth-list polling. Phone names come from the classic peer; exact model names are not guaranteed, so they are omitted. Duplicate names include an address suffix. The HID service is named `Midscene iOS HID`, but classic pairing generally displays the Mac's system Bluetooth name; the app does not rename the Mac. Existing BLE pairing records may need to be forgotten on the phone before pairing again. Reconnect from the phone's Bluetooth settings if necessary; automatic Mac-initiated reconnection is not guaranteed. Old BLE motion profiles are remeasured. This backend uses private macOS Bluetooth entry points checked at runtime and has been verified on macOS 27.0.1; other macOS versions still need hardware validation.
 
-The arm and iOS HID share camera discovery, frame capture, marker decoding, perspective correction and the corner editor through `@midscene/robotics-vision`. The arm owns its calibration workflow and marker validation. The iOS HID service owns Bluetooth control, pointer calibration and its screen-setup validation.
+The arm and iOS HID share camera discovery, frame capture, automatic marker-based screen detection, perspective correction and the corner editor through `@midscene/robotics-vision`. The arm owns its calibration workflow and marker validation. The iOS HID service owns Bluetooth control, pointer calibration and its screen-setup validation.
 
 The new iOS HID and vision packages use Rstest. After building, run their suites with `pnpm --filter @midscene/ios-hid test`, `pnpm --filter @midscene/ios-hid-service test`, `pnpm --filter @midscene/ios-hid-playground test`, and `pnpm --filter @midscene/robotics-vision test`.
 

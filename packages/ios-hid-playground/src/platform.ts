@@ -6,7 +6,7 @@ import {
 } from '@midscene/ios-hid';
 import {
   type PlaygroundSessionManager,
-  createScreenshotPreviewDescriptor,
+  createMjpegPreviewDescriptor,
   definePlaygroundPlatform,
 } from '@midscene/playground';
 
@@ -24,6 +24,10 @@ export class RemoteSessionManager implements PlaygroundSessionManager {
 
   get sessionEnded() {
     return this.device?.sessionEnded ?? false;
+  }
+
+  openPreview(signal: AbortSignal) {
+    return this.device?.openPreview(signal);
   }
 
   async getSetupSchema() {
@@ -64,7 +68,7 @@ export class RemoteSessionManager implements PlaygroundSessionManager {
           options?: ConstructorParameters<typeof IOSHIDAgent>[1],
         ) => new IOSHIDAgent(device, options),
         displayName: profile.name,
-        preview: createScreenshotPreviewDescriptor(),
+        preview: createMjpegPreviewDescriptor(),
         platformId: 'ios-hid',
       };
     } finally {
@@ -90,7 +94,7 @@ export const iosHIDPlatform = definePlaygroundPlatform({
       platformId: 'ios-hid',
       title: 'Midscene iOS HID',
       sessionManager: new RemoteSessionManager(),
-      preview: createScreenshotPreviewDescriptor(),
+      preview: createMjpegPreviewDescriptor(),
     };
   },
 });

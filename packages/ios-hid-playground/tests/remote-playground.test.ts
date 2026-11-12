@@ -36,6 +36,12 @@ test('Playground discovers, claims, previews and releases one device from the se
   const token = 'test-token';
   const calls: unknown[] = [];
   const jpeg = Buffer.from('simulated frame');
+  const liveJpeg = Buffer.from('live frame');
+  let previewReaders = 0;
+  let closePreview!: () => void;
+  const previewClosed = new Promise<void>((resolve) => {
+    closePreview = resolve;
+  });
   const listeners = new Set<(status: { hosts: (typeof peer)[] }) => void>();
   const workspaces = new DeviceWorkspaces(
     {
@@ -47,6 +53,13 @@ test('Playground discovers, claims, previews and releases one device from the se
         listPeers: async () => [peer],
       },
       open: async () => ({
+        openPreview: () => {
+          previewReaders++;
+          return {
+            getFrame: async () => ({ jpeg: liveJpeg, sequence: 1 }),
+            close: async () => closePreview(),
+          };
+        },
         screenshot: async () => ({
           jpeg,
           width: 200,
@@ -116,6 +129,35 @@ test('Playground discovers, claims, previews and releases one device from the se
   const connected = await post(origin, '/session', input);
   assert.equal(connected.status, 200, await connected.text());
   assert.equal((await list())[0].status, 'busy');
+  const info = await (await fetch(`${origin}/runtime-info`)).json();
+  assert.equal(info.preview.kind, 'mjpeg');
+  const live = await fetch(`${origin}/mjpeg`, {
+    signal: AbortSignal.timeout(5000),
+  });
+  assert.equal(live.status, 200);
+  assert.match(
+    live.headers.get('content-type') ?? '',
+    /^multipart\/x-mixed-replace; boundary=/,
+  );
+  const reader = live.body!.getReader();
+  let data = Buffer.alloc(0);
+  while (!data.includes(liveJpeg)) {
+    const chunk = await reader.read();
+    assert.equal(chunk.done, false);
+    data = Buffer.concat([data, Buffer.from(chunk.value!)]);
+  }
+  assert.match(data.toString(), /Content-Type: image\/jpeg/);
+  const second = await fetch(`${origin}/mjpeg`, {
+    signal: AbortSignal.timeout(5000),
+  });
+  const secondReader = second.body!.getReader();
+  assert.match(
+    Buffer.from((await secondReader.read()).value!).toString(),
+    /live frame/,
+  );
+  await secondReader.cancel();
+  assert.equal(previewReaders, 1);
+
   const duplicate = await post(
     host,
     '/api/v1/sessions',
@@ -142,6 +184,8 @@ test('Playground discovers, claims, previews and releases one device from the se
     (await fetch(`${origin}/session`, { method: 'DELETE' })).status,
     200,
   );
+  await previewClosed;
+  await reader.cancel().catch(() => {});
   assert.equal((await list())[0].status, 'available');
 
   assert.equal((await post(origin, '/session', input)).status, 200);

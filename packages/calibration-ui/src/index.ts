@@ -36,20 +36,7 @@ export { identifyScreen } from './marker-client';
 export { PerspectiveObservationCard } from './components/PerspectiveObservationCard';
 export { usePerspectiveValidity } from './hooks/usePerspectiveValidity';
 
-export { CalibrationModelModal } from './components/CalibrationModelModal';
-export {
-  loadDetectionModel,
-  saveDetectionModel,
-  clearDetectionModel,
-  emptyModel,
-  type CalibrationModelConfig,
-} from './model-settings';
-
-export { CameraDetectionActions } from './components/CameraDetectionActions';
-
 export {
   ConfigModal,
   type ConfigModalProps,
 } from './components/ModelConfigModal';
-
-export { CalibrationModelVerifier } from './components/CalibrationModelModal';

@@ -1,4 +1,6 @@
 export function cameraSetupErrorText(message: string): string {
+  if (message.includes('The browser did not report the page position'))
+    return '无法确定网页在屏幕上的位置。在 iPhone 的 Safari 中选择「分享 → 添加到主屏幕」，从主屏幕图标打开标定页并按提示轻点一次，然后重新识别。也可以手动调整四角。';
   if (
     /marker .*could not be decoded uniquely|calibration markers.*visible/i.test(
       message,

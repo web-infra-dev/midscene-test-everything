@@ -21,18 +21,30 @@ export class CameraScreen {
 
   async getFrame(options: { fresh?: boolean; timeoutMs?: number } = {}) {
     const frame = await this.stream.getFrame(options);
-    const metadata = await sharp(frame.jpeg).metadata();
-    if (
-      metadata.width !== this.settings.correction.sourceWidth ||
-      metadata.height !== this.settings.correction.sourceHeight
-    )
-      throw new Error('Camera resolution changed; repeat screen setup');
-    const jpeg = await this.transformer.transform(frame.jpeg, {
-      points: this.settings.correction.points,
-      rotation: this.settings.correction.rotation,
-      targetWidth: this.settings.width,
-      targetHeight: this.settings.height,
-    });
+    const jpeg = await rectifyCameraFrame(
+      frame.jpeg,
+      this.settings,
+      this.transformer,
+    );
     return { ...frame, jpeg };
   }
+}
+
+export async function rectifyCameraFrame(
+  jpeg: Buffer,
+  settings: CameraScreenSettings,
+  transformer = new PerspectiveTransformer(),
+) {
+  const metadata = await sharp(jpeg).metadata();
+  if (
+    metadata.width !== settings.correction.sourceWidth ||
+    metadata.height !== settings.correction.sourceHeight
+  )
+    throw new Error('Camera resolution changed; repeat screen setup');
+  return transformer.transform(jpeg, {
+    points: settings.correction.points,
+    rotation: settings.correction.rotation,
+    targetWidth: settings.width,
+    targetHeight: settings.height,
+  });
 }

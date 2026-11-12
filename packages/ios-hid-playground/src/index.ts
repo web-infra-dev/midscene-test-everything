@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { listIOSHIDDevices } from '@midscene/ios-hid';
 import {
@@ -47,6 +49,47 @@ export async function launchIOSHIDPlayground(
       const app = server.app as express.Express;
       app.get('/', (_req, res) => {
         res.set('Cache-Control', 'no-store').type('html').send(page);
+      });
+      app.get('/mjpeg', async (_req, res) => {
+        const manager = platform.sessionManager;
+        const cancellation = new AbortController();
+        const abort = () => cancellation.abort();
+        res.once('close', abort);
+        try {
+          const upstream =
+            manager instanceof RemoteSessionManager
+              ? await manager.openPreview(cancellation.signal)
+              : undefined;
+          if (!upstream) {
+            res.status(409).json({ error: '请先连接设备。' });
+            return;
+          }
+          const type = upstream.headers.get('content-type');
+          if (
+            !upstream.body ||
+            !type?.startsWith('multipart/x-mixed-replace;')
+          ) {
+            await upstream.body?.cancel();
+            res.status(502).json({ error: '设备服务未返回预览流。' });
+            return;
+          }
+          res.set({
+            'Content-Type': type,
+            'Cache-Control': 'no-store, no-transform',
+            'X-Accel-Buffering': 'no',
+          });
+          res.flushHeaders();
+          const body = upstream.body as Parameters<typeof Readable.fromWeb>[0];
+          await pipeline(Readable.fromWeb(body), res, {
+            signal: cancellation.signal,
+          });
+        } catch {
+          if (!res.destroyed && !res.headersSent)
+            res.status(502).json({ error: '设备预览连接失败。' });
+        } finally {
+          res.off('close', abort);
+          abort();
+        }
       });
       app.get('/ios-hid/session-status', (_req, res) => {
         const manager = platform.sessionManager;

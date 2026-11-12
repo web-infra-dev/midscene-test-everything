@@ -270,6 +270,23 @@ export function mountCalibrationPhonePage(
         ? screenOrigin.y
         : undefined;
     const { top, bottom } = safeArea;
+    if (
+      top === 0 &&
+      bottom === 0 &&
+      /iPhone/i.test(navigator.userAgent) &&
+      (matchMedia('(display-mode: standalone)').matches ||
+        (navigator as Navigator & { standalone?: boolean }).standalone ===
+          true) &&
+      innerHeight > innerWidth &&
+      innerWidth === Math.min(window.screen.width, window.screen.height) &&
+      (visualViewport?.scale ?? 1) === 1 &&
+      (visualViewport?.offsetTop ?? 0) === 0 &&
+      gap <= innerHeight * 0.1
+    ) {
+      insetReason =
+        measured === undefined ? 'awaiting-origin-tap' : 'touch-origin';
+      return measured;
+    }
     if (top <= 0 && bottom <= 0 && !(measured !== undefined && measured > 0)) {
       insetReason = 'no-safe-area-or-positive-touch-origin';
       return undefined;
@@ -300,6 +317,7 @@ export function mountCalibrationPhonePage(
           key: viewportKey(),
           y: Math.max(0, screenY - clientY),
         };
+        if (insetReason === 'awaiting-origin-tap') send();
       },
       { passive: true, capture: true },
     );
@@ -319,19 +337,12 @@ export function mountCalibrationPhonePage(
       };
     });
     const display = window.screen;
-    const landscape = display.orientation?.type.startsWith('landscape');
+    // The viewport orientation stays current after iOS standalone rotation.
+    const portrait = innerHeight >= innerWidth;
     const dimensions = [display.width, display.height];
     const screen = {
-      ...(landscape === undefined
-        ? { width: display.width, height: display.height }
-        : {
-            width: landscape
-              ? Math.max(...dimensions)
-              : Math.min(...dimensions),
-            height: landscape
-              ? Math.min(...dimensions)
-              : Math.max(...dimensions),
-          }),
+      width: portrait ? Math.min(...dimensions) : Math.max(...dimensions),
+      height: portrait ? Math.max(...dimensions) : Math.min(...dimensions),
       devicePixelRatio: window.devicePixelRatio,
     };
     const topInset = iosTopInset(screen.height - innerHeight);
@@ -490,6 +501,19 @@ export function mountCalibrationPhonePage(
         ? (next.error ?? '')
         : '';
     if (next.view === 'capture-failed') message.textContent = label('retry');
+    if (next.view === 'markers' && insetReason === 'awaiting-origin-tap') {
+      message.textContent = zh
+        ? '请轻点页面一次，以确定网页在屏幕上的位置。'
+        : 'Tap the page once to locate it on the screen.';
+    } else if (
+      next.view === 'markers' &&
+      insetReason === 'no-safe-area-or-positive-touch-origin' &&
+      /iPhone/i.test(navigator.userAgent)
+    ) {
+      message.textContent = zh
+        ? '在 Safari 选择「分享 → 添加到主屏幕」，再从主屏幕图标打开标定页。'
+        : 'In Safari, choose Share → Add to Home Screen, then reopen this page from its icon.';
+    }
     const visibleTarget =
       capture?.target ??
       (next.view === 'verify' && !next.error ? next.target : undefined);
