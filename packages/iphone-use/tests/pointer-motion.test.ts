@@ -6,6 +6,9 @@ import { onTestFinished, rstest, test } from '@rstest/core';
 import sharp from 'sharp';
 import { DeviceConfigStore } from '../dist/hardware/config/store.js';
 import { HIDInputSession } from '../dist/hardware/input/session.js';
+import * as detector from '../dist/hardware/pointer/detector.js' with {
+  rstest: 'importActual',
+};
 import {
   type PointerTurn,
   screenDeltaToPointer,
@@ -18,8 +21,50 @@ import {
   compatibleMotionProfile,
   motionBinding,
 } from '../dist/hardware/pointer/motion-profile.js';
-import type { DeviceConfig, Point } from '../dist/hardware/types.js';
+import type {
+  DeviceConfig,
+  Point,
+  ScreenFrame,
+} from '../dist/hardware/types.js';
 import { curveModel, physicalMovement } from './fixtures/pointer-model.js';
+
+// Simulate only image detection; calibration still sends probes, waits for
+// stable positions, fits a model and validates it using the measured motion.
+const measuredPositions = new WeakMap<ScreenFrame, Point>();
+rstest.mock('../dist/hardware/pointer/detector.js', () => {
+  return {
+    ...detector,
+    scorePointerPositions: async (
+      before: ScreenFrame,
+      after: ScreenFrame,
+      positions: Point[],
+    ) => {
+      const end = measuredPositions.get(after);
+      if (!end) return detector.scorePointerPositions(before, after, positions);
+      return positions.map(({ x, y }) =>
+        Math.hypot(
+          x * (after.width - 1) - end.x,
+          y * (after.height - 1) - end.y,
+        ) < 2
+          ? { mean: 80, fraction: 0.8 }
+          : { mean: 0, fraction: 0 },
+      );
+    },
+    detectPointerChanges: async (before: ScreenFrame, after: ScreenFrame) => {
+      const start = measuredPositions.get(before);
+      const end = measuredPositions.get(after);
+      if (!start || !end) return detector.detectPointerChanges(before, after);
+      if (start.x === end.x && start.y === end.y) return [];
+      return [start, end].map(({ x, y }) => ({
+        x,
+        y,
+        area: 530,
+        strength: 180,
+        bounds: { left: x - 13, top: y - 13, right: x + 13, bottom: y + 13 },
+      }));
+    },
+  };
+});
 
 const linear = curveModel({ a: 1, b: 0 }, { a: 1, b: 0 });
 function displacement(reports: Point[], model = linear, turn: PointerTurn = 0) {
@@ -109,11 +154,17 @@ function fastTimers() {
     ) => real(callback, Math.min(delay, 1), ...args)) as typeof setTimeout);
 }
 
-/** Real image differencing, simulated HID transport; never touches Bluetooth. */
+/** Simulated HID transport, optionally with rendered pointer frames. */
 function simulatedPhone(
   config: DeviceConfig,
   model = curveModel(),
-  movement?: (delta: Point) => Point,
+  {
+    movement,
+    renderFrames = false,
+  }: {
+    movement?: (delta: Point) => Point;
+    renderFrames?: boolean;
+  } = {},
 ) {
   let point = { x: 350, y: 650 };
   let sequence = 0;
@@ -148,19 +199,26 @@ function simulatedPhone(
     },
   });
   const screen = {
-    getFrame: async () => ({
-      jpeg: await sharp(
-        Buffer.from(
-          `<svg width="800" height="1200"><rect width="800" height="1200" fill="white"/><circle cx="${point.x}" cy="${point.y}" r="13" fill="#444"/></svg>`,
-        ),
-      )
-        .png()
-        .toBuffer(),
-      width: 800,
-      height: 1200,
-      sequence: ++sequence,
-      receivedAt: Date.now(),
-    }),
+    getFrame: async () => {
+      const position = { ...point };
+      const frame = {
+        jpeg: renderFrames
+          ? await sharp(
+              Buffer.from(
+                `<svg width="800" height="1200"><rect width="800" height="1200" fill="white"/><circle cx="${position.x}" cy="${position.y}" r="13" fill="#444"/></svg>`,
+              ),
+            )
+              .png()
+              .toBuffer()
+          : Buffer.alloc(0),
+        width: 800,
+        height: 1200,
+        sequence: ++sequence,
+        receivedAt: Date.now(),
+      };
+      if (!renderFrames) measuredPositions.set(frame, position);
+      return frame;
+    },
     close: async () => {},
   };
   let saved = 0;
@@ -197,7 +255,7 @@ const phoneConfig = (): DeviceConfig => ({
 test('connection measures and persists movement before the first swipe; reconnect reuses saved data without probes', async () => {
   fastTimers();
   const config = phoneConfig();
-  const first = simulatedPhone(config);
+  const first = simulatedPhone(config, undefined, { renderFrames: true });
   await first.input.verify(first.screen);
   assert.equal(first.pressed(), 0);
   assert.equal(config.pointerMotion!.samples.length, 10);
@@ -408,11 +466,13 @@ test('stable validation drift is corrected and checked again before the table is
   const response = curveModel();
   let warmed = false;
   const config = phoneConfig();
-  const phone = simulatedPhone(config, response, (delta) => {
-    if (delta.x === 2 && delta.y === 2) warmed = true;
-    const d = physicalMovement(response, delta);
-    if (warmed && delta.x === 8 && !delta.y) d.x *= 1.12;
-    return d;
+  const phone = simulatedPhone(config, response, {
+    movement: (delta) => {
+      if (delta.x === 2 && delta.y === 2) warmed = true;
+      const d = physicalMovement(response, delta);
+      if (warmed && delta.x === 8 && !delta.y) d.x *= 1.12;
+      return d;
+    },
   });
   await phone.prepare();
   const measured = predictMovement(config.pointerMotion!.model, {
