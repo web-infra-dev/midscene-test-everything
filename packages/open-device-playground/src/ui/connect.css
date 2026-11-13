@@ -47,6 +47,21 @@
   pointer-events: none;
 }
 
+/* Playground maps input to a centered, contained image in screenshot-content.
+ * Make the image use that same rectangle instead of its intrinsic flex size. */
+.screenshot-viewer.screen-only > .screenshot-content > .screenshot-image-shell {
+  width: 100%;
+  height: 100%;
+}
+
+.screenshot-viewer.screen-only
+  > .screenshot-content
+  > .screenshot-image-shell
+  > .screenshot-image {
+  width: 100%;
+  height: 100%;
+}
+
 [data-midscene-device-interaction-layer="true"]:has(> .hid-preview-feedback) {
   cursor: crosshair !important;
 }
