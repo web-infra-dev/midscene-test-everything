@@ -524,6 +524,7 @@ function PerspectiveEditor({
   return (
     <Modal
       open={open}
+      destroyOnClose
       width="min(1100px, 96vw)"
       footer={null}
       title={t('Perspective Correction')}

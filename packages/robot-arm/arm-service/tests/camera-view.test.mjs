@@ -506,22 +506,34 @@ test('simultaneous preview slots in one tab stay alive', async () => {
   marker.res.destroy();
 });
 
-test('global preview registry caps one tab at two streams', () => {
+test('global preview registry caps one tab at four streams', () => {
   const first = fixture();
   const second = fixture();
   const third = fixture();
+  const fourth = fixture();
+  const fifth = fixture();
   registerClientPreview('tab-cap', 'first', first.res);
   registerClientPreview('tab-cap', 'second', second.res);
   assert.equal(first.res.destroyed, false);
   registerClientPreview('tab-cap', 'third', third.res);
+  registerClientPreview('tab-cap', 'fourth', fourth.res);
+  assert.equal(first.res.destroyed, false);
+  assert.equal(second.res.destroyed, false);
+  assert.equal(third.res.destroyed, false);
+  assert.equal(fourth.res.destroyed, false);
+  registerClientPreview('tab-cap', 'fifth', fifth.res);
   assert.equal(first.res.destroyed, true);
   assert.equal(first.res.writableEnded, true);
   assert.equal(second.res.destroyed, false);
   assert.equal(third.res.destroyed, false);
+  assert.equal(fourth.res.destroyed, false);
+  assert.equal(fifth.res.destroyed, false);
   const other = fixture();
   registerClientPreview('tab-other', 'first', other.res);
   assert.equal(other.res.destroyed, false);
   second.res.destroy();
   third.res.destroy();
+  fourth.res.destroy();
+  fifth.res.destroy();
   other.res.destroy();
 });

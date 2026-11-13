@@ -20,6 +20,12 @@ const CORRECTED_PREVIEW_MAX_SIDE = 900;
 const CORRECTED_PREVIEW_MAX_PIXELS = 450_000;
 /** Every camera frame is cheap enough at this size with nearest sampling. */
 const CORRECTED_PREVIEW_INTERVAL_MS = 0;
+/**
+ * Calibration keeps the right-hand preview mounted while the perspective
+ * editor opens live and corrected previews. Four streams leave two of the
+ * browser's six connections available for arm and camera polling.
+ */
+const MAX_CLIENT_PREVIEWS = 4;
 
 /**
  * Live previews for one (camera, browser tab), keyed by UI slot. A refresh or a
@@ -60,7 +66,7 @@ function trackClientPreview(
   if (previous && previous !== res) retirePreview(previous);
   // A hidden or unmounted preview can leave its response behind; the oldest
   // slot is the least likely to still be visible.
-  while (active.size > 2) {
+  while (active.size > MAX_CLIENT_PREVIEWS) {
     const oldest = active.entries().next().value as
       | [string, ServerResponse]
       | undefined;
@@ -99,7 +105,7 @@ export function registerClientPreview(
   previews.set(key, res);
   globalClientPreviews.set(client, previews);
   if (previous && previous !== res) retirePreview(previous);
-  while (previews.size > 2) {
+  while (previews.size > MAX_CLIENT_PREVIEWS) {
     const oldest = previews.entries().next().value as
       | [string, ServerResponse]
       | undefined;

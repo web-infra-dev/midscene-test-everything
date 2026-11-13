@@ -3,7 +3,10 @@ import { EventEmitter } from 'node:events';
 import { afterAll, afterEach, test } from '@rstest/core';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { streamCameraPreview } from '../src/server/camera-preview';
+import {
+  registerClientPreview,
+  streamCameraPreview,
+} from '../src/server/camera-preview';
 import { type CameraEntry, useCameras } from '../src/ui/cameras';
 import { CameraRail } from '../src/ui/components/CameraRail';
 import { CameraStagePreview } from '../src/ui/components/CameraStagePreview';
@@ -180,6 +183,33 @@ test('a corrected preview is framed by the saved target instead of the camera fr
   const raw = render();
   assert.ok(!raw.includes('is-framed'));
   assert.ok(!raw.includes('--rv-preview-aspect'));
+});
+
+test('keeps the calibration preview alive while the perspective editor opens', () => {
+  const response = () =>
+    Object.assign(new EventEmitter(), {
+      destroyed: false,
+      writableEnded: false,
+      end() {
+        this.writableEnded = true;
+      },
+      destroy() {
+        this.destroyed = true;
+        this.emit('close');
+      },
+    });
+  const guided = response();
+  const live = response();
+  const corrected = response();
+  const releases = [
+    registerClientPreview('calibration-view', 'guided', guided as never),
+    registerClientPreview('calibration-view', 'live', live as never),
+    registerClientPreview('calibration-view', 'corrected', corrected as never),
+  ];
+  assert.equal(guided.destroyed, false);
+  assert.equal(live.destroyed, false);
+  assert.equal(corrected.destroyed, false);
+  releases.forEach((release) => release());
 });
 
 test('a connected corrected preview follows the camera frame rate', async () => {
