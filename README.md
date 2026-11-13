@@ -28,8 +28,6 @@ Copy [.env.example](./.env.example) to `.env`, fill in the service and model set
 pnpm exec tsx examples/open-device.ts
 ```
 
-iPhone Use supports `doubleTap`, `longPress`, vertical `scroll`, and `dragAndDrop`. The default long press holds for 700 ms.
-
 The example uses `agentFromOpenDevice()` to read the current screen. Both services serve Swagger UI at `/api/docs/` and the OpenAPI schema at `/api/openapi.json`.
 
 [Protocol draft](./packages/open-device/rfc/index.html) · [MIT license](./LICENSE)
