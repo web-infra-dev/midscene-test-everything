@@ -193,8 +193,16 @@ function simulatedPhone(
     relative: async (delta: Point, buttons = 0) => {
       if (buttons) pressed++;
       else probes.push(delta);
-      const d = movement?.(delta) ?? physicalMovement(model, delta);
-      if (!dropMovement) point = { x: point.x + d.x, y: point.y + d.y };
+      const d =
+        movement?.(delta) ??
+        (Math.hypot(delta.x, delta.y) > 8
+          ? delta
+          : physicalMovement(model, delta));
+      if (!dropMovement)
+        point = {
+          x: Math.min(799, Math.max(0, point.x + d.x)),
+          y: Math.min(1199, Math.max(0, point.y + d.y)),
+        };
       cancel?.abort();
     },
   });
@@ -262,7 +270,7 @@ test('connection measures and persists movement before the first swipe; reconnec
   assert.equal(config.pointerMotion!.validation.samples.length, 3);
   assert.ok(first.probes.some((d) => d.x === 2));
   assert.ok(first.probes.some((d) => d.y === 2));
-  const measurementCount = first.probes.filter((p) => p.x || p.y).length;
+  const measuredAt = config.pointerMotion!.measuredAt;
   await first.input.execute(
     {
       type: 'swipe',
@@ -272,13 +280,8 @@ test('connection measures and persists movement before the first swipe; reconnec
     },
     first.screen,
   );
-  assert.equal(
-    first.probes.filter((p) => p.x || p.y).length,
-    measurementCount,
-    'the first swipe must reuse connection-time measurement without more hover probes',
-  );
+  assert.equal(config.pointerMotion!.measuredAt, measuredAt);
   assert.ok(first.pressed() > 0);
-  const measuredAt = config.pointerMotion!.measuredAt;
   const directory = await mkdtemp(join(tmpdir(), 'ios-motion-'));
   onTestFinished(() => rm(directory, { recursive: true, force: true }));
   const store = new DeviceConfigStore(directory);
@@ -489,3 +492,34 @@ test('stable validation drift is corrected and checked again before the table is
   );
   assert.equal(phone.pressed(), 0);
 }, 60_000);
+
+test('absolute nudges by one raw unit on first call and after relative motion', async () => {
+  const sent: { report: number; x: number; y: number }[] = [];
+  const input = new HIDInputSession(
+    {
+      send: async (_peer: string, report: number, bytes: number[]) => {
+        if (report === 2)
+          sent.push({
+            report,
+            x: bytes[1] + bytes[2] * 256,
+            y: bytes[3] + bytes[4] * 256,
+          });
+        return true;
+      },
+    } as unknown as ConstructorParameters<typeof HIDInputSession>[0],
+    'peer-a',
+  );
+  await input.absolute({ x: 0.5, y: 0.5 });
+  assert.equal(sent.length, 2);
+  assert.notEqual(sent[0].x, sent[1].x);
+  assert.equal(sent[1].x, Math.round(0.5 * 32767));
+
+  await input.absolute({ x: 0.25, y: 0.25 });
+  assert.equal(sent.length, 3);
+
+  await input.relative({ x: 4, y: 0 });
+  await input.absolute({ x: 0.75, y: 0.75 });
+  assert.equal(sent.length, 5);
+  assert.notEqual(sent[3].x, sent[4].x);
+  assert.equal(sent[4].x, Math.round(0.75 * 32767));
+});

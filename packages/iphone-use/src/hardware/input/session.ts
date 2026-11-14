@@ -91,6 +91,7 @@ export class HIDInputSession {
   private lifetime = new AbortController();
   private motion?: PointerMotionModel;
   private lastAbsolute?: Point;
+  private relativeSinceAbsolute = false;
   private absoluteCorrection?: AbsolutePointerCorrection;
   private mapping?: { turn: PointerTurn; width: number; height: number };
   private profileConfig?: DeviceConfig;
@@ -114,15 +115,20 @@ export class HIDInputSession {
       throw new Error('Pointer position outside screen');
     const send = (px: number, py: number) =>
       this.native.send(this.peer, 2, [0, px & 255, px >> 8, py & 255, py >> 8]);
-    // iOS can ignore an absolute report identical to the previous one, even
-    // after relative motion moved the pointer elsewhere. Change one raw unit
-    // first so returning to a measurement anchor is an actual reposition.
-    if (this.lastAbsolute?.x === x && this.lastAbsolute.y === y) {
+    // iOS can ignore a single absolute report after relative motion or when
+    // identical to the previous one. Nudge by one raw unit first so iOS
+    // always sees a fresh absolute position change.
+    if (
+      !this.lastAbsolute ||
+      this.relativeSinceAbsolute ||
+      (this.lastAbsolute.x === x && this.lastAbsolute.y === y)
+    ) {
       await send(x === 32767 ? x - 1 : x + 1, y);
       signal.throwIfAborted();
     }
     await send(x, y);
     this.lastAbsolute = { x, y };
+    this.relativeSinceAbsolute = false;
   }
   async verify(screen: ScreenSession, cancellation?: AbortSignal) {
     const signal = cancellation
@@ -344,6 +350,7 @@ export class HIDInputSession {
       )
     )
       throw new Error('Invalid relative report');
+    this.relativeSinceAbsolute = true;
     return this.native
       .send(this.peer, 3, [buttons, delta.x & 255, delta.y & 255, 0])
       .then(() => undefined);
