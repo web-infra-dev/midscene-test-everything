@@ -74,6 +74,13 @@ export async function stageRelease(version: string, integrity?: string) {
     await Promise.all([
       readFile(entry),
       readFile(join(root, 'dist', 'commands.js')),
+      exec('/usr/bin/codesign', [
+        '--verify',
+        '--strict',
+        '-R',
+        'identifier "com.midscene.iphone-use.capture" and anchor apple generic',
+        join(root, 'native', 'Midscene iPhone Capture.app'),
+      ]),
     ]);
     return { directory: staged, entry };
   } catch (error) {

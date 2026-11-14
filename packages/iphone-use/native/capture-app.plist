@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>com.midscene.iphone-use.capture</string>
+<key>CFBundleName</key><string>Midscene iPhone Capture</string>
+<key>CFBundleExecutable</key><string>usb-capture</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleVersion</key><string>1</string>
+<key>LSUIElement</key><true/>
+<key>NSCameraUsageDescription</key><string>Read the connected iPhone screen for Midscene automation.</string>
+</dict></plist>

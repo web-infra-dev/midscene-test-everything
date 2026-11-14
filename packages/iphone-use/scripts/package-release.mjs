@@ -18,6 +18,13 @@ if (
   );
 }
 
+const identity = process.env.IPHONE_CAPTURE_SIGNING_IDENTITY?.trim();
+if (!identity || identity === '-') {
+  throw new Error(
+    'Set IPHONE_CAPTURE_SIGNING_IDENTITY to a Developer ID Application signing identity.',
+  );
+}
+
 const repository = fileURLToPath(new URL('../../../', import.meta.url));
 const destination = resolve(output);
 const stage = await mkdtemp(join(tmpdir(), 'iphone-use-release-'));
@@ -42,6 +49,16 @@ try {
     },
   );
   const service = join(stage, 'service');
+  execFileSync(
+    '/bin/sh',
+    [
+      join(service, 'native/build-capture-app.sh'),
+      join(service, 'native/Midscene iPhone Capture.app'),
+      identity,
+      'universal',
+    ],
+    { stdio: 'inherit' },
+  );
   const packageFile = join(service, 'package.json');
   const manifest = JSON.parse(await readFile(packageFile, 'utf8'));
   manifest.version = version;

@@ -1,4 +1,6 @@
+import AppKit
 import AVFoundation
+import Darwin
 import CoreImage
 import CoreMediaIO
 import Foundation
@@ -6,7 +8,40 @@ import ImageIO
 import UniformTypeIdentifiers
 
 func note(_ text: String) { FileHandle.standardError.write(Data((text + "\n").utf8)) }
-func fail(_ text: String) -> Never { note("USB error: " + text); exit(1) }
+private var captureOutput: FileHandle?
+func fail(_ text: String) -> Never {
+    if let output = captureOutput {
+        try? output.write(contentsOf: Data(("error " + text.replacingOccurrences(of: "\n", with: " ") + "\n").utf8))
+    }
+    note("USB error: " + text)
+    exit(1)
+}
+
+private func connectCaptureSocket(_ path: String) -> FileHandle? {
+    var address = sockaddr_un()
+    address.sun_family = sa_family_t(AF_UNIX)
+    let bytes = path.utf8CString
+    guard bytes.count <= MemoryLayout.size(ofValue: address.sun_path) else { return nil }
+    withUnsafeMutableBytes(of: &address.sun_path) { destination in
+        bytes.withUnsafeBytes { destination.copyBytes(from: $0) }
+    }
+    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard fd >= 0 else { return nil }
+    let result = withUnsafePointer(to: &address) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+        }
+    }
+    guard result == 0 else { close(fd); return nil }
+    // EOF also stops capture if the Node service crashes or restarts.
+    DispatchQueue.global(qos: .utility).async {
+        var byte: UInt8 = 0
+        while read(fd, &byte, 1) < 0 && errno == EINTR {}
+        exit(0)
+    }
+    signal(SIGPIPE, SIG_IGN)
+    return FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+}
 
 func allowUSBScreenDevices() {
     var address = CMIOObjectPropertyAddress(
@@ -34,6 +69,8 @@ func phones() -> [AVCaptureDevice] {
 
 final class FrameWriter: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     let context = CIContext(options: [.cacheIntermediates: false])
+    let destination: FileHandle
+    init(destination: FileHandle) { self.destination = destination }
     var last = 0.0
     var count = 0
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
@@ -51,7 +88,8 @@ final class FrameWriter: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
         CGImageDestinationAddImage(destination, cgImage,
                                    [kCGImageDestinationLossyCompressionQuality: 0.8] as CFDictionary)
         guard CGImageDestinationFinalize(destination) else { return }
-        FileHandle.standardOutput.write(data as Data)
+        do { try self.destination.write(contentsOf: data as Data) }
+        catch { exit(1) }
         count += 1
         if count == 1 { note("USB first frame: \(cgImage.width)x\(cgImage.height)") }
     }
@@ -69,6 +107,12 @@ final class FrameWriter: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
             RunLoop.current.run(until: Date(timeIntervalSinceNow: 1.5))
             FileHandle.standardOutput.write(try! JSONSerialization.data(withJSONObject: reader.devices))
             return
+        }
+        let arguments = CommandLine.arguments
+        if arguments.count == 5 && arguments[1] == "capture" && arguments[3] == "--socket" {
+            guard let connection = connectCaptureSocket(arguments[4]) else { exit(1) }
+            captureOutput = connection
+            _ = NSApplication.shared
         }
         let devices = phones()
         if CommandLine.arguments.contains("list") {
@@ -92,9 +136,9 @@ final class FrameWriter: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
                 DispatchQueue.main.async { granted = value; complete = true }
             }
             while !complete { RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1)) }
-            if !granted { fail("相机访问未获授权，请在系统设置的隐私与安全性中允许当前启动程序访问相机。") }
+            if !granted { fail("请在接入 iPhone 的 Mac 上允许 Midscene iPhone Capture 使用相机。") }
         } else if auth != .authorized {
-            fail("相机访问已被拒绝，请在系统设置 → 隐私与安全性 → 相机中检查权限。")
+            fail("请在 Mac 的系统设置 → 隐私与安全性 → 相机中允许 Midscene iPhone Capture。")
         }
         let session = AVCaptureSession()
         let input: AVCaptureDeviceInput
@@ -105,16 +149,21 @@ final class FrameWriter: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
         let output = AVCaptureVideoDataOutput()
         output.alwaysDiscardsLateVideoFrames = true
         output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
-        let writer = FrameWriter()
-        output.setSampleBufferDelegate(writer, queue: DispatchQueue(label: "midscene.usb.frames"))
+        let writer = FrameWriter(destination: captureOutput ?? .standardOutput)
         guard session.canAddOutput(output) else { fail("无法添加视频输出") }
         session.addOutput(output)
         let observer = NotificationCenter.default.addObserver(forName: AVCaptureSession.runtimeErrorNotification,
                                                                object: session, queue: nil) { notification in
-            note("USB capture error: \(notification.userInfo ?? [:])")
+            let error = notification.userInfo?[AVCaptureSessionErrorKey] as? NSError
+            fail(error?.localizedDescription ?? "USB capture session failed.")
         }
-        note("USB capturing: \(device.localizedName)")
-        DispatchQueue.global(qos: .userInitiated).async { session.startRunning() }
-        withExtendedLifetime((writer, observer)) { RunLoop.main.run() }
+        session.startRunning()
+        guard session.isRunning else { fail("USB capture session could not start.") }
+        if let output = captureOutput {
+            do { try output.write(contentsOf: Data("ready\n".utf8)) }
+            catch { exit(1) }
+        }
+        output.setSampleBufferDelegate(writer, queue: DispatchQueue(label: "midscene.usb.frames"))
+        withExtendedLifetime((session, writer, observer)) { RunLoop.main.run() }
     }
 }

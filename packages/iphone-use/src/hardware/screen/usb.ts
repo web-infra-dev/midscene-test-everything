@@ -1,8 +1,6 @@
-import { spawn } from 'node:child_process';
 import { CameraStream } from '@midscene/robotics-vision';
-import { JpegProcessCameraSource } from '@midscene/robotics-vision/camera/jpeg-process-camera-source';
 import sharp from 'sharp';
-import { nativeHelper } from '../native/compiler.js';
+import { openUSBCapture } from '../native/usb-capture-app.js';
 import { USBDiscoveryClient } from '../native/usb-discovery.js';
 import type { ScreenSession } from './source.js';
 import { type USBIdentity, enrichUSBDevices } from './usb-identity.js';
@@ -28,14 +26,9 @@ export function cachedUSBDevice(id: string) {
 export async function listUSBDevices(): Promise<USBDevice[]> {
   discovery ??= new USBDiscoveryClient();
   const value = (await discovery.list()) as {
-    authorization?: number;
     devices?: USBDevice[];
     identities?: unknown;
   };
-  if (value.authorization === 1 || value.authorization === 2)
-    throw new Error(
-      'macOS camera access is denied. Allow the launching application in System Settings → Privacy & Security → Camera, then reconnect.',
-    );
   if (
     !Array.isArray(value.devices) ||
     !value.devices.every(
@@ -62,16 +55,11 @@ export async function listUSBDevices(): Promise<USBDevice[]> {
 export class USBScreenSession implements ScreenSession {
   private constructor(private stream: CameraStream) {}
   static async open(deviceId: string) {
-    const helper = await nativeHelper('usb-capture');
     const stream = new CameraStream(
       deviceId,
       {
         listDevices: async () => [],
-        openStream: async () =>
-          new JpegProcessCameraSource(
-            spawn(helper, ['capture', deviceId], { stdio: 'pipe' }),
-            'iPhone USB capture',
-          ),
+        openStream: (_options, signal) => openUSBCapture(deviceId, signal),
       },
       {
         deviceId,

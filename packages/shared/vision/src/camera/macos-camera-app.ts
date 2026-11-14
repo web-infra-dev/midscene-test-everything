@@ -114,6 +114,7 @@ export async function openCameraApp(
   app: string,
   captureArgs: string[],
   cancellation?: AbortSignal,
+  appName = 'Midscene Camera',
 ): Promise<CameraSource> {
   cancellation?.throwIfAborted();
   // sockaddr_un has a short path limit. The private directory also limits
@@ -142,7 +143,7 @@ export async function openCameraApp(
     );
     launcher.once('error', (error) => exited.abort(error));
     launcher.once('exit', () =>
-      exited.abort(new Error('Could not launch Midscene Camera')),
+      exited.abort(new Error(`Could not launch ${appName}`)),
     );
     [socket] = (await connected) as [Socket];
     server.close();
@@ -184,8 +185,8 @@ export async function openCameraApp(
     if (timeoutSignal.aborted || (!socket && exited.signal.aborted))
       throw new Error(
         !socket && exited.signal.aborted
-          ? 'Midscene Camera exited before capture started'
-          : 'Timed out waiting for Midscene Camera. Check the macOS camera permission prompt.',
+          ? `${appName} exited before capture started`
+          : `Timed out waiting for ${appName}. Check the macOS camera permission prompt.`,
         { cause: error },
       );
     throw error;

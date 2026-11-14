@@ -280,7 +280,11 @@ export function BindingSetup({
     void (async () => {
       try {
         const value: Binding = await (await request(`${baseUrl}/state`)).json();
-        await request(`${baseUrl}/select`, { usbDeviceId: value.selectedUSB });
+        await request(
+          `${baseUrl}/select`,
+          { usbDeviceId: value.selectedUSB },
+          240_000,
+        );
         const next: Binding = await (await request(`${baseUrl}/state`)).json();
         if (!stopped) {
           setState(next);

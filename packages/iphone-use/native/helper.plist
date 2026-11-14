@@ -3,6 +3,5 @@
 <plist version="1.0"><dict>
 <key>CFBundleIdentifier</key><string>com.midscene.ios-hid.helper</string>
 <key>CFBundleName</key><string>Midscene iOS HID</string>
-<key>NSCameraUsageDescription</key><string>Read the connected iPhone screen for Midscene automation.</string>
 <key>NSBluetoothAlwaysUsageDescription</key><string>Control paired iPhones with a Bluetooth mouse and keyboard.</string>
 </dict></plist>
