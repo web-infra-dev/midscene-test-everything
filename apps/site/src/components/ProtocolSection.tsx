@@ -28,7 +28,10 @@ export function ProtocolSection() {
         <aside className="proto-aside">
           <div className="proto-flow mono">
             {t.protocol.flowNodes.map((node, i) => (
-              <span key={node} style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              <span
+                key={node}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
+              >
                 <span>{node}</span>
                 {i < t.protocol.flowNodes.length - 1 && (
                   <span className="proto-arrow">→</span>

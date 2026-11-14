@@ -72,13 +72,7 @@ function DockIcon({
             rx={r}
             fill="#5aa9f6"
           />
-          <rect
-            x={x + s / 2}
-            y={y}
-            width={s * 0.2}
-            height={s}
-            fill="#5aa9f6"
-          />
+          <rect x={x + s / 2} y={y} width={s * 0.2} height={s} fill="#5aa9f6" />
           <circle
             cx={c - s * 0.16}
             cy={m - s * 0.1}
@@ -287,7 +281,14 @@ export function MacBookSvg({
         </defs>
 
         <ellipse cx="200" cy="252" rx="210" ry="9" fill="url(#mb-shadow)" />
-        <rect x="19" y="0" width="362" height="232" rx="13" fill="url(#mb-lid)" />
+        <rect
+          x="19"
+          y="0"
+          width="362"
+          height="232"
+          rx="13"
+          fill="url(#mb-lid)"
+        />
         <rect
           x="20.5"
           y="1.5"
@@ -303,7 +304,14 @@ export function MacBookSvg({
           <rect x="31" y="11" width="338" height="210" fill="url(#mb-wall)" />
           <rect x="31" y="11" width="338" height="210" fill="url(#mb-glow)" />
 
-          <rect x="31" y="11" width="338" height="12" fill="#fff" opacity="0.08" />
+          <rect
+            x="31"
+            y="11"
+            width="338"
+            height="12"
+            fill="#fff"
+            opacity="0.08"
+          />
           <path
             transform="translate(39 13.2) scale(0.32)"
             fill="#f5f5f7"
@@ -313,7 +321,7 @@ export function MacBookSvg({
             Midscene
           </text>
           <text x="88" y="19.6" className="mb-menu" opacity="0.85">
-            File   Edit   View   Window
+            File Edit View Window
           </text>
           <text
             x="363"
@@ -496,12 +504,7 @@ export function MacBookSvg({
                 <g key={kind}>
                   <DockIcon kind={kind} x={x} y={198} s={s} />
                   {(kind === 'terminal' || kind === 'midscene') && (
-                    <circle
-                      cx={x + s / 2}
-                      cy={214.6}
-                      r={0.8}
-                      fill="#f5f5f7"
-                    />
+                    <circle cx={x + s / 2} cy={214.6} r={0.8} fill="#f5f5f7" />
                   )}
                 </g>
               );

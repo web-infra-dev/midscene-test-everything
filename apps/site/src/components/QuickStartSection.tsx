@@ -48,7 +48,8 @@ function ServerCodeHtml() {
       <span className="s">'Swipe'</span>, <span className="s">'Input'</span>],
       {'\n'}
       {'  '}
-      <span className="k">async</span> <span className="f">screenshot</span>() {'{\n'}
+      <span className="k">async</span> <span className="f">screenshot</span>(){' '}
+      {'{\n'}
       {'    '}
       <span className="k">return</span> {'{ '}base64:{' '}
       <span className="k">await</span> <span className="f">captureFrame</span>
@@ -91,8 +92,8 @@ function SdkCodeHtml() {
       <span className="s">'http://localhost:5801'</span>,{'\n'}
       {'  '}deviceId: process.env.OPEN_DEVICE_ID,{'\n'}
       {'});\n\n'}
-      <span className="k">await</span> agent.<span className="f">aiTap</span>
-      (<span className="s">'Tap the Allow button'</span>);{'\n'}
+      <span className="k">await</span> agent.<span className="f">aiTap</span>(
+      <span className="s">'Tap the Allow button'</span>);{'\n'}
       console.<span className="f">log</span>(<span className="k">await</span>{' '}
       agent.<span className="f">aiQuery</span>(
       <span className="s">'Summarize current screen state'</span>));{'\n\n'}
@@ -188,17 +189,15 @@ export function QuickStartSection() {
                   ? 'custom-device-server.ts'
                   : 'custom-device-agent.ts'}
               </span>
-              <button
-                className="copy-btn"
-                type="button"
-                onClick={handleCopy}
-              >
+              <button className="copy-btn" type="button" onClick={handleCopy}>
                 {copied ? t.quickStart.copied : t.quickStart.copy}
               </button>
             </div>
           </figcaption>
           <pre>
-            <code>{codeTab === 'server' ? <ServerCodeHtml /> : <SdkCodeHtml />}</code>
+            <code>
+              {codeTab === 'server' ? <ServerCodeHtml /> : <SdkCodeHtml />}
+            </code>
           </pre>
         </figure>
       )}

@@ -207,7 +207,8 @@ export function ShowcaseStage() {
 
       if (action.ensurePage && iosScreen.page !== action.ensurePage) {
         iosScreen.page = action.ensurePage;
-        iosScreen.scrollY = action.ensurePage === 'settings' && stepIndex >= 2 ? 0.14 : 0;
+        iosScreen.scrollY =
+          action.ensurePage === 'settings' && stepIndex >= 2 ? 0.14 : 0;
         iosScreen.render();
       }
 
@@ -377,14 +378,23 @@ export function ShowcaseStage() {
     const ac = new AbortController();
     runAbortRef.current = ac;
     executeAction(
-      { type: 'tap', label: `tap (${Math.round(nx * 390)}, ${Math.round(ny * 844)})`, nx, ny },
+      {
+        type: 'tap',
+        label: `tap (${Math.round(nx * 390)}, ${Math.round(ny * 844)})`,
+        nx,
+        ny,
+      },
       0,
       ac.signal,
     ).catch(() => {});
   };
 
   return (
-    <section className="instrument ticks" id="stage" aria-label="Interactive showcase">
+    <section
+      className="instrument ticks"
+      id="stage"
+      aria-label="Interactive showcase"
+    >
       <span className="tick tl" aria-hidden="true" />
       <span className="tick tr" aria-hidden="true" />
       <span className="tick bl" aria-hidden="true" />
@@ -496,6 +506,7 @@ export function ShowcaseStage() {
                 aria-hidden="true"
               >
                 <svg viewBox="0 0 120 40" className="ble-link-svg">
+                  <title>BLE HID link</title>
                   <line x1="2" y1="20" x2="118" y2="20" className="ble-track" />
                   <line x1="2" y1="20" x2="118" y2="20" className="ble-flow" />
                   <circle className="ble-pkt" r="2.2" cy="20" cx="2" />

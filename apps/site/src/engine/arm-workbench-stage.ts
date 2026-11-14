@@ -190,7 +190,10 @@ function buildStylus(glassMat: THREE.Material): {
 
   let x = 0;
   x = place(
-    new THREE.Mesh(new THREE.CylinderGeometry(0.007, 0.007, 0.008, 24), glassMat),
+    new THREE.Mesh(
+      new THREE.CylinderGeometry(0.007, 0.007, 0.008, 24),
+      glassMat,
+    ),
     0.008,
     x,
   );
@@ -470,10 +473,10 @@ export async function mountArmWorkbenchStage(
   const byName = Object.fromEntries(chain.map((j) => [j.name, j]));
   const pose: Pose = { j1: 0.0, j2: 0.18, j3: 0.62, j4: 0.0 };
 
-  const valueOf = (name: string, p: Pose = pose): number => {
+  const getJointAngle = (name: string, p: Pose = pose): number => {
     const joint = byName[name];
     if (!joint.mimic) return p[name] || 0;
-    return valueOf(joint.mimic[0], p) * joint.mimic[1];
+    return getJointAngle(joint.mimic[0], p) * joint.mimic[1];
   };
 
   const applyPose = (p: Pose = pose) => {
@@ -481,7 +484,7 @@ export async function mountArmWorkbenchStage(
       const child = groups[joint.child];
       child.quaternion.setFromAxisAngle(
         child.userData.axis as THREE.Vector3,
-        valueOf(joint.name, p),
+        getJointAngle(joint.name, p),
       );
     }
     armRoot.updateMatrixWorld(true);
@@ -628,11 +631,7 @@ export async function mountArmWorkbenchStage(
             THREE.MathUtils.smoothstep((progress - 0.2) / 0.6, 0, 1),
           );
         } else {
-          desired = lerpPoseObj(
-            p2.contact,
-            p2.hover,
-            (progress - 0.8) / 0.2,
-          );
+          desired = lerpPoseObj(p2.contact, p2.hover, (progress - 0.8) / 0.2);
         }
       } else {
         let down = 0;
@@ -640,8 +639,7 @@ export async function mountArmWorkbenchStage(
           down = THREE.MathUtils.smoothstep(progress / 0.35, 0, 1);
         else if (progress < 0.65) down = 1;
         else
-          down =
-            1 - THREE.MathUtils.smoothstep((progress - 0.65) / 0.35, 0, 1);
+          down = 1 - THREE.MathUtils.smoothstep((progress - 0.65) / 0.35, 0, 1);
         desired = lerpPoseObj(p1.hover, p1.contact, down);
       }
     }
