@@ -1,4 +1,8 @@
 import { expect, test } from '@rstest/core';
+import {
+  type CameraView,
+  cameraPreviewContext,
+} from '../src/ui/camera-preview';
 import type { PreviewScreenGeometry } from '../src/ui/preview/projection';
 import {
   createRawProjection,
@@ -31,6 +35,36 @@ const screen = (
   pixelHeight: 401,
   calibrationId: 'cal-a',
   ...overrides,
+});
+
+test('keeps screen control enabled across raw and corrected previews until the control target changes', () => {
+  const screens = [screen(), screen(90, { id: 'screen-b' })];
+  const context = (
+    view: CameraView,
+    screenId = 'screen-a',
+    targets = screens,
+  ) =>
+    cameraPreviewContext({
+      cameraId: 'camera',
+      screenId,
+      view,
+      revision: 0,
+      standalone: false,
+      connected: true,
+      session: 'installation',
+      screens: targets,
+    });
+  const raw = context('raw');
+  const corrected = context('corrected');
+  expect(corrected.previewKey).not.toBe(raw.previewKey);
+  expect(corrected.controlContext).toBe(raw.controlContext);
+  expect(context('raw').controlContext).toBe(corrected.controlContext);
+  expect(context('corrected', 'screen-b').controlContext).not.toBe(
+    raw.controlContext,
+  );
+  expect(
+    context('raw', 'screen-a', [screen(90), screens[1]]).controlContext,
+  ).not.toBe(raw.controlContext);
 });
 
 test('fits perspective foreshortening instead of a bounding box', () => {

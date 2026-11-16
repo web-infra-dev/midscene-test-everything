@@ -29,7 +29,11 @@ import {
   identifyScreen,
   usePerspectiveValidity,
 } from '../calibration';
-import { type CameraView, cameraPreviewUrl } from '../camera-preview';
+import {
+  type CameraView,
+  cameraPreviewContext,
+  cameraPreviewUrl,
+} from '../camera-preview';
 import { cameraStateLabel, useCameras } from '../cameras';
 import { useConnection } from '../connection';
 import { useViews } from '../extensions';
@@ -225,15 +229,16 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
   }, [standalone, selectedId, pausedCamera]);
   const previewTarget = activeScreen?.perspectiveTarget;
   const cameraView = previewTarget ? preferredView : 'raw';
-  const previewId = cameraView === 'corrected' ? activeScreen?.id : selectedId;
-  const previewKey = JSON.stringify([
-    previewId,
-    cameraView,
-    previewRevision,
+  const { previewId, previewKey, controlContext } = cameraPreviewContext({
+    cameraId: selectedId,
+    screenId: activeScreen?.id,
+    view: cameraView,
+    revision: previewRevision,
     standalone,
     connected,
-    setupSession,
-  ]);
+    session: setupSession,
+    screens: controlScreens,
+  });
   const running = standalone
     ? Boolean(
         selected &&
@@ -310,17 +315,6 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
       : controlScreens;
   const controlAvailable =
     !activeWizard && robotControlReady && visibleControlScreens.length > 0;
-  const controlContext = JSON.stringify([
-    previewKey,
-    visibleControlScreens.map((screen) => [
-      screen.id,
-      screen.calibrationId,
-      screen.correction,
-      screen.target,
-      screen.pixelWidth,
-      screen.pixelHeight,
-    ]),
-  ]);
   const controlEnabled = enabledControlContext === controlContext;
   const controlUnavailableReason = !connected
     ? language === 'zh'
@@ -375,7 +369,7 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
     await Promise.all([refresh(false), check(true)]);
   }, [check, refresh]);
   const previewControl = usePreviewControl({
-    contextKey: controlContext,
+    contextKey: JSON.stringify([controlContext, cameraView]),
     onCompleted: refreshAfterControl,
   });
   useEffect(() => {
