@@ -12,8 +12,6 @@ import type {
 } from '../../server/twin-types.js';
 
 const DEG = Math.PI / 180;
-const GLASS_COLOR = 0x8ef6ff;
-const DARK_BG = 0x0b0e14;
 
 /** Base millimetres, Z-up → three.js metres, Y-up. */
 function toWorld(point: { x: number; y: number; z: number }) {
@@ -76,7 +74,7 @@ function hullMaterial(resolution: THREE.Vector2) {
     depthTest: true,
     toneMapped: false,
     uniforms: {
-      uColor: { value: new THREE.Color(0xf4f1ea) },
+      uColor: { value: new THREE.Color() },
       uWidth: { value: 1.5 },
       uResolution: { value: resolution },
     },
@@ -93,7 +91,10 @@ function hullMaterial(resolution: THREE.Vector2) {
     `,
     fragmentShader: `
       uniform vec3 uColor;
-      void main() { gl_FragColor = vec4(uColor, 0.82); }
+      void main() {
+        gl_FragColor = vec4(uColor, 0.82);
+        #include <colorspace_fragment>
+      }
     `,
   });
 }
@@ -110,11 +111,8 @@ export type TwinViewPreset = 'default' | 'camera' | 'screen';
 
 export interface TwinStage {
   setJoints: (values: number[]) => void;
-  /** Align the visual tool tip to the controller's measured flange pose. */
-  alignToPose: (
-    positionMm: { x: number; y: number; z: number },
-    quaternion: { x: number; y: number; z: number; w: number },
-  ) => void;
+  /** Align the modeled flange with a stationary controller measurement. */
+  alignToPose: (positionMm: { x: number; y: number; z: number }) => void;
   setViewPreset: (preset: TwinViewPreset) => void;
   markScreenTexture: (id: string) => void;
   setActive: (active: boolean) => void;
@@ -126,8 +124,8 @@ export async function mountTwinStage(
   options: TwinStageOptions,
 ): Promise<TwinStage> {
   const { container, canvas, scene: snapshot, screenCanvases } = options;
-  const visual = snapshot.robot?.visual;
-  if (!visual) throw new Error('Robot visual model is unavailable');
+  if (!snapshot.robot) throw new Error('Robot visual model is unavailable');
+  const { visual, visualTipOffsetMm } = snapshot.robot;
 
   const renderer = new THREE.WebGLRenderer({
     canvas,
@@ -139,11 +137,22 @@ export async function mountTwinStage(
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.05;
-  renderer.setClearColor(DARK_BG, 1);
+  const themedColors: [THREE.Color, string][] = [];
+  function applyTheme() {
+    const style = getComputedStyle(container);
+    renderer.setClearColor(style.getPropertyValue('--twin-bg').trim(), 1);
+    for (const [color, token] of themedColors) {
+      color.setStyle(style.getPropertyValue(token).trim());
+    }
+  }
 
   const scene = new THREE.Scene();
   const pmrem = new THREE.PMREMGenerator(renderer);
-  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  const room = new RoomEnvironment();
+  const environment = pmrem.fromScene(room, 0.04);
+  scene.environment = environment.texture;
+  room.dispose();
+  pmrem.dispose();
 
   const camera = new THREE.PerspectiveCamera(34, 1, 0.01, 20);
   const controls = new OrbitControls(camera, canvas);
@@ -178,7 +187,6 @@ export async function mountTwinStage(
 
   const resolution = new THREE.Vector2(1, 1);
   const lineMaterial = new LineMaterial({
-    color: 0xd8f8ff,
     linewidth: 1.2,
     transparent: true,
     opacity: 0.8,
@@ -191,14 +199,35 @@ export async function mountTwinStage(
   lineMaterial.polygonOffsetUnits = -4;
 
   const glass = new THREE.MeshBasicMaterial({
-    color: GLASS_COLOR,
     transparent: true,
     opacity: 0.18,
     depthWrite: true,
     toneMapped: false,
   });
   const outline = hullMaterial(resolution);
-  const cameraMaterials: THREE.Material[] = [];
+  themedColors.push(
+    [lineMaterial.color, '--twin-edge'],
+    [glass.color, '--twin-fill'],
+    [outline.uniforms.uColor.value, '--twin-outline'],
+  );
+  const screenTextures = new Map<string, THREE.CanvasTexture>();
+  const disposeScene = () => {
+    controls.dispose();
+    for (const texture of screenTextures.values()) texture.dispose();
+    const geometries = new Set<THREE.BufferGeometry>();
+    const materials = new Set<THREE.Material>([glass, outline, lineMaterial]);
+    scene.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (mesh.geometry) geometries.add(mesh.geometry);
+      if (Array.isArray(mesh.material)) {
+        for (const material of mesh.material) materials.add(material);
+      } else if (mesh.material) materials.add(mesh.material);
+    });
+    for (const geometry of geometries) geometry.dispose();
+    for (const material of materials) material.dispose();
+    environment.dispose();
+    renderer.dispose();
+  };
 
   const robotRoot = new THREE.Group();
   robotRoot.rotation.x = -Math.PI / 2;
@@ -224,7 +253,12 @@ export async function mountTwinStage(
     (parent ?? robotRoot).add(group);
     groups.set(link.name, group);
     if (!link.mesh) continue;
-    const raw = await loader.loadAsync(`${visual.assetBaseUrl}${link.mesh}`);
+    const raw = await loader
+      .loadAsync(`${visual.assetBaseUrl}${link.mesh}`)
+      .catch((error) => {
+        disposeScene();
+        throw error;
+      });
     const geometry = mergeVertices(raw, 1e-5);
     raw.dispose();
     geometry.computeVertexNormals();
@@ -253,7 +287,6 @@ export async function mountTwinStage(
   // pen's tip is driven by the tool profile, so adjusting the real pen changes
   // the slide, never the STL length.
   const mount = groups.get(visual.toolMountLink) ?? groups.get('link5');
-  const tool = snapshot.tool;
   const mountOffsetMm = visual.toolMountOffsetMm ?? [0, 0, 0];
   if (mount) {
     const addToolPart = (
@@ -322,10 +355,12 @@ export async function mountTwinStage(
       if (!penBox) throw new Error('Empty pen');
       const penLength = penBox.max.z - penBox.min.z;
       pen.translate(0, 0, -penBox.max.z); // top at 0, nib at -penLength
-      const offsetZ = Math.abs(tool?.offsetMm.z ?? 0) / 1000;
-      const tipZ = mountZ - (offsetZ > 0.02 ? offsetZ : 0.115);
       const penGroup = new THREE.Group();
-      penGroup.position.z = tipZ + penLength;
+      penGroup.position.set(
+        (mountOffsetMm[0] + visualTipOffsetMm.x) / 1000,
+        (mountOffsetMm[1] + visualTipOffsetMm.y) / 1000,
+        mountZ + visualTipOffsetMm.z / 1000 + penLength,
+      );
       addToolPart(pen, penGroup);
       mount.add(penGroup);
     } catch (error) {
@@ -335,7 +370,6 @@ export async function mountTwinStage(
   }
 
   // Screens: one slab per calibrated screen, textured with its corrected stream.
-  const screenTextures = new Map<string, THREE.CanvasTexture>();
   for (const screen of snapshot.screens) {
     const group = new THREE.Group();
     group.matrixAutoUpdate = false;
@@ -391,18 +425,67 @@ export async function mountTwinStage(
     const border = new THREE.LineSegments(
       new THREE.EdgesGeometry(bodyGeometry),
       new THREE.LineBasicMaterial({
-        color: 0x8ef6ff,
         transparent: true,
         opacity: 0.45,
         toneMapped: false,
       }),
     );
+    themedColors.push([border.material.color, '--twin-edge']);
     group.add(border);
   }
 
   // Static camera prop: the pose is estimated from the screen quads, and the
   // body-only asset drops the folded stand that is not part of the real mount.
   if (cameraProp) {
+    const pose = new THREE.Group();
+    pose.position.copy(cameraProp.positionMm).multiplyScalar(0.001);
+    pose.quaternion.copy(cameraProp.quaternion);
+    const baseRoot = new THREE.Group();
+    baseRoot.rotation.x = -Math.PI / 2;
+    baseRoot.add(pose);
+    scene.add(baseRoot);
+    cameraPropRoot = baseRoot;
+
+    const corners = cameraProp.frameCornersMm.map((p) =>
+      new THREE.Vector3(p.x, p.y, p.z).multiplyScalar(0.001),
+    );
+    const lens = new THREE.Vector3();
+    const segments = corners.flatMap((corner, i) => [
+      lens,
+      corner,
+      corner,
+      corners[(i + 1) % corners.length],
+    ]);
+    const boundary = new THREE.LineBasicMaterial({
+      transparent: true,
+      opacity: 0.65,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const footprint = new THREE.MeshBasicMaterial({
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.07,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+      toneMapped: false,
+    });
+    themedColors.push(
+      [boundary.color, '--twin-accent'],
+      [footprint.color, '--twin-accent'],
+    );
+    const area = new THREE.BufferGeometry().setFromPoints(corners);
+    area.setIndex([0, 1, 2, 0, 2, 3]);
+    pose.add(
+      new THREE.Mesh(area, footprint),
+      new THREE.LineSegments(
+        new THREE.BufferGeometry().setFromPoints(segments),
+        boundary,
+      ),
+    );
+
     try {
       const raw = await loader.loadAsync(cameraProp.modelUrl);
       // This STL is in millimetres; the arm links are in metres. Weld at
@@ -418,20 +501,17 @@ export async function mountTwinStage(
         side: THREE.DoubleSide,
       });
       const edgeMaterial = new THREE.LineBasicMaterial({
-        color: 0x9fd8e4,
         transparent: true,
         opacity: 0.35,
         toneMapped: false,
       });
       const ringMaterial = new THREE.MeshBasicMaterial({
-        color: 0x8ef6ff,
         transparent: true,
         opacity: 0.95,
         toneMapped: false,
         side: THREE.DoubleSide,
       });
       const haloMaterial = new THREE.MeshBasicMaterial({
-        color: 0x8ef6ff,
         transparent: true,
         opacity: 0.28,
         toneMapped: false,
@@ -439,11 +519,10 @@ export async function mountTwinStage(
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       });
-      cameraMaterials.push(
-        bodyMaterial,
-        edgeMaterial,
-        ringMaterial,
-        haloMaterial,
+      themedColors.push(
+        [edgeMaterial.color, '--twin-edge'],
+        [ringMaterial.color, '--twin-accent'],
+        [haloMaterial.color, '--twin-accent'],
       );
 
       const body = new THREE.Mesh(geometry, bodyMaterial);
@@ -458,52 +537,22 @@ export async function mountTwinStage(
       const edges = new THREE.EdgesGeometry(geometry, 65);
       body.add(new THREE.LineSegments(edges, edgeMaterial));
 
-      const pose = new THREE.Group();
-      pose.position.set(
-        cameraProp.positionMm.x / 1000,
-        cameraProp.positionMm.y / 1000,
-        cameraProp.positionMm.z / 1000,
-      );
-      pose.quaternion.set(
-        cameraProp.quaternion.x,
-        cameraProp.quaternion.y,
-        cameraProp.quaternion.z,
-        cameraProp.quaternion.w,
-      );
-      // Keep the lens face towards the default orbit; the estimated optical
-      // axis stays in the snapshot and this is a presentation-only flip.
-      pose.quaternion.multiply(
-        new THREE.Quaternion().setFromAxisAngle(
-          new THREE.Vector3(0, 0, 1),
-          Math.PI,
-        ),
-      );
       pose.add(body);
 
-      // A small lens face makes the body read as a camera in the dark glass
-      // scene; the mesh alone is mostly hood and perforated grille.
+      // The STL bezel faces +Y. Its annular lip starts at a 9.7 mm
+      // radius; both bands share the front plane at the lens anchor.
       const ring = new THREE.Mesh(
-        new THREE.RingGeometry(0.0105, 0.012, 48),
+        new THREE.RingGeometry(0.0098, 0.0103, 64),
         ringMaterial,
       );
       ring.rotation.x = -Math.PI / 2;
-      // Float the halo clear of the lens bezel; at the lens plane the body
-      // shell occludes most of it from the default orbit.
-      ring.position.y = 0.0085;
       pose.add(ring);
-      const halo = new THREE.Mesh(
-        new THREE.RingGeometry(0.012, 0.0132, 48),
-        haloMaterial,
+      ring.add(
+        new THREE.Mesh(
+          new THREE.RingGeometry(0.0103, 0.0107, 64),
+          haloMaterial,
+        ),
       );
-      halo.rotation.x = -Math.PI / 2;
-      halo.position.y = 0.0087;
-      pose.add(halo);
-
-      const baseRoot = new THREE.Group();
-      baseRoot.rotation.x = -Math.PI / 2;
-      baseRoot.add(pose);
-      scene.add(baseRoot);
-      cameraPropRoot = baseRoot;
     } catch (error) {
       // The camera is a presentation prop; arm and screens must still render.
       console.warn('Twin camera asset could not be loaded', error);
@@ -513,25 +562,39 @@ export async function mountTwinStage(
   }
 
   const gridY = (centers[0]?.y ?? -0.2) - 0.03;
-  const grid = new THREE.GridHelper(1.2, 24, 0x2b3a4a, 0x18222c);
+  const grid = new THREE.GridHelper(1.2, 24, 0xc4c4c4, 0xffffff);
   grid.position.y = gridY;
   (grid.material as THREE.Material).transparent = true;
   (grid.material as THREE.Material).opacity = 0.5;
+  themedColors.push([grid.material.color, '--twin-grid']);
   scene.add(grid);
 
+  const scheme = window.matchMedia('(prefers-color-scheme: dark)');
+  const themeObserver = new MutationObserver(applyTheme);
+  for (
+    let node: HTMLElement | null = container;
+    node;
+    node = node.parentElement
+  ) {
+    themeObserver.observe(node, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    });
+  }
+  scheme.addEventListener('change', applyTheme);
+  applyTheme();
+
   const DEFAULT_FOV = 34;
-  // The C922 fit uses a 1500 px focal at 1920 wide, so its horizontal FOV is
-  // about 65°. Keep that horizontal framing and derive the vertical FOV from
-  // the split column's aspect instead of stretching the camera image.
-  const CAMERA_HORIZONTAL_FOV = 2 * Math.atan(960 / 1500);
   let cameraMode = false;
   const screenUp = snapshot.screens.length
     ? toWorld(snapshot.screens[0].yAxis).normalize().negate()
     : new THREE.Vector3(0, 0, -1);
   const applyCameraViewFov = () => {
+    if (!cameraProp) return;
+    const topRight = cameraProp.frameCornersMm[1];
     const aspect = camera.aspect || 1;
     camera.fov = THREE.MathUtils.radToDeg(
-      2 * Math.atan(Math.tan(CAMERA_HORIZONTAL_FOV / 2) / aspect),
+      2 * Math.atan(Math.max(topRight.z, topRight.x / aspect) / topRight.y),
     );
     camera.updateProjectionMatrix();
   };
@@ -605,7 +668,7 @@ export async function mountTwinStage(
     if (cameraMode) applyCameraViewFov();
     else camera.updateProjectionMatrix();
     renderer.setSize(width, height, false);
-    if (!fitted && width > 240 && height > 260) {
+    if (!cameraMode && !fitted && width > 240 && height > 260) {
       // A split column is narrower than a full-width stage; pull back once so
       // the base and both slabs fit without the operator having to zoom out.
       const aspect = width / height;
@@ -661,15 +724,6 @@ export async function mountTwinStage(
         cameraProp.quaternion.y,
         cameraProp.quaternion.z,
         cameraProp.quaternion.w,
-      );
-      // The body asset's lens is on its -Y side; the prop is flipped 180° about
-      // its up axis so the lens faces the scene. Use the same flipped frame for
-      // the optical view, otherwise the camera looks away from the screens.
-      quaternion.multiply(
-        new THREE.Quaternion().setFromAxisAngle(
-          new THREE.Vector3(0, 0, 1),
-          Math.PI,
-        ),
       );
       const forward = toWorldDirection(
         new THREE.Vector3(0, 1, 0).applyQuaternion(quaternion),
@@ -729,39 +783,21 @@ export async function mountTwinStage(
         if (Number.isFinite(value)) targetJoints[index] = value * DEG;
       }
     },
-    alignToPose(positionMm, quaternion) {
-      const mount = groups.get(visual.toolMountLink);
-      if (!mount) return;
-      const offset = snapshot.tool?.offsetMm ?? { x: 0, y: 0, z: 0 };
-      const orientation = new THREE.Quaternion(
-        quaternion.x,
-        quaternion.y,
-        quaternion.z,
-        quaternion.w,
-      );
-      const tipOffset = new THREE.Vector3(
-        offset.x,
-        offset.y,
-        offset.z,
-      ).applyQuaternion(orientation);
-      const measured = toWorld({
-        x: positionMm.x + tipOffset.x,
-        y: positionMm.y + tipOffset.y,
-        z: positionMm.z + tipOffset.z,
-      });
+    alignToPose(positionMm) {
+      if (aligned || !mount) return;
+      // Fit using the received joint angles, before any display interpolation.
+      for (let i = 0; i < currentJoints.length; i++)
+        currentJoints[i] = targetJoints[i];
+      applyJoints();
+      const measured = toWorld(positionMm);
       const current = mount.localToWorld(
-        new THREE.Vector3(
-          (offset.x + mountOffsetMm[0]) / 1000,
-          (offset.y + mountOffsetMm[1]) / 1000,
-          (offset.z + mountOffsetMm[2]) / 1000,
-        ),
+        new THREE.Vector3(...mountOffsetMm).multiplyScalar(0.001),
       );
       const delta = measured.sub(current);
       if (!Number.isFinite(delta.length()) || delta.length() > 0.6) return;
       // The URDF base frame and the controller's Base frame differ by a constant
       // mount offset. Align once from an idle measured pose; re-applying the
       // correction while the arm moves would make the base chase the tool.
-      if (aligned) return;
       robotRoot.position.add(delta);
       robotRoot.updateMatrixWorld(true);
       // The measured base is the table; keep the reference grid on it rather
@@ -799,21 +835,12 @@ export async function mountTwinStage(
       applyViewPreset('default');
     },
     dispose() {
+      themeObserver.disconnect();
+      scheme.removeEventListener('change', applyTheme);
       observer.disconnect();
       canvas.removeEventListener('webglcontextlost', onLost);
       renderer.setAnimationLoop(null);
-      controls.dispose();
-      for (const texture of screenTextures.values()) texture.dispose();
-      scene.traverse((object) => {
-        const mesh = object as THREE.Mesh;
-        mesh.geometry?.dispose?.();
-      });
-      glass.dispose();
-      outline.dispose();
-      lineMaterial.dispose();
-      for (const material of cameraMaterials) material.dispose();
-      pmrem.dispose();
-      renderer.dispose();
+      disposeScene();
     },
   };
 }

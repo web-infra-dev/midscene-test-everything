@@ -1384,12 +1384,29 @@ export async function startPlaygroundHost({
       if (url.pathname === '/api/cameras/frame' && req.method === 'GET') {
         const id = url.searchParams.get('id');
         if (!id) return send(400, { error: 'Camera id is required' });
+        const view = url.searchParams.get('view') ?? 'raw';
+        if (view !== 'raw' && view !== 'corrected')
+          return send(400, { error: 'Unknown camera view' });
         let jpeg: Buffer;
         if (devices) {
-          const entry = devices.entries.get(id);
-          if (!entry) return send(404, { error: 'Camera is not running' });
-          jpeg = await entry.camera.rawFrame();
+          const screen =
+            view === 'corrected' ? url.searchParams.get('screen') : null;
+          const entry = devices.entries.get(screen ?? id);
+          if (!entry || (screen && entry.cameraId !== id))
+            return send(404, { error: 'Camera or screen is not running' });
+          const frame = await entry.camera.rawFrame();
+          jpeg =
+            view === 'corrected'
+              ? await entry.camera.rectifiedFrame(frame, {
+                  maxSide: 480,
+                  sampling: 'nearest',
+                })
+              : frame;
         } else {
+          if (view === 'corrected')
+            return send(409, {
+              error: 'Connect the device for a corrected frame',
+            });
           if (req.headers['sec-fetch-site'] === 'cross-site')
             return send(403, { error: 'Open camera previews in Playground' });
           const owner = randomUUID();

@@ -107,7 +107,7 @@
 .robot-phone-card.arco-card {
   width: min(100%, 484px);
   overflow: hidden;
-  border: 1px solid #d8e1ea;
+  border: 1px solid var(--rv-border);
   border-radius: 18px;
   box-shadow: 0 12px 36px -18px #203c5c55;
   .arco-card-body {
@@ -120,7 +120,7 @@
 .robot-phone-scan {
   --scan-accent: #77a8d3;
   --ripple: #7eabd32b;
-  --wash: #eaf3fc;
+  --wash: light-dark(#eaf3fc, #223545);
   position: relative;
   isolation: isolate;
   overflow: hidden;
@@ -128,7 +128,11 @@
   justify-items: center;
   gap: 23px;
   padding: 26px 16px 32px;
-  background: radial-gradient(ellipse at 50% 65%, white, var(--wash) 85%);
+  background: radial-gradient(
+    ellipse at 50% 65%,
+    var(--midscene-surface),
+    var(--wash) 85%
+  );
   &::before {
     content: '';
     position: absolute;
@@ -148,7 +152,7 @@
   }
   h4.arco-typography {
     margin: 0;
-    color: #233c51;
+    color: var(--rv-text);
     font-size: 21px;
     font-weight: 600;
   }
@@ -191,15 +195,15 @@
   }
   .robot-phone-success {
     font-size: 50px;
-    color: #218463;
+    color: var(--rv-success);
     padding: 15px;
     box-sizing: content-box;
     border-radius: 50%;
-    background: #e8f5ee;
+    background: light-dark(#e8f5ee, #254236);
   }
 }
 .robot-phone-card[data-connected='true'] .robot-phone-scan {
-  --wash: #e9f5ef;
+  --wash: light-dark(#e9f5ef, #213b33);
   --ripple: #6fa78e30;
   .robot-phone-code {
     background: transparent;
@@ -214,7 +218,7 @@
   justify-items: center;
   gap: 9px;
   text-align: center;
-  color: #42576a;
+  color: var(--rv-text-secondary);
   .robot-phone-tags {
     display: flex;
     align-items: center;
@@ -224,8 +228,8 @@
     justify-content: center;
   }
   .arco-tag {
-    background: #ffffffd9;
-    color: #314d5d;
+    background: var(--midscene-surface);
+    color: var(--rv-text);
     border-radius: 6px;
     max-width: 100%;
     overflow-wrap: anywhere;
@@ -234,12 +238,12 @@
   }
 }
 .robot-phone-card[data-phone-state='paused'] .robot-phone-scan {
-  --wash: #fbf3e2;
+  --wash: light-dark(#fbf3e2, #3b3327);
   --ripple: #bc974b29;
   --scan-accent: #be9444;
 }
 .robot-phone-card[data-phone-state='reconnecting'] .robot-phone-scan {
-  --wash: #eef0f8;
+  --wash: light-dark(#eef0f8, #2e3348);
   --scan-accent: #8e99c4;
 }
 .robot-phone-address {
@@ -259,16 +263,16 @@
     width: 34px;
     height: 34px;
     margin: 0;
-    color: #426684;
+    color: var(--rv-text-secondary);
     &:hover {
-      background: #edf4fb;
+      background: var(--midscene-surface-muted);
     }
   }
   details {
     grid-column: 1 / -1;
   }
   code {
-    color: #344e62;
+    color: var(--rv-text);
     overflow-wrap: anywhere;
     user-select: all;
     font:
@@ -278,7 +282,7 @@
   details {
     margin-top: 2px;
     font-size: 12px;
-    color: var(--color-text-3);
+    color: var(--rv-text-secondary);
   }
   summary {
     cursor: pointer;
@@ -292,9 +296,9 @@
 .robot-exploration-progress {
   padding: 16px 20px;
   margin: 16px 0;
-  border: 1px solid #d5e8e1;
+  border: 1px solid var(--rv-border);
   border-radius: 12px;
-  background: #f5faf8;
+  background: light-dark(#f5faf8, #20332e);
   .robot-web-actions {
     margin: 0 0 8px;
   }
@@ -360,11 +364,6 @@
 }
 
 .arm-calibration-panel {
-  --rv-border: #e5e7eb;
-  --rv-text-secondary: #6b7280;
-  --rv-accent: #2f80ff;
-  --midscene-surface: #fff;
-  --midscene-surface-muted: #f5f6f8;
   display: flex;
   flex-direction: column;
   gap: 24px;
@@ -405,7 +404,7 @@
 }
 
 .robot-field-error {
-  color: #ff4d4f;
+  color: var(--rv-error);
   font-size: 12px;
 }
 
@@ -472,7 +471,7 @@
   .camera-corner-frame {
     position: relative;
     width: 100%;
-    background: #f5f5f5;
+    background: var(--midscene-surface-muted);
   }
   img {
     display: block;
@@ -531,6 +530,9 @@
 }
 
 .robot-setup-illustration {
+  --diagram-blue-wash: light-dark(#e9effb, #293a50);
+  --diagram-forbidden: light-dark(#fbeaec, #422c34);
+  --diagram-allowed: light-dark(#eaf4f1, #223b36);
   display: block;
   width: 100%;
   height: auto;
@@ -609,7 +611,7 @@
     place-items: center;
     height: clamp(170px, 38dvh, 390px);
     padding: 12px;
-    background: #f5f6f8;
+    background: var(--midscene-surface-muted);
     container-type: size;
   }
   .camera-corner-editor {
@@ -700,10 +702,10 @@
   font-size: 12px;
   line-height: 18px;
   .is-warning {
-    color: #925a0b;
+    color: var(--rv-warning);
   }
   .is-success {
-    color: #237748;
+    color: var(--rv-success);
   }
   .ant-btn {
     font-size: inherit;
@@ -731,7 +733,7 @@
 }
 .robot-exploration-diagnostics {
   margin-top: 12px;
-  color: #64748b;
+  color: var(--rv-text-secondary);
   font-size: 13px;
 }
 .robot-exploration-diagnostics summary {
@@ -741,7 +743,7 @@
 .robot-touch-diagnostics {
   margin-bottom: 16px;
   padding: 12px;
-  background: #f6f8fa;
+  background: var(--midscene-surface-muted);
   border-radius: 8px;
   summary {
     cursor: pointer;
@@ -754,7 +756,7 @@
   th,
   td {
     padding: 5px 8px;
-    border-bottom: 1px solid #e5e7eb;
+    border-bottom: 1px solid var(--rv-border);
   }
 }
 

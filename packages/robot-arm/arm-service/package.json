@@ -57,7 +57,13 @@
       "import": "./dist/server/index.js"
     }
   },
-  "files": ["dist/server", "dist/ui", "src/ui", "dist/cli"],
+  "files": [
+    "dist/server",
+    "dist/ui",
+    "src/ui",
+    "src/server/twin-types.ts",
+    "dist/cli"
+  ],
   "bin": {
     "arm-service": "dist/cli/index.js"
   }

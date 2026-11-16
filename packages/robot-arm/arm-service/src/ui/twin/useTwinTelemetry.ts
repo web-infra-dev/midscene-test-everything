@@ -1,74 +1,51 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect } from 'react';
 import type {
   TwinMotionMessage,
   TwinStateMessage,
 } from '../../server/twin-types.js';
+import type { TwinStage } from './engine';
 
-export interface TwinTelemetryStatus {
-  connection: 'connecting' | 'live' | 'reconnecting';
-  /** True once at least one 30004-backed joint sample arrived. */
-  hasJoints: boolean;
-  state?: TwinStateMessage;
-}
-
-/**
- * One SSE stream per panel. Joint samples never enter React state: the caller
- * writes them straight into the three.js controller so a 30 Hz stream does not
- * re-render the page.
- */
-export function useTwinTelemetry(
-  onSample: (sample: TwinMotionMessage) => void,
-): TwinTelemetryStatus {
-  const [status, setStatus] = useState<TwinTelemetryStatus>({
-    connection: 'connecting',
-    hasJoints: false,
-  });
-  const sampleHandler = useRef(onSample);
+/** Subscribe after the meshes are ready so the initial joint sample is applied. */
+export function useTwinTelemetry(stage: TwinStage | undefined) {
   useEffect(() => {
-    sampleHandler.current = onSample;
-  }, [onSample]);
-
-  useEffect(() => {
+    if (!stage) return;
+    let hasFreshJoints = false;
     const source = new EventSource('/api/twin/stream');
-    const onOpen = () =>
-      setStatus((current) => ({ ...current, connection: 'live' }));
-    const onError = () =>
-      setStatus((current) => ({ ...current, connection: 'reconnecting' }));
-    const onSampleMessage = (event: MessageEvent<string>) => {
+    source.onopen = () => {
+      hasFreshJoints = false;
+    };
+    const sample = (event: MessageEvent<string>) => {
       try {
-        const message = JSON.parse(event.data) as TwinMotionMessage;
-        if (message.type !== 'sample') return;
-        sampleHandler.current(message);
-        setStatus((current) =>
-          current.hasJoints
-            ? current
-            : { ...current, hasJoints: true, connection: 'live' },
-        );
+        const data = JSON.parse(event.data) as TwinMotionMessage;
+        if (data.type !== 'sample') return;
+        hasFreshJoints = !data.stale;
+        stage.setJoints(data.joints);
       } catch {
-        // Ignore a malformed frame; the next sample is authoritative.
+        // Ignore a malformed sample and wait for the next one.
       }
     };
-    const onStateMessage = (event: MessageEvent<string>) => {
+    const state = (event: MessageEvent<string>) => {
       try {
-        const message = JSON.parse(event.data) as TwinStateMessage;
-        if (message.type !== 'state') return;
-        setStatus((current) => ({ ...current, state: message }));
+        const data = JSON.parse(event.data) as TwinStateMessage;
+        if (
+          data.type === 'state' &&
+          data.pose &&
+          data.connected &&
+          !data.stale &&
+          !data.moving &&
+          hasFreshJoints
+        )
+          stage.alignToPose(data.pose.positionMm);
       } catch {
-        // Ignore.
+        // Ignore a malformed state message.
       }
     };
-    source.addEventListener('open', onOpen);
-    source.addEventListener('error', onError);
-    source.addEventListener('sample', onSampleMessage as EventListener);
-    source.addEventListener('state', onStateMessage as EventListener);
+    source.addEventListener('sample', sample as EventListener);
+    source.addEventListener('state', state as EventListener);
     return () => {
-      source.removeEventListener('open', onOpen);
-      source.removeEventListener('error', onError);
-      source.removeEventListener('sample', onSampleMessage as EventListener);
-      source.removeEventListener('state', onStateMessage as EventListener);
+      source.removeEventListener('sample', sample as EventListener);
+      source.removeEventListener('state', state as EventListener);
       source.close();
     };
-  }, []);
-
-  return status;
+  }, [stage]);
 }

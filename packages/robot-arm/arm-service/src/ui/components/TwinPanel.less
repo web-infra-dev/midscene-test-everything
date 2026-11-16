@@ -1,6 +1,17 @@
-// The workspace is always a split: the camera and the 3D twin sit side by side
-// as two equal dark viewports, with no mode switch.
+:root,
+[data-theme='light'] {
+  --twin-bg: #f5f8fa;
+  --twin-fill: #76a8be;
+  --twin-edge: #45697e;
+  --twin-outline: #304e62;
+  --twin-grid: #c5d2da;
+  --twin-accent: #297496;
+  --twin-muted: #526774;
+  --twin-error: #ae292f;
+}
+
 .workspace-views {
+  --rv-preview-bg: var(--twin-bg);
   display: grid;
   flex: 1;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -8,6 +19,27 @@
   gap: 12px;
   min-width: 0;
   min-height: 0;
+}
+
+.dark-viewports() {
+  --twin-bg: #10171e;
+  --twin-fill: #8ef6ff;
+  --twin-edge: #d8f8ff;
+  --twin-outline: #dae9ee;
+  --twin-grid: #344452;
+  --twin-accent: #8bdbea;
+  --twin-muted: #bdcbd5;
+  --twin-error: #ffb6ba;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    .dark-viewports();
+  }
+}
+
+[data-theme='dark'] {
+  .dark-viewports();
 }
 
 @media (max-width: 1180px) {
@@ -28,7 +60,7 @@
   overflow: hidden;
   border: 1px solid var(--rv-border, rgb(15 23 42 / 10%));
   border-radius: 12px;
-  background: #0b0e14;
+  background: var(--twin-bg);
 }
 
 .camera-frame .camera-stage-preview {
@@ -36,7 +68,7 @@
   min-height: 0;
   border: 0;
   border-radius: 0;
-  background: #0b0e14;
+  background: var(--twin-bg);
 }
 
 .camera-frame .camera-rail {
@@ -44,28 +76,15 @@
   grid-auto-columns: 112px;
   gap: 8px;
   padding: 8px 10px;
-  border-top: 1px solid rgb(255 255 255 / 8%);
-  background: #0b0e14;
-  color: #cbd5e1;
+  border-top: 1px solid var(--rv-border);
+  background: var(--midscene-surface);
+  color: var(--twin-muted);
 }
 
-.camera-frame .camera-rail-item {
-  border-color: rgb(255 255 255 / 10%);
-  background: rgb(255 255 255 / 4%);
-  color: #e5e7eb;
+.camera-frame .ant-empty-description {
+  color: var(--twin-muted);
 }
 
-.camera-frame .camera-rail-item:hover {
-  background: rgb(255 255 255 / 8%);
-}
-
-.camera-frame .camera-rail-item.is-active {
-  border-color: #8ef6ff;
-  box-shadow: 0 0 0 1px #8ef6ff;
-}
-
-/* The 3D viewport keeps the original dark glass look: it is the same kind of
-   dark surface as the camera image, framed by the light workspace. */
 .twin-panel {
   position: relative;
   display: flex;
@@ -75,7 +94,7 @@
   overflow: hidden;
   border: 1px solid var(--rv-border, rgb(15 23 42 / 10%));
   border-radius: 12px;
-  background: #0b0e14;
+  background: var(--twin-bg);
 }
 
 .twin-stage {
@@ -83,7 +102,7 @@
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  background: #0b0e14;
+  background: var(--twin-bg);
 
   canvas {
     display: block;
@@ -102,13 +121,13 @@
   align-items: center;
   justify-content: center;
   padding: 32px;
-  color: #cbd5e1;
-  background: #0b0e14;
+  color: var(--twin-muted);
+  background: var(--twin-bg);
   text-align: center;
 
   .ant-empty-description,
   .ant-typography {
-    color: #cbd5e1;
+    color: var(--twin-muted);
   }
 }
 
@@ -117,7 +136,7 @@
   gap: 6px;
   margin: 0;
   padding: 0;
-  color: #cbd5e1;
+  color: var(--twin-muted);
   font-size: 13px;
   list-style: none;
 
@@ -134,10 +153,10 @@
   top: 50%;
   left: 50%;
   padding: 8px 14px;
-  border: 1px solid rgb(142 246 255 / 24%);
+  border: 1px solid var(--rv-border);
   border-radius: 999px;
-  color: #d8f8ff;
-  background: rgb(6 10 14 / 78%);
+  color: var(--twin-edge);
+  background: var(--midscene-surface);
   font-size: 12px;
   transform: translate(-50%, -50%);
 
@@ -145,7 +164,7 @@
     max-width: min(560px, 80vw);
     border-color: rgb(255 120 120 / 40%);
     border-radius: 10px;
-    color: #ffd0d0;
+    color: var(--twin-error);
     text-align: center;
   }
 }

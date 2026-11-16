@@ -841,7 +841,17 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
                 </Typography.Text>
               )}
             </section>
-            <TwinPanel connected={connected} viewPreset={twinView} />
+            <TwinPanel
+              key={JSON.stringify([
+                setupSession,
+                previewRevision,
+                cameras
+                  .filter((entry) => entry.stream?.state === 'running')
+                  .map((entry) => entry.id),
+              ])}
+              connected={robotReady}
+              viewPreset={twinView}
+            />
           </div>
         </main>
       ) : (

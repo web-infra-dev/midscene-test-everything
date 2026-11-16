@@ -198,7 +198,7 @@ function MarkerDialog({
         (page && ['waiting', 'reconnecting'].includes(page.state))) &&
         (url ? (
           <Space wrap align="center">
-            <QRCode value={url} size={148} />
+            <QRCode color="#17212b" bgColor="#fff" value={url} size={148} />
             <Space direction="vertical">
               <Typography.Text>
                 {zh

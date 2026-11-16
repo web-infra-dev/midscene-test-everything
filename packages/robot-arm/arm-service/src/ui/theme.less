@@ -1,0 +1,31 @@
+:root {
+  color-scheme: light dark;
+}
+
+:root,
+[data-theme] {
+  --rv-text: light-dark(#242b34, #edf3f7);
+  --rv-text-secondary: light-dark(#586474, #b5c2cf);
+  --midscene-text-tertiary: light-dark(#616f7f, #9bacbc);
+  --rv-border: light-dark(#e3e8ed, #35424e);
+  --midscene-surface: light-dark(#fff, #18222b);
+  --midscene-surface-muted: light-dark(#f2f4f7, #202c37);
+  --midscene-surface-hover: light-dark(#f7f8fa, #293744);
+  --rv-page: light-dark(#f7f8fa, #10171e);
+  --midscene-accent: light-dark(#2b83ff, #77bdff);
+  --rv-error: light-dark(#bf373f, #ff939a);
+  --rv-success: light-dark(#216f45, #81d4a9);
+  --rv-warning: light-dark(#925a0b, #edc077);
+  --rv-accent: var(--midscene-accent);
+  --rv-preview-bg: var(--midscene-surface-muted);
+  --rv-outline: var(--midscene-accent);
+  --midscene-text-primary: var(--rv-text);
+  --midscene-text-secondary: var(--rv-text-secondary);
+}
+
+[data-theme='light'] {
+  color-scheme: light;
+}
+[data-theme='dark'] {
+  color-scheme: dark;
+}

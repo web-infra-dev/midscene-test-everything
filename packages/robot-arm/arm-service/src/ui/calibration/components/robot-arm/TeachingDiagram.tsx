@@ -81,14 +81,21 @@ export function TeachingDiagram({
       </text>
       {boundary ? (
         <>
-          <rect x="28" y="66" width="584" height="108" rx="12" fill="#fbeaec" />
+          <rect
+            x="28"
+            y="66"
+            width="584"
+            height="108"
+            rx="12"
+            fill="var(--diagram-forbidden)"
+          />
           <rect
             x="28"
             y="184"
             width="584"
             height="186"
             rx="12"
-            fill="#eaf4f1"
+            fill="var(--diagram-allowed)"
           />
           <g filter={`url(#${id}-shadow)`}>
             <rect
@@ -133,7 +140,7 @@ export function TeachingDiagram({
             x="49"
             y="110"
             className="setup-art-small"
-            style={{ fill: '#a64d58' }}
+            style={{ fill: 'var(--rv-error)' }}
           >
             {t('Forbidden side')}
           </text>
@@ -185,7 +192,7 @@ export function TeachingDiagram({
             x="49"
             y="347"
             className="setup-art-small"
-            style={{ fill: '#32806f' }}
+            style={{ fill: 'var(--rv-success)' }}
           >
             {t('Allowed side')}
           </text>

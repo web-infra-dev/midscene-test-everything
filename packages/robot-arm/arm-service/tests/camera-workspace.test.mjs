@@ -103,8 +103,31 @@ test('a preview hands its camera and geometry to the connected workspace and rej
         await post('/api/screens', { cameraId: id, name: 'Right' }),
       );
       await checked(
-        await post('/api/cameras/correction', { ...edit, session, screen }),
+        await post('/api/cameras/correction', {
+          ...edit,
+          session,
+          screen,
+          perspectiveTarget: { width: 240, height: 320, rotation: 90 },
+        }),
       );
+      for (const [target, width, height] of [
+        [id, 336, 480],
+        [screen, 240, 320],
+      ]) {
+        const params = new URLSearchParams({
+          id,
+          screen: target,
+          view: 'corrected',
+        });
+        const response = await fetch(
+          `${server.url}/api/cameras/frame?${params}`,
+        );
+        assert.equal(response.status, 200);
+        const frame = await sharp(
+          Buffer.from(await response.arrayBuffer()),
+        ).metadata();
+        assert.deepEqual([frame.width, frame.height], [width, height]);
+      }
       assert.equal(
         (
           await post('/api/cameras/correction', {

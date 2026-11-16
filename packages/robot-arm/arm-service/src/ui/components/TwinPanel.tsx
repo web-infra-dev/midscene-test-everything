@@ -1,6 +1,6 @@
 import { Alert, Button, Empty, Spin, Typography } from 'antd';
 import { Box } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   TwinBlockedReason,
   TwinSceneSnapshot,
@@ -41,23 +41,6 @@ const REASON_TEXT: Record<TwinBlockedReason, [string, string]> = {
   ],
 };
 
-function sceneKey(scene: TwinSceneSnapshot) {
-  return [
-    scene.robot?.visual.id ?? '',
-    ...scene.screens.map((screen) =>
-      [
-        screen.id,
-        screen.calibrationId,
-        screen.physicalWidthMm.toFixed(2),
-        screen.physicalHeightMm.toFixed(2),
-        screen.originMm.x.toFixed(2),
-        screen.originMm.y.toFixed(2),
-        screen.originMm.z.toFixed(2),
-      ].join(':'),
-    ),
-  ].join('|');
-}
-
 export function TwinPanel({
   connected,
   viewPreset,
@@ -68,113 +51,39 @@ export function TwinPanel({
   const language = usePreferences((state) => state.language);
   const zh = language === 'zh';
   const [scene, setScene] = useState<TwinSceneSnapshot>();
-  const [loading, setLoading] = useState(true);
+  const [revision, setRevision] = useState(0);
   const [error, setError] = useState<string>();
-  const [stageError, setStageError] = useState<string>();
-  const [progress, setProgress] = useState<{ loaded: number; total: number }>();
-  const [canvases, setCanvases] = useState<Record<string, HTMLCanvasElement>>(
-    {},
-  );
-  const [stageReady, setStageReady] = useState(false);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const stageRef = useRef<TwinStage | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
+  useEffect(() => {
+    const controller = new AbortController();
+    setScene(undefined);
     setError(undefined);
-    try {
-      const response = await fetch('/api/twin/scene', {
-        cache: 'no-store',
-        signal: AbortSignal.timeout(15_000),
-      });
-      const data = (await response.json()) as TwinSceneSnapshot & {
-        error?: string;
-      };
-      if (!response.ok)
-        throw new Error(data.error ?? `HTTP ${response.status}`);
-      setScene(data);
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load, connected]);
-
-  const key = scene ? sceneKey(scene) : '';
-  useEffect(() => {
-    if (!scene?.ready || !canvasRef.current) return;
-    const container = canvasRef.current.parentElement;
-    if (!container) return;
-    const nextCanvases = createScreenCanvases(scene.screens);
-    setCanvases(nextCanvases);
-    setStageReady(false);
-    setStageError(undefined);
-    let cancelled = false;
-    mountTwinStage({
-      container,
-      canvas: canvasRef.current,
-      scene,
-      screenCanvases: nextCanvases,
-      onProgress: (loaded, total) => {
-        if (!cancelled) setProgress({ loaded, total });
-      },
-    })
-      .then((stage) => {
-        if (cancelled) {
-          stage.dispose();
-          return;
-        }
-        stageRef.current = stage;
-        setProgress(undefined);
-        setStageReady(true);
-      })
-      .catch((failure) => {
-        if (!cancelled)
-          setStageError(
+    const load = async () => {
+      try {
+        const response = await fetch('/api/twin/scene', {
+          cache: 'no-store',
+          signal: AbortSignal.any([
+            controller.signal,
+            AbortSignal.timeout(15_000),
+          ]),
+        });
+        const data = (await response.json()) as TwinSceneSnapshot & {
+          error?: string;
+        };
+        if (!response.ok)
+          throw new Error(data.error ?? `HTTP ${response.status}`);
+        if (!controller.signal.aborted) setScene(data);
+      } catch (failure) {
+        if (!controller.signal.aborted)
+          setError(
             failure instanceof Error ? failure.message : String(failure),
           );
-      });
-    return () => {
-      cancelled = true;
-      stageRef.current?.dispose();
-      stageRef.current = null;
+      }
     };
-    // The scene key is the geometry identity; remounting on every poll would
-    // rebuild the WebGL scene and reload the STL model.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
+    void load();
+    return () => controller.abort();
+  }, [connected, revision]);
 
-  const telemetry = useTwinTelemetry(
-    useCallback((sample) => {
-      stageRef.current?.setJoints(sample.joints);
-    }, []),
-  );
-
-  // One measured flange pose removes the URDF-vs-controller base offset. Skip
-  // while moving: the pose and the joints in that window describe different
-  // instants, and the correction would chase the arm.
-  useEffect(() => {
-    const state = telemetry.state;
-    if (!state?.pose || state.moving || !telemetry.hasJoints) return;
-    stageRef.current?.alignToPose(state.pose.positionMm, state.pose.quaternion);
-  }, [telemetry.state, telemetry.hasJoints]);
-
-  useEffect(() => {
-    if (!stageReady) return;
-    stageRef.current?.setViewPreset(viewPreset);
-  }, [viewPreset, stageReady]);
-
-  useScreenTextures(
-    scene?.screens ?? [],
-    canvases,
-    stageRef,
-    Boolean(scene?.ready && stageReady),
-  );
-
+  const retry = () => setRevision((value) => value + 1);
   const skipped = scene?.skippedScreens ?? [];
   const reasons = useMemo(() => {
     const seen = new Set<TwinBlockedReason>();
@@ -185,13 +94,13 @@ export function TwinPanel({
 
   return (
     <section className="twin-panel" aria-label={zh ? '3D 数字孪生' : '3D twin'}>
-      {loading && (
+      {!scene && !error && (
         <div className="twin-placeholder">
           <Spin />
           <span>{zh ? '读取场景…' : 'Loading scene…'}</span>
         </div>
       )}
-      {!loading && error && (
+      {error && (
         <div className="twin-placeholder">
           <Alert
             type="error"
@@ -199,10 +108,10 @@ export function TwinPanel({
             message={zh ? '读取 3D 场景失败' : 'Failed to load the scene'}
             description={error}
           />
-          <Button onClick={() => void load()}>{zh ? '重试' : 'Retry'}</Button>
+          <Button onClick={retry}>{zh ? '重试' : 'Retry'}</Button>
         </div>
       )}
-      {!loading && !error && scene && !scene.ready && (
+      {scene && !scene.ready && (
         <div className="twin-placeholder">
           <Empty
             image={<Box size={44} strokeWidth={1.2} />}
@@ -230,26 +139,81 @@ export function TwinPanel({
                 .join(' · ')}
             </Typography.Text>
           )}
-          <Button type="primary" onClick={() => void load()}>
+          <Button type="primary" onClick={retry}>
             {zh ? '重新检查' : 'Check again'}
           </Button>
         </div>
       )}
-      {!loading && !error && scene?.ready && (
-        <div className="twin-stage">
-          <canvas ref={canvasRef} />
-          {progress && (
-            <div className="twin-progress">
-              {zh
-                ? `加载模型 ${progress.loaded}/${progress.total}`
-                : `Loading model ${progress.loaded}/${progress.total}`}
-            </div>
-          )}
-          {stageError && (
-            <div className="twin-progress is-error">{stageError}</div>
-          )}
-        </div>
+      {scene?.ready && (
+        <TwinViewport scene={scene} viewPreset={viewPreset} zh={zh} />
       )}
     </section>
+  );
+}
+
+function TwinViewport({
+  scene,
+  viewPreset,
+  zh,
+}: { scene: TwinSceneSnapshot; viewPreset: TwinViewPreset; zh: boolean }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [stage, setStage] = useState<TwinStage>();
+  const [stageError, setStageError] = useState<string>();
+  const [progress, setProgress] = useState<{ loaded: number; total: number }>();
+  const canvases = useMemo(
+    () => createScreenCanvases(scene.screens),
+    [scene.screens],
+  );
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas?.parentElement) return;
+    let cancelled = false;
+    let mounted: TwinStage | undefined;
+    mountTwinStage({
+      container: canvas.parentElement,
+      canvas,
+      scene,
+      screenCanvases: canvases,
+      onProgress: (loaded, total) => {
+        if (!cancelled) setProgress({ loaded, total });
+      },
+    })
+      .then((next) => {
+        if (cancelled) return next.dispose();
+        mounted = next;
+        setProgress(undefined);
+        setStage(next);
+      })
+      .catch((failure) => {
+        if (!cancelled) {
+          setProgress(undefined);
+          setStageError(
+            failure instanceof Error ? failure.message : String(failure),
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+      mounted?.dispose();
+    };
+  }, [scene, canvases]);
+
+  useTwinTelemetry(stage);
+  useScreenTextures(scene.screens, canvases, stage);
+  useEffect(() => stage?.setViewPreset(viewPreset), [viewPreset, stage]);
+
+  return (
+    <div className="twin-stage">
+      <canvas ref={canvasRef} />
+      {progress && (
+        <div className="twin-progress">
+          {zh
+            ? `加载模型 ${progress.loaded}/${progress.total}`
+            : `Loading model ${progress.loaded}/${progress.total}`}
+        </div>
+      )}
+      {stageError && <div className="twin-progress is-error">{stageError}</div>}
+    </div>
   );
 }

@@ -137,6 +137,28 @@ test('honours the correction rotation when ordering the page corners', () => {
   expect(pose!.positionMm.z).toBeCloseTo(camera[2], 1);
 });
 
+test('the footprint on the screen plane projects to the four raw frame corners', () => {
+  const screenZ = -211;
+  const pose = estimateCameraPose([sample([200, 100, screenZ], 66, 148, 90)])!;
+  const expected = [
+    [0, 0],
+    [SOURCE_WIDTH, 0],
+    [SOURCE_WIDTH, SOURCE_HEIGHT],
+    [0, SOURCE_HEIGHT],
+  ];
+  for (const [i, corner] of pose.frameCornersMm.entries()) {
+    const offset = rotate(pose.quaternion, [corner.x, corner.y, corner.z]);
+    const point = add(
+      [pose.positionMm.x, pose.positionMm.y, pose.positionMm.z],
+      offset,
+    );
+    expect(point[2]).toBeCloseTo(screenZ, 4);
+    const pixel = project(point);
+    expect(pixel.x).toBeCloseTo(expected[i][0], 3);
+    expect(pixel.y).toBeCloseTo(expected[i][1], 3);
+  }
+});
+
 test('omits a camera when there are no usable screen quads', () => {
   expect(estimateCameraPose([])).toBeUndefined();
   const bad = sample([200, 100, -211], 66, 148);

@@ -11,6 +11,7 @@ import {
   type TwinCameraScreenSample,
   estimateCameraPose,
 } from './twin-camera.js';
+import { visualScreenOriginMm, visualTipOffsetMm } from './twin-geometry.js';
 import type {
   TwinBlockedReason,
   TwinCameraSnapshot,
@@ -30,8 +31,8 @@ const C922_NAME = /c922/i;
 const C922_BODY = {
   modelUrl: '/models/mg400/logitech-c922-body.stl',
   assetUnits: 'mm' as const,
-  /** Lens centre in the source STL's millimetre coordinates. */
-  lensOffsetMm: { x: 47, y: 56.77, z: 74.3 },
+  /** Centre of the +Y lens bezel, just above its 55.16 mm front surface. */
+  lensOffsetMm: { x: 47.025, y: 55.18, z: 73.22 },
 };
 
 type ScreenTarget = ReturnType<PlaygroundDevices['screens']>[number];
@@ -54,7 +55,7 @@ export function resolveCalibration(data: ProfileData, target: ScreenTarget) {
     const bound = calibrations.find(
       (entry) => entry.id === binding.calibrationProfileId,
     );
-    if (bound) return bound;
+    if (bound) return bound.geometryStatus === 'valid' ? bound : undefined;
   }
   const setup = data.calibrationSetups?.find(
     (entry) => entry.deviceId === target.id,
@@ -88,19 +89,6 @@ export function resolveCalibration(data: ProfileData, target: ScreenTarget) {
   })[0];
 }
 
-/** Camera sessions are scoped per screen; the default target uses the camera-level perspective. */
-async function screenSession(devices: PlaygroundDevices, target: ScreenTarget) {
-  const entry = devices.entries.get(target.cameraId);
-  if (!entry) return undefined;
-  return {
-    entry,
-    session:
-      target.id === target.cameraId
-        ? await entry.camera.forCamera()
-        : await entry.camera.forScreen(target.id),
-  };
-}
-
 export async function buildTwinScene(
   arm: ArmController,
   devices: PlaygroundDevices,
@@ -111,7 +99,7 @@ export async function buildTwinScene(
   const blocked = new Set<TwinBlockedReason>();
   const screens: TwinScreenSnapshot[] = [];
   const skippedScreens: TwinSceneSnapshot['skippedScreens'] = [];
-  const calibrations = new Map<string, ProfileData['calibrations'][number]>();
+  let firstToolId: string | undefined;
   const cameraSamples = new Map<string, TwinCameraScreenSample[]>();
   const cameraNames = new Map<string, string>();
 
@@ -133,17 +121,17 @@ export async function buildTwinScene(
       skip(target, 'screen-mapping-required');
       continue;
     }
-    const scoped = await screenSession(devices, target);
-    if (!scoped) {
+    const entry = devices.entries.get(target.id);
+    if (!entry || entry.cameraId !== target.cameraId) {
       skip(target, 'camera-not-running');
       continue;
     }
-    const correction = scoped.session.getCorrection();
+    const correction = entry.camera.getCorrection();
     if (!correction) {
       skip(target, 'perspective-required');
       continue;
     }
-    if (!scoped.session.getRectifiedPreviewTarget()) {
+    if (!entry.camera.getRectifiedPreviewTarget()) {
       skip(target, 'perspective-required');
       continue;
     }
@@ -151,8 +139,13 @@ export async function buildTwinScene(
       id: target.cameraId,
       screen: target.id,
       view: 'corrected',
-      viewer: `twin-${target.id}`,
     });
+    const frameUrl = `/api/cameras/frame?${params}`;
+    params.set('viewer', `twin-${target.id}`);
+    const screenTool = data.tools?.find(
+      (entry) => entry.id === calibration.toolProfileId,
+    );
+    const originMm = visualScreenOriginMm(calibration.origin, screenTool);
     screens.push({
       id: target.id,
       name: target.name,
@@ -163,14 +156,15 @@ export async function buildTwinScene(
       physicalHeightMm: screen.physicalHeightMm,
       pixelWidth: screen.pixelWidth!,
       pixelHeight: screen.pixelHeight!,
-      originMm: { ...calibration.origin },
+      originMm,
       xAxis: { ...calibration.xAxis },
       yAxis: { ...calibration.yAxis },
       inward: { ...calibration.inward },
+      frameUrl,
       previewUrl: `/api/cameras/preview?${params.toString()}`,
-      cameraLive: scoped.entry.camera.stream.getInfo().state === 'running',
+      cameraLive: entry.camera.stream.getInfo().state === 'running',
     });
-    calibrations.set(calibration.id, calibration);
+    firstToolId ??= calibration.toolProfileId;
     // The camera prop is only meaningful when the calibration spans the whole
     // screen. Legacy page-frame calibrations would put the lens in the wrong
     // place, so they still draw screens but do not contribute a camera pose.
@@ -178,7 +172,7 @@ export async function buildTwinScene(
       const samples = cameraSamples.get(target.cameraId) ?? [];
       samples.push({
         calibration: {
-          origin: { ...calibration.origin },
+          origin: originMm,
           xAxis: { ...calibration.xAxis },
           yAxis: { ...calibration.yAxis },
         },
@@ -189,7 +183,7 @@ export async function buildTwinScene(
         correction,
       });
       cameraSamples.set(target.cameraId, samples);
-      cameraNames.set(target.cameraId, scoped.entry.camera.camera.name);
+      cameraNames.set(target.cameraId, entry.camera.camera.name);
     }
   }
 
@@ -199,10 +193,8 @@ export async function buildTwinScene(
     if (!(data.calibrations ?? []).some((c) => c.geometryStatus === 'valid'))
       blocked.add('calibration-required');
   }
-  const first = [...calibrations.values()][0];
-  const tool = first
-    ? data.tools?.find((entry) => entry.id === first.toolProfileId)
-    : undefined;
+  const toolId = data.workstation?.toolProfileId ?? firstToolId;
+  const tool = data.tools?.find((entry) => entry.id === toolId);
   const cameraEntry = [...cameraSamples.entries()].find(([cameraId]) =>
     C922_NAME.test(cameraNames.get(cameraId) ?? ''),
   );
@@ -219,6 +211,7 @@ export async function buildTwinScene(
           lensOffsetMm: { ...C922_BODY.lensOffsetMm },
           positionMm: { ...cameraPose.positionMm },
           quaternion: { ...cameraPose.quaternion },
+          frameCornersMm: cameraPose.frameCornersMm,
           source: 'estimated',
           residualPx: cameraPose.residualPx,
           samples: cameraPose.samples,
@@ -232,6 +225,7 @@ export async function buildTwinScene(
       ? {
           robot: {
             visual,
+            visualTipOffsetMm: visualTipOffsetMm(tool),
             joints: capabilities.kinematics.joints,
           },
         }

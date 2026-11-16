@@ -1515,6 +1515,8 @@ export function MarkerCalibrationDialog({
               >
                 {qrValue ? (
                   <QRCode
+                    color="#17212b"
+                    bgColor="#fff"
                     type="svg"
                     value={qrValue}
                     size={simplified ? 176 : 128}

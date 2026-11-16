@@ -1,6 +1,7 @@
 import type { CameraCorrection } from '@midscene/robotics-shared/camera/profile';
 import { computeHomography } from '@midscene/robotics-shared/camera/vision-geometry';
 import type { Quaternion, Vector3 } from '@midscene/robotics-shared/contracts';
+import type { TwinCameraSnapshot } from './twin-types.js';
 
 /**
  * Effective focal length for a 1920×1080 C922 frame. The C922's nominal 78°
@@ -42,6 +43,7 @@ export interface TwinCameraPose {
    * robot base frame. The renderer composes this with its Z-up → Y-up root.
    */
   quaternion: Quaternion;
+  frameCornersMm: TwinCameraSnapshot['frameCornersMm'];
   residualPx: number;
   samples: number;
 }
@@ -474,6 +476,38 @@ function modelQuaternion(pose: Pose): Quaternion {
   return quaternionFromMatrix(fromColumns(modelX, modelY, modelZ));
 }
 
+function frameCornersMm(
+  sample: PreparedSample,
+  pose: Pose,
+): TwinCameraSnapshot['frameCornersMm'] {
+  // Work in optical coordinates (+Z forward, +Y down) until the final
+  // conversion to the model axes. All four rays come from the uncropped frame.
+  const plane = sample.plane.map((p) => add(matVec(pose.R, p), pose.t));
+  const normal = cross(
+    subtract(plane[1], plane[0]),
+    subtract(plane[3], plane[0]),
+  );
+  const distance = dot(normal, plane[0]);
+  const x = sample.principalX / sample.focal;
+  const y = sample.principalY / sample.focal;
+  const rays: Vec3[] = [
+    [-x, -y, 1],
+    [x, -y, 1],
+    [x, y, 1],
+    [-x, y, 1],
+  ];
+  const depths = rays.map((ray) => distance / dot(normal, ray));
+  // A frame crossing the plane's horizon has no finite footprint. In that
+  // case show a cross-section at screen depth so the twin stays in view.
+  const screenDepth = Math.max(...plane.map((p) => p[2]));
+  const usePlane = depths.every((d) => d > 0 && d <= 4 * screenDepth);
+  const corner = (i: number): Vector3 => {
+    const depth = usePlane ? depths[i] : screenDepth;
+    return { x: rays[i][0] * depth, y: depth, z: -rays[i][1] * depth };
+  };
+  return [corner(0), corner(1), corner(2), corner(3)];
+}
+
 /**
  * Recover a camera pose from the screen rectangles the robot already measured
  * and the four page corners the camera saw. The screens must be described in
@@ -502,6 +536,7 @@ export function estimateCameraPose(
   return {
     positionMm: { x: centre[0], y: centre[1], z: centre[2] },
     quaternion: modelQuaternion(pose),
+    frameCornersMm: frameCornersMm(prepared[0], pose),
     residualPx: pose.residual,
     samples: prepared.length,
   };

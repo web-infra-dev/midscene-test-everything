@@ -1,4 +1,3 @@
-import { armUiTheme } from '@midscene/robotics-shared';
 import { App as AntApp, Badge, Button, ConfigProvider } from 'antd';
 import enUS from 'antd/locale/en_US';
 import zhCN from 'antd/locale/zh_CN';
@@ -16,6 +15,7 @@ import { DeviceWorkspace } from './components/DeviceWorkspace';
 import { useConnection } from './connection';
 import { useSetupStore } from './hooks/useRobotArm';
 import { usePreferences, useT } from './i18n';
+import { useArmTheme } from './theme';
 import './App.less';
 import './components/robot-arm/Setup.less';
 
@@ -81,8 +81,9 @@ export function App(views: PlaygroundViews) {
       }),
     [],
   );
+  const theme = useArmTheme();
   return (
-    <ConfigProvider theme={armUiTheme} locale={language === 'zh' ? zhCN : enUS}>
+    <ConfigProvider theme={theme} locale={language === 'zh' ? zhCN : enUS}>
       <Views.Provider value={views}>
         <AntApp>
           <div className="app-shell">

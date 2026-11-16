@@ -88,7 +88,14 @@ function Drawing({
           <text x="396" y="163" className="setup-art-small">
             {t('Robot Arm')}
           </text>
-          <rect x="76" y="314" width="488" height="46" rx="10" fill="#e9effb" />
+          <rect
+            x="76"
+            y="314"
+            width="488"
+            height="46"
+            rx="10"
+            fill="var(--diagram-blue-wash)"
+          />
           <text x="97" y="343">
             {t('Configure in the terminal → Connect in the browser')}
           </text>
@@ -317,7 +324,10 @@ function Drawing({
           <text x="32" y="61" className="setup-art-small">
             {t('Fix the camera, select the touch area and check the result.')}
           </text>
-          <path d="M161 132L72 309H251L184 132" fill="#e8effc" />
+          <path
+            d="M161 132L72 309H251L184 132"
+            fill="var(--diagram-blue-wash)"
+          />
           <rect
             x="133"
             y="87"

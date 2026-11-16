@@ -413,7 +413,13 @@ export function PhoneConnectDialog({
           >
             <summary>{t('Phone page address')}</summary>
             <div className="robot-device-phone-link">
-              <QRCode value={publicUrl} size={120} type="svg" />
+              <QRCode
+                color="#17212b"
+                bgColor="#fff"
+                value={publicUrl}
+                size={120}
+                type="svg"
+              />
               <div className="robot-device-phone-address">
                 <Typography.Text>
                   {t('Scan the QR code to open the calibration page.')}

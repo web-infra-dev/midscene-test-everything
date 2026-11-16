@@ -1,4 +1,3 @@
-import { armUiTheme } from '@midscene/robotics-shared';
 import type { CalibrationPreviewPositions } from '@midscene/robotics-shared/assisted-contracts';
 import type {
   CalibrationBatchState,
@@ -37,6 +36,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { useArmTheme } from '../theme';
 import {
   CalibrationPowerButton,
   type Configuration,
@@ -123,8 +123,9 @@ export function GuidedCalibrationWorkspace({
   initialStep?: 0 | 1;
   reviewInstallationOnOpen?: boolean;
 }) {
+  const theme = useArmTheme();
   return (
-    <ConfigProvider theme={armUiTheme}>
+    <ConfigProvider theme={theme}>
       <App className="guided-calibration-root">
         <CalibrationLanguageProvider>
           <GuidedContent

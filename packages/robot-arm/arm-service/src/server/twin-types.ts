@@ -33,6 +33,8 @@ export interface TwinScreenSnapshot {
   inward: Vector3;
   /** Corrected MJPEG for this screen; the client appends its own client id. */
   previewUrl: string;
+  /** One fresh rectified JPEG for the 3D texture. */
+  frameUrl: string;
   cameraLive: boolean;
 }
 
@@ -48,6 +50,8 @@ export interface TwinCameraSnapshot {
   positionMm: Vector3;
   /** Maps the model's local axes to the robot base frame. */
   quaternion: Quaternion;
+  /** Raw frame boundary in lens-local mm (+Y forward), clockwise from top left. */
+  frameCornersMm: [Vector3, Vector3, Vector3, Vector3];
   source: 'estimated';
   residualPx: number;
   samples: number;
@@ -58,6 +62,8 @@ export interface TwinSceneSnapshot {
   blockedReasons: TwinBlockedReason[];
   robot?: {
     visual: RobotVisualModel;
+    /** Display-only flange-to-tip offset for this tool installation. */
+    visualTipOffsetMm: Vector3;
     joints: JointDefinition[];
   };
   tool?: {

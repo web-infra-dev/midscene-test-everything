@@ -2,7 +2,7 @@
   display: grid;
   gap: 12px;
   min-width: 0;
-  --joint-alarm: #d4380d;
+  --joint-alarm: light-dark(#d4380d, #ff9c6e);
   .ant-typography {
     margin: 0;
   }
@@ -78,9 +78,6 @@
     color: var(--rv-text-secondary);
     font-size: 12px;
   }
-}
-[data-theme='dark'] .joint-guide {
-  --joint-alarm: #ff9c6e;
 }
 @media (max-width: 380px) {
   .joint-guide .joint-guide-values {
