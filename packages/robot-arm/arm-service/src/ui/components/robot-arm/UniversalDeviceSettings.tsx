@@ -2,7 +2,9 @@ import { App, Button, Input, Space, Typography } from 'antd';
 import { Copy } from 'lucide-react';
 import { useState } from 'react';
 
-export function UniversalDeviceSettings({ language }: { language: 'zh' | 'en' }) {
+export function UniversalDeviceSettings({
+  language,
+}: { language: 'zh' | 'en' }) {
   const zh = language === 'zh';
   const { message } = App.useApp();
   const [credentials, setCredentials] = useState<{

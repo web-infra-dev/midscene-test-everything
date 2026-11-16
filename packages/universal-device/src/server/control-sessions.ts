@@ -40,10 +40,15 @@ export class ControlError extends Error {
   }
 }
 
+const defaultLeaseMs = 30_000;
+const minLeaseMs = 5_000;
+const maxLeaseMs = 300_000;
 const sessionInput = z
-  .object({ deviceId: z.string().min(1).max(128) })
+  .object({
+    deviceId: z.string().min(1).max(128),
+    leaseMs: z.number().int().min(minLeaseMs).max(maxLeaseMs).optional(),
+  })
   .strict();
-const leaseMs = 30_000;
 
 type Lease = {
   id: string;
@@ -51,6 +56,7 @@ type Lease = {
   resourceId: string;
   device: ControlledDevice;
   lifetime: AbortController;
+  leaseMs: number;
   expires: number;
   disconnect: () => void;
   action?: Promise<void>;
@@ -90,7 +96,7 @@ export class ControlSessions {
     return { busy, expiresAt: this.updateUntil };
   }
 
-  acquire(deviceId: string) {
+  acquire(deviceId: string, leaseMs = defaultLeaseMs) {
     if (this.closed)
       throw new ControlError(
         503,
@@ -129,6 +135,7 @@ export class ControlSessions {
       resourceId,
       device,
       lifetime: new AbortController(),
+      leaseMs,
       expires: Date.now() + leaseMs,
       disconnect: () => void this.release(lease),
     };
@@ -136,6 +143,10 @@ export class ControlSessions {
     this.byDevice.set(resourceId, lease);
     device.signal.addEventListener('abort', lease.disconnect, { once: true });
     return { id: lease.id, deviceId, expiresInMs: leaseMs };
+  }
+
+  private renew(lease: Lease) {
+    lease.expires = Date.now() + lease.leaseMs;
   }
 
   private require(id: string) {
@@ -172,8 +183,8 @@ export class ControlSessions {
     };
     try {
       if (path === '/sessions' && req.method === 'POST') {
-        const { deviceId } = sessionInput.parse(await readBody(req));
-        return send(201, this.acquire(deviceId));
+        const { deviceId, leaseMs } = sessionInput.parse(await readBody(req));
+        return send(201, this.acquire(deviceId, leaseMs));
       }
       const route = /^\/sessions\/([^/]+)(?:\/([^/]+))?$/.exec(path);
       if (!route)
@@ -190,12 +201,13 @@ export class ControlSessions {
       }
       const lease = this.require(id);
       if (operation === 'heartbeat' && req.method === 'POST') {
-        lease.expires = Date.now() + leaseMs;
+        this.renew(lease);
         return send(200, {});
       }
       if (operation === 'screenshot' && req.method === 'GET') {
+        this.renew(lease);
         const frame = await lease.device.screenshot();
-        this.require(id);
+        this.renew(this.require(id));
         const accept = req.headers.accept ?? '';
         if (
           accept.includes('image/jpeg') &&
@@ -247,11 +259,12 @@ export class ControlSessions {
         res.once('close', abort);
         try {
           if (res.destroyed) return;
+          this.renew(lease);
           lease.action = lease.device.execute(
             action,
             AbortSignal.any([lease.lifetime.signal, request.signal]),
           );
-          await lease.action.finally(() => this.require(id));
+          await lease.action.finally(() => this.renew(this.require(id)));
           return send(200, {});
         } finally {
           lease.action = undefined;

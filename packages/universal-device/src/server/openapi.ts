@@ -22,8 +22,14 @@ export const openAPI = {
         additionalProperties: false,
         required: ['x', 'y'],
         properties: {
-          x: { type: 'number', description: 'X coordinate in screenshot pixels' },
-          y: { type: 'number', description: 'Y coordinate in screenshot pixels' },
+          x: {
+            type: 'number',
+            description: 'X coordinate in screenshot pixels',
+          },
+          y: {
+            type: 'number',
+            description: 'Y coordinate in screenshot pixels',
+          },
         },
       },
       Device: {
@@ -52,11 +58,18 @@ export const openAPI = {
         type: 'object',
         required: ['jpeg', 'width', 'height', 'sequence', 'receivedAt'],
         properties: {
-          jpeg: { type: 'string', format: 'byte', description: 'Base64-encoded JPEG' },
+          jpeg: {
+            type: 'string',
+            format: 'byte',
+            description: 'Base64-encoded JPEG',
+          },
           width: { type: 'integer' },
           height: { type: 'integer' },
           sequence: { type: 'integer' },
-          receivedAt: { type: 'integer', description: 'Unix timestamp in milliseconds' },
+          receivedAt: {
+            type: 'integer',
+            description: 'Unix timestamp in milliseconds',
+          },
         },
       },
       ErrorResponse: {
@@ -205,6 +218,13 @@ export const openAPI = {
                 required: ['deviceId'],
                 properties: {
                   deviceId: { type: 'string', minLength: 1, maxLength: 128 },
+                  leaseMs: {
+                    type: 'integer',
+                    minimum: 5000,
+                    maximum: 300000,
+                    default: 30000,
+                    description: 'Optional lease TTL in milliseconds',
+                  },
                 },
               },
             },
@@ -221,8 +241,14 @@ export const openAPI = {
           },
           '400': { description: 'Invalid request', content: errorContent },
           '401': { description: 'Unauthorized', content: errorContent },
-          '409': { description: 'Device offline or in use', content: errorContent },
-          '503': { description: 'Device service stopping or updating', content: errorContent },
+          '409': {
+            description: 'Device offline or in use',
+            content: errorContent,
+          },
+          '503': {
+            description: 'Device service stopping or updating',
+            content: errorContent,
+          },
         },
       },
     },
@@ -245,7 +271,10 @@ export const openAPI = {
         responses: {
           '200': { description: 'Renewed' },
           '401': { description: 'Unauthorized', content: errorContent },
-          '410': { description: 'Control session ended', content: errorContent },
+          '410': {
+            description: 'Control session ended',
+            content: errorContent,
+          },
         },
       },
     },
@@ -269,7 +298,10 @@ export const openAPI = {
             },
           },
           '401': { description: 'Unauthorized', content: errorContent },
-          '410': { description: 'Control session ended', content: errorContent },
+          '410': {
+            description: 'Control session ended',
+            content: errorContent,
+          },
         },
       },
     },
@@ -284,8 +316,14 @@ export const openAPI = {
             content: { 'multipart/x-mixed-replace': {} },
           },
           '401': { description: 'Unauthorized', content: errorContent },
-          '404': { description: 'Device has no live preview', content: errorContent },
-          '410': { description: 'Control session ended', content: errorContent },
+          '404': {
+            description: 'Device has no live preview',
+            content: errorContent,
+          },
+          '410': {
+            description: 'Control session ended',
+            content: errorContent,
+          },
         },
       },
     },
@@ -306,9 +344,18 @@ export const openAPI = {
           '200': { description: 'Action completed' },
           '400': { description: 'Invalid action', content: errorContent },
           '401': { description: 'Unauthorized', content: errorContent },
-          '409': { description: 'Another action is in progress or execution failed', content: errorContent },
-          '410': { description: 'Control session ended', content: errorContent },
-          '422': { description: 'Device does not support this action', content: errorContent },
+          '409': {
+            description: 'Another action is in progress or execution failed',
+            content: errorContent,
+          },
+          '410': {
+            description: 'Control session ended',
+            content: errorContent,
+          },
+          '422': {
+            description: 'Device does not support this action',
+            content: errorContent,
+          },
         },
       },
     },
@@ -336,8 +383,14 @@ export const openAPI = {
               },
             },
           },
-          '401': { description: 'Missing or invalid access token', content: errorContent },
-          '503': { description: 'Device backend unavailable', content: errorContent },
+          '401': {
+            description: 'Missing or invalid access token',
+            content: errorContent,
+          },
+          '503': {
+            description: 'Device backend unavailable',
+            content: errorContent,
+          },
         },
       },
     },

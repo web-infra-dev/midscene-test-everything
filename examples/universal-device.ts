@@ -9,7 +9,9 @@ try {
 }
 
 const agent = await agentFromUniversalDevice({
-  host: process.env.MIDSCENE_UNIVERSAL_DEVICE_SERVICE_URL || 'http://localhost:5801',
+  host:
+    process.env.MIDSCENE_UNIVERSAL_DEVICE_SERVICE_URL ||
+    'http://localhost:5801',
   deviceId: process.env.MIDSCENE_UNIVERSAL_DEVICE_ID || undefined,
 });
 

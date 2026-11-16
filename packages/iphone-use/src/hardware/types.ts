@@ -1,6 +1,10 @@
 import type { CameraScreenSettings } from '@midscene/robotics-vision';
 import type { PointerMotionProfile } from './pointer/motion-profile.js';
-export type { InputAction, Point, ScreenFrame } from '@midscene/universal-device';
+export type {
+  InputAction,
+  Point,
+  ScreenFrame,
+} from '@midscene/universal-device';
 
 export type ScreenOptions =
   | { source: 'usb'; deviceId?: string }

@@ -78,8 +78,12 @@ test('two screens on one controller share a lease and expose only supported acti
     assert.equal(unauthorized.status, 401);
     assert.equal(unauthorized.data.code, 'UNAUTHORIZED');
 
-    const created = await request('POST', '/sessions', { deviceId: 'left' });
+    const created = await request('POST', '/sessions', {
+      deviceId: 'left',
+      leaseMs: 60_000,
+    });
     assert.equal(created.status, 201);
+    assert.equal(created.data.expiresInMs, 60_000);
     const lease = `/sessions/${created.data.id}`;
     const busy = await request('POST', '/sessions', { deviceId: 'right' });
     assert.equal(busy.status, 409);
@@ -139,22 +143,19 @@ test('two screens on one controller share a lease and expose only supported acti
         (variant) => variant.properties.type.enum,
       ),
     );
-    assert.deepEqual(
-      [...openApiTypes].sort(),
-      [
-        'back',
-        'clearInput',
-        'doubleTap',
-        'dragAndDrop',
-        'home',
-        'key',
-        'longPress',
-        'scroll',
-        'swipe',
-        'tap',
-        'typeText',
-      ],
-    );
+    assert.deepEqual([...openApiTypes].sort(), [
+      'back',
+      'clearInput',
+      'doubleTap',
+      'dragAndDrop',
+      'home',
+      'key',
+      'longPress',
+      'scroll',
+      'swipe',
+      'tap',
+      'typeText',
+    ]);
   } finally {
     await handler.close();
   }

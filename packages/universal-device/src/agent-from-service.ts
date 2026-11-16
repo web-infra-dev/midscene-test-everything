@@ -1,6 +1,9 @@
 import type { AgentOpt } from '@midscene/core/agent';
 import { UniversalDeviceAgent } from './agent.js';
-import { UniversalDevice, listUniversalDevices } from './client/service-client.js';
+import {
+  UniversalDevice,
+  listUniversalDevices,
+} from './client/service-client.js';
 
 export interface AgentFromUniversalDeviceOptions {
   host: string;
@@ -39,7 +42,9 @@ export async function agentFromUniversalDevice({
   agentOptions,
 }: AgentFromUniversalDeviceOptions): Promise<UniversalDeviceAgent> {
   if (!token?.trim())
-    throw new Error('Set MIDSCENE_UNIVERSAL_DEVICE_SERVICE_TOKEN or pass a token.');
+    throw new Error(
+      'Set MIDSCENE_UNIVERSAL_DEVICE_SERVICE_TOKEN or pass a token.',
+    );
   const connection = { host, token };
   const profiles = await listUniversalDevices(connection);
   if (!profiles.length)

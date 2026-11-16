@@ -7,6 +7,8 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { createDeviceHandler } from '../dist/server/index.js';
 
 const exec = promisify(execFile);
@@ -17,8 +19,12 @@ function runWithStdin(args, env, stdinText) {
     const child = spawn(process.execPath, [cli, ...args], { env });
     let stdout = '';
     let stderr = '';
-    child.stdout.on('data', (chunk) => (stdout += chunk));
-    child.stderr.on('data', (chunk) => (stderr += chunk));
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk;
+    });
     child.on('error', reject);
     child.on('close', (code) => {
       if (code === 0) resolve({ stdout, stderr });
@@ -28,7 +34,7 @@ function runWithStdin(args, env, stdinText) {
   });
 }
 
-test('CLI lists capabilities, captures JPEG, sends actions and releases its session', async () => {
+test('CLI supports status, acquire/release leases, screenshot, action, and MCP server', async () => {
   const tap = { type: 'tap', point: { x: 2, y: 3 } };
   const actions = [];
   const frame = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
@@ -74,6 +80,19 @@ test('CLI lists capabilities, captures JPEG, sends actions and releases its sess
     const devices = await run('devices');
     assert.deepEqual(JSON.parse(devices.stdout), [device]);
 
+    const initialStatus = JSON.parse((await run('status')).stdout);
+    assert.equal(initialStatus.status, 'available');
+    assert.equal(initialStatus.acquired, false);
+
+    // Explicit lease lifecycle: acquire -> screenshot/action -> status -> release
+    const acquired = JSON.parse((await run('acquire')).stdout);
+    assert.equal(acquired.ok, true);
+    assert.equal(acquired.deviceId, device.id);
+
+    const busyStatus = JSON.parse((await run('status')).stdout);
+    assert.equal(busyStatus.status, 'busy');
+    assert.equal(busyStatus.acquired, true);
+
     const file = join(directory, 'screen.jpg');
     const screenshot = await run('screenshot', file);
     assert.deepEqual(JSON.parse(screenshot.stdout), {
@@ -83,7 +102,12 @@ test('CLI lists capabilities, captures JPEG, sends actions and releases its sess
     });
     assert.deepEqual(await readFile(file), frame);
 
-    const actionOut = await run('--device', device.id, 'action', JSON.stringify(tap));
+    const actionOut = await run(
+      '--device',
+      device.id,
+      'action',
+      JSON.stringify(tap),
+    );
     assert.deepEqual(JSON.parse(actionOut.stdout), {
       ok: true,
       deviceId: device.id,
@@ -102,6 +126,14 @@ test('CLI lists capabilities, captures JPEG, sends actions and releases its sess
     });
     assert.deepEqual(actions, [tap, tap]);
 
+    const released = JSON.parse((await run('release')).stdout);
+    assert.equal(released.ok, true);
+    assert.equal(released.released, true);
+
+    const afterRelease = JSON.parse((await run('status')).stdout);
+    assert.equal(afterRelease.status, 'available');
+    assert.equal(afterRelease.acquired, false);
+
     await assert.rejects(
       run('action', '{"type":"home"}'),
       /does not support home/,
@@ -110,6 +142,57 @@ test('CLI lists capabilities, captures JPEG, sends actions and releases its sess
       run('action', '{"type":"tap"}'),
       /Invalid action: point:/,
     );
+
+    // MCP stdio server: list_devices, screenshot (image + text), execute_action, release_device
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [cli, 'mcp'],
+      env,
+    });
+    const client = new Client({ name: 'test-client', version: '1.0.0' });
+    await client.connect(transport);
+    try {
+      const mcpDevices = await client.callTool({
+        name: 'list_devices',
+        arguments: {},
+      });
+      assert.equal(JSON.parse(mcpDevices.content[0].text)[0].id, device.id);
+
+      const mcpShot = await client.callTool({
+        name: 'screenshot',
+        arguments: {},
+      });
+      assert.equal(mcpShot.content[0].type, 'image');
+      assert.equal(mcpShot.content[0].mimeType, 'image/jpeg');
+      assert.equal(mcpShot.content[0].data, frame.toString('base64'));
+      assert.deepEqual(JSON.parse(mcpShot.content[1].text), {
+        deviceId: device.id,
+        width: 10,
+        height: 20,
+      });
+
+      const mcpAct = await client.callTool({
+        name: 'execute_action',
+        arguments: { action: tap },
+      });
+      assert.deepEqual(JSON.parse(mcpAct.content[0].text), {
+        ok: true,
+        deviceId: device.id,
+        type: 'tap',
+      });
+      assert.equal(actions.length, 3);
+
+      const mcpRelease = await client.callTool({
+        name: 'release_device',
+        arguments: {},
+      });
+      assert.deepEqual(JSON.parse(mcpRelease.content[0].text), {
+        ok: true,
+        released: [device.id],
+      });
+    } finally {
+      await client.close();
+    }
 
     assert.equal(
       JSON.parse((await run('devices')).stdout)[0].status,

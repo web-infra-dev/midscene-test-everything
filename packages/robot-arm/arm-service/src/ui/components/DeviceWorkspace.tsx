@@ -49,8 +49,8 @@ import { TwinPanel, type TwinViewPreset } from './TwinPanel';
 import { ActionAudit } from './robot-arm/ActionAudit';
 import { ControllerMotionSettings } from './robot-arm/ControllerMotionSettings';
 import { DeviceSettings } from './robot-arm/DeviceSettings';
-import { UniversalDeviceSettings } from './robot-arm/UniversalDeviceSettings';
 import { RobotStatusBar } from './robot-arm/RobotStatusBar';
+import { UniversalDeviceSettings } from './robot-arm/UniversalDeviceSettings';
 import './CameraStage.less';
 
 export function DeviceWorkspace({ connected }: { connected: boolean }) {

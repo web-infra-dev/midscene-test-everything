@@ -4,10 +4,11 @@ import type { DeviceProfile, InputAction, ScreenFrame } from '../protocol.js';
 export type UniversalDeviceOptions = { host: string; token: string };
 export type UniversalDeviceProfile = DeviceProfile;
 
-class ServiceError extends Error {
+export class ServiceError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly code?: string,
   ) {
     super(message);
   }
@@ -82,6 +83,7 @@ class ServiceClient {
       throw new ServiceError(
         response.status,
         value?.error ?? `设备服务请求失败 (${response.status})`,
+        typeof value?.code === 'string' ? value.code : undefined,
       );
     if (value === undefined) throw new Error('设备服务响应无效。');
     return value as T;
@@ -95,6 +97,66 @@ export async function listUniversalDevices(options: UniversalDeviceOptions) {
   if (!Array.isArray(result.devices))
     throw new Error('设备服务未返回设备列表。');
   return result.devices;
+}
+
+export async function acquireUniversalDeviceSession(
+  options: UniversalDeviceOptions & { deviceId: string; leaseMs?: number },
+) {
+  const client = new ServiceClient(options);
+  return client.request<{ id: string; deviceId: string; expiresInMs: number }>(
+    '/sessions',
+    'POST',
+    {
+      deviceId: options.deviceId,
+      ...(options.leaseMs === undefined ? {} : { leaseMs: options.leaseMs }),
+    },
+  );
+}
+
+export async function releaseUniversalDeviceSession(
+  options: UniversalDeviceOptions & { sessionId: string },
+) {
+  const client = new ServiceClient(options);
+  await client.request(
+    `/sessions/${encodeURIComponent(options.sessionId)}`,
+    'DELETE',
+  );
+}
+
+export async function renewUniversalDeviceSession(
+  options: UniversalDeviceOptions & { sessionId: string },
+) {
+  const client = new ServiceClient(options);
+  await client.request(
+    `/sessions/${encodeURIComponent(options.sessionId)}/heartbeat`,
+    'POST',
+  );
+}
+
+export async function captureSessionScreenshot(
+  options: UniversalDeviceOptions & { sessionId: string },
+): Promise<ScreenFrame> {
+  const client = new ServiceClient(options);
+  const frame = await client.request<
+    Omit<ScreenFrame, 'jpeg'> & { jpeg: string }
+  >(`/sessions/${encodeURIComponent(options.sessionId)}/screenshot`);
+  return { ...frame, jpeg: Buffer.from(frame.jpeg, 'base64') };
+}
+
+export async function executeSessionAction(
+  options: UniversalDeviceOptions & {
+    sessionId: string;
+    action: InputAction;
+    signal?: AbortSignal;
+  },
+) {
+  const client = new ServiceClient(options);
+  await client.request(
+    `/sessions/${encodeURIComponent(options.sessionId)}/actions`,
+    'POST',
+    options.action,
+    options.signal,
+  );
 }
 
 export class UniversalDevice extends UniversalDeviceInterface {

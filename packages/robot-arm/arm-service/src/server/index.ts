@@ -23,9 +23,9 @@ import {
   robotAuditDirectory,
   robotDataRoot,
 } from '@midscene/arm-kit/internal/storage/layout';
+import { SCREEN_DRIFT_DETECTION_ENABLED } from '@midscene/robotics-shared/contracts';
 import type { InputAction } from '@midscene/universal-device/protocol';
 import { createDeviceHandler } from '@midscene/universal-device/server';
-import { SCREEN_DRIFT_DETECTION_ENABLED } from '@midscene/robotics-shared/contracts';
 import { PlaygroundArmControls } from './arm-controls.js';
 import {
   type CameraPreviewView,

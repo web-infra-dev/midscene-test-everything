@@ -4,16 +4,16 @@ import { dirname, join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
-import { listUniversalDevices } from '@midscene/universal-device';
 import {
   type LaunchPlaygroundOptions,
   playgroundForSessionManager,
 } from '@midscene/playground';
+import { listUniversalDevices } from '@midscene/universal-device';
 import express from 'express';
 import {
   RemoteSessionManager,
-  universalDevicePlatform,
   serviceOptions,
+  universalDevicePlatform,
 } from './platform.js';
 
 export { universalDevicePlatform };

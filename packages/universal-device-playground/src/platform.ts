@@ -1,15 +1,15 @@
 import {
-  UniversalDevice,
-  UniversalDeviceAgent,
-  type UniversalDeviceOptions,
-  listUniversalDevices,
-} from '@midscene/universal-device';
-import {
   type PlaygroundSessionManager,
   createMjpegPreviewDescriptor,
   createScreenshotPreviewDescriptor,
   definePlaygroundPlatform,
 } from '@midscene/playground';
+import {
+  UniversalDevice,
+  UniversalDeviceAgent,
+  type UniversalDeviceOptions,
+  listUniversalDevices,
+} from '@midscene/universal-device';
 
 export function serviceOptions(input: unknown): UniversalDeviceOptions {
   const value = input as Partial<UniversalDeviceOptions> | undefined;

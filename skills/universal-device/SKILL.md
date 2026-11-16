@@ -40,37 +40,59 @@ MIDSCENE_UNIVERSAL_DEVICE_ID="your-device-id"
 
 Always follow this step-by-step loop:
 
-### Step 1: Discover the Device
+### Step 1: Discover, Check Status, and Acquire Lease
 
-List connected devices and inspect their status and capabilities:
+List connected devices or inspect the target device status:
 
 ```bash
 npx -y @midscene/universal-device devices
+npx -y @midscene/universal-device --device <id> status
+```
+
+Example output (`devices`):
+```json
+[
+  {
+    "id": "device-1",
+    "name": "Target Screen",
+    "status": "available",
+    "actions": ["tap", "longPress", "swipe", "dragAndDrop"],
+    "inputGuidance": "Optional device-specific instructions from the service."
+  }
+]
 ```
 
 - Check `status`:
   - `"available"`: Ready to control.
   - `"busy"`: Another session is controlling the device. Inform the user before retrying.
   - `"offline"`: Ask the user to check the device service and reconnect the device.
-- Check `actions`: Only send action types included in this array.
+- Check `actions`: Only send action types included in this array (look up their JSON format in the **Action Schema Dictionary** below).
 - Check `inputGuidance`: If present, **strictly follow these device-specific instructions** throughout the task.
 - If multiple devices are returned and the target is ambiguous, ask the user which `id` to use and pass `--device <id>` on subsequent commands.
 
-### Step 2: Screenshot & Inspect
-
-Capture the current screen and read the saved image file using your image-viewing tool:
+Lock the device exclusively for your multi-step task before acting:
 
 ```bash
-npx -y @midscene/universal-device --device <id> screenshot ./device-screen.jpg
+npx -y @midscene/universal-device --device <id> acquire
 ```
 
-The command prints `{"file":"./device-screen.jpg","width":...,"height":...}`.
+This holds an exclusive lease (default 3 minutes idle timeout, automatically renewed on every `screenshot` and `action`).
+
+### Step 2: Screenshot & Inspect
+
+Capture the current screen to a **new, unique file path** (for example `/tmp/device-screen-01.jpg`, incrementing for each step) so you preserve step history, keep the workspace clean, and avoid stale image-viewer caches, then read the saved image:
+
+```bash
+npx -y @midscene/universal-device --device <id> screenshot /tmp/device-screen-01.jpg
+```
+
+The command prints `{"file":"/tmp/device-screen-01.jpg","width":...,"height":...}`.
 - Origin `(0, 0)` is the **top-left corner** of the image.
 - Always calculate coordinates in the `width × height` pixel space returned by the command (if your viewer downscales the image for display, scale coordinates back to the original dimensions).
 
-### Step 3: Execute One Action, Then Verify
+### Step 3: Execute One Action, Verify, and Repeat Until Done
 
-Send a single action:
+Send a single action based on what you observed in the screenshot:
 
 ```bash
 npx -y @midscene/universal-device --device <id> action '{"type":"tap","point":{"x":120,"y":240}}'
@@ -80,14 +102,22 @@ A successful response confirms the physical input has finished, but UI transitio
 
 ```bash
 sleep 1
-npx -y @midscene/universal-device --device <id> screenshot ./device-screen.jpg
+npx -y @midscene/universal-device --device <id> screenshot /tmp/device-screen-02.jpg
 ```
 
-Inspect the new screenshot to confirm the screen reached the expected state (if it is still loading or animating, wait and capture another screenshot before acting).
+Always use a fresh filename for each verification screenshot (e.g., `02`, `03`, ...) instead of overwriting the previous path, then inspect the new image to verify the screen change:
+- If the screen is still loading or animating, wait briefly and take another screenshot.
+- **Repeat this `Action → Wait → Screenshot & Inspect` loop** step by step until the user's goal is completely achieved (or you hit a blocker such as a login/permission prompt that requires user input).
 
-### Step 4: Report Results Proactively
+### Step 4: Release Device & Report Results
 
-After completing the task, summarize what was done and report the final state observed on the screen to the user.
+Always release the exclusive lease when the task finishes (or if you hit an unrecoverable error/blocker so other users can access the device immediately):
+
+```bash
+npx -y @midscene/universal-device --device <id> release
+```
+
+Then summarize the actions taken and report the final state observed on the screen to the user.
 
 ## Command & Action Reference
 
@@ -95,9 +125,9 @@ After completing the task, summarize what was done and report the final state ob
 - `--host <url>`: Service URL (or set `MIDSCENE_UNIVERSAL_DEVICE_SERVICE_URL`)
 - `--device <id>`: Target device ID (or set `MIDSCENE_UNIVERSAL_DEVICE_ID`; optional when the service has a single device)
 
-### Supported Actions (`action '<json>'` or `action -`)
+### Action Schema Dictionary (`action '<json>'` or `action -`)
 
-Only use actions listed in the target device's `actions` array. When `typeText`, `home`, or `back` are not supported by the device, use pointer actions (`tap`, `swipe`) to interact with on-screen buttons and the on-screen keyboard instead.
+The Universal Device protocol defines the standard action types below. **Only use the subset listed in the target device's `actions` array** returned by `devices`. When `typeText`, `home`, or `back` are not in the device's `actions`, use pointer actions (`tap`, `swipe`) to interact with on-screen buttons and the on-screen keyboard instead.
 
 ```bash
 # Tap

@@ -3,11 +3,11 @@ import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { runConnectivityTest } from '@midscene/core';
+import { ModelConfigManager } from '@midscene/shared/env';
 import {
   ControlError,
   createDeviceHandler,
 } from '@midscene/universal-device/server';
-import { ModelConfigManager } from '@midscene/shared/env';
 import express, { type Request } from 'express';
 import type { DeviceConfig } from './hardware/types.js';
 import { PhoneCalibration } from './phone-calibration.js';
