@@ -6,7 +6,8 @@ import {
   HighlightShellLines,
 } from '../utils/highlight';
 
-type AgentTab = 'codex' | 'claude' | 'cursor' | 'cli';
+type AgentTab = 'codex' | 'claude' | 'cursor';
+type SkillTab = 'install' | 'env';
 type CustomTab = 'server' | 'sdk';
 
 const MG400_LINES = [
@@ -26,22 +27,19 @@ const AGENT_SNIPPETS: Record<
   { file: string; lang: HighlightLang; code: string }
 > = {
   codex: {
-    file: '~/.codex/config.toml',
-    lang: 'toml',
-    code: `[mcp_servers.universal-device]
-command = "npx"
-args = ["-y", "@midscene/universal-device", "mcp"]
-
-[mcp_servers.universal-device.env]
-MIDSCENE_UNIVERSAL_DEVICE_SERVICE_URL = "<your-device-service-url>"
-MIDSCENE_UNIVERSAL_DEVICE_SERVICE_TOKEN = "<your-service-token>"`,
+    file: 'terminal',
+    lang: 'shell',
+    code: `codex mcp add universal-device \\
+  --env MIDSCENE_UNIVERSAL_DEVICE_SERVICE_URL='<your-device-service-url>' \\
+  --env MIDSCENE_UNIVERSAL_DEVICE_SERVICE_TOKEN='<your-service-token>' \\
+  -- npx -y @midscene/universal-device mcp`,
   },
   claude: {
     file: 'terminal',
     lang: 'shell',
     code: `claude mcp add universal-device \\
-  -e MIDSCENE_UNIVERSAL_DEVICE_SERVICE_URL=<your-device-service-url> \\
-  -e MIDSCENE_UNIVERSAL_DEVICE_SERVICE_TOKEN=<your-service-token> \\
+  -e MIDSCENE_UNIVERSAL_DEVICE_SERVICE_URL='<your-device-service-url>' \\
+  -e MIDSCENE_UNIVERSAL_DEVICE_SERVICE_TOKEN='<your-service-token>' \\
   -- npx -y @midscene/universal-device mcp`,
   },
   cursor: {
@@ -60,14 +58,25 @@ MIDSCENE_UNIVERSAL_DEVICE_SERVICE_TOKEN = "<your-service-token>"`,
   }
 }`,
   },
-  cli: {
-    file: 'SKILL.md + CLI',
-    lang: 'shell',
-    code: `npx -y @midscene/universal-device devices
-npx -y @midscene/universal-device acquire --device <id>
-npx -y @midscene/universal-device screenshot --session <sid>`,
-  },
 };
+
+const SKILL_SNIPPETS = {
+  install: {
+    file: 'terminal',
+    lang: 'shell',
+    code: `npx skills add web-infra-dev/midscene-robotics \\
+  --skill universal-device`,
+  },
+  env: {
+    file: '.env',
+    lang: 'shell',
+    code: `MIDSCENE_UNIVERSAL_DEVICE_SERVICE_URL="<your-device-service-url>"
+MIDSCENE_UNIVERSAL_DEVICE_SERVICE_TOKEN="<your-service-token>"`,
+  },
+} satisfies Record<
+  SkillTab,
+  { file: string; lang: HighlightLang; code: string }
+>;
 
 const CUSTOM_SNIPPETS: Record<CustomTab, { file: string; code: string }> = {
   server: {
@@ -185,6 +194,7 @@ function TerminalLines({ lines }: { lines: string[] }) {
 export function QuickStartSection() {
   const { t } = useI18n();
   const [agentTab, setAgentTab] = useState<AgentTab>('codex');
+  const [skillTab, setSkillTab] = useState<SkillTab>('install');
   const [customTab, setCustomTab] = useState<CustomTab>('server');
 
   const items = t.quickStart.items;
@@ -237,7 +247,7 @@ export function QuickStartSection() {
           </figure>
         </article>
 
-        {/* 03 MCP & Skills */}
+        {/* 03 MCP */}
         <article className="qs-row">
           <div className="qs-row-info">
             <span className="qs-row-num mono">{items[2].num}</span>
@@ -254,7 +264,6 @@ export function QuickStartSection() {
                       ['codex', 'Codex'],
                       ['claude', 'Claude'],
                       ['cursor', 'Cursor'],
-                      ['cli', 'CLI'],
                     ] as const
                   ).map(([key, label]) => (
                     <button
@@ -288,12 +297,58 @@ export function QuickStartSection() {
           </figure>
         </article>
 
-        {/* 04 Custom Device */}
+        {/* 04 Skills */}
         <article className="qs-row">
           <div className="qs-row-info">
             <span className="qs-row-num mono">{items[3].num}</span>
             <h3>{items[3].title}</h3>
             <p>{items[3].subtitle}</p>
+          </div>
+          <figure className="codefig mac-win qs-row-code">
+            <figcaption>
+              <div className="mac-win-left">
+                <MacDots />
+                <div className="code-tabs" role="tablist" aria-label="Skills">
+                  {(['install', 'env'] as const).map((key) => (
+                    <button
+                      key={key}
+                      type="button"
+                      role="tab"
+                      aria-selected={skillTab === key}
+                      className={`code-tab${skillTab === key ? ' active' : ''}`}
+                      onClick={() => setSkillTab(key)}
+                    >
+                      {key === 'install'
+                        ? t.quickStart.codeTabs.install
+                        : '.env'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="code-meta">
+                <span className="qs-file mono">
+                  {SKILL_SNIPPETS[skillTab].file}
+                </span>
+                <CopyBtn text={SKILL_SNIPPETS[skillTab].code} />
+              </div>
+            </figcaption>
+            <pre>
+              <code>
+                <HighlightCode
+                  code={SKILL_SNIPPETS[skillTab].code}
+                  lang={SKILL_SNIPPETS[skillTab].lang}
+                />
+              </code>
+            </pre>
+          </figure>
+        </article>
+
+        {/* 05 Custom Device */}
+        <article className="qs-row">
+          <div className="qs-row-info">
+            <span className="qs-row-num mono">{items[4].num}</span>
+            <h3>{items[4].title}</h3>
+            <p>{items[4].subtitle}</p>
           </div>
           <figure className="codefig mac-win qs-row-code">
             <figcaption>

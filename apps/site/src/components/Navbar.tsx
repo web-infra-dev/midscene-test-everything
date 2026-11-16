@@ -62,8 +62,22 @@ export function Navbar() {
           type="button"
           className="lang-btn"
           onClick={toggleLocale}
-          aria-label="Switch language"
+          aria-label={t.nav.switchLanguage}
+          title={t.nav.switchLanguage}
         >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.75"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="m5 8 6 6m-7 0 6-6 2-3M2 5h12M7 2v3m15 17-5-11-5 11m2-4h6" />
+          </svg>
           {t.nav.langToggle}
         </button>
         <a
@@ -83,13 +97,6 @@ export function Navbar() {
           </svg>
           <span>GitHub</span>
         </a>
-        <button
-          type="button"
-          className="btn btn-primary btn-sm"
-          onClick={() => goToSection('quickstart')}
-        >
-          {t.nav.getStarted}
-        </button>
       </div>
     </header>
   );

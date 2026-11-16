@@ -10,7 +10,7 @@ export interface TranslationDict {
     quickStart: string;
     api: string;
     customArm: string;
-    getStarted: string;
+    switchLanguage: string;
     langToggle: string;
   };
   hero: {
@@ -80,6 +80,7 @@ export interface TranslationDict {
       }[];
     }[];
     codeTabs: {
+      install: string;
       server: string;
       sdk: string;
       codex: string;
@@ -107,9 +108,9 @@ const en: TranslationDict = {
     demo: 'Showcase',
     protocol: 'Protocol',
     quickStart: 'Quick Start',
-    api: 'API',
-    customArm: 'Custom Arm',
-    getStarted: 'Get Started',
+    api: 'Protocol',
+    customArm: 'Custom Robot Arm',
+    switchLanguage: '切换到中文',
     langToggle: '中文',
   },
   hero: {
@@ -194,12 +195,17 @@ const en: TranslationDict = {
       },
       {
         num: '03',
-        title: 'MCP & Skills',
+        title: 'MCP',
         subtitle:
-          'Drive any connected device directly from Codex, Claude Code, Cursor, or CLI agents.',
+          'Connect Codex, Claude Code, or Cursor to a running device service. Replace the URL and token before running the command.',
       },
       {
         num: '04',
+        title: 'Skills',
+        subtitle: 'Give your agent the skills to control connected devices.',
+      },
+      {
+        num: '05',
         title: 'Custom Device',
         subtitle:
           'Wrap any camera or actuator with createDeviceHandler(), then drive it via Midscene SDK.',
@@ -292,6 +298,7 @@ const en: TranslationDict = {
       },
     ],
     codeTabs: {
+      install: 'Install',
       server: 'Server',
       sdk: 'SDK',
       codex: 'Codex',
@@ -319,9 +326,9 @@ const zh: TranslationDict = {
     demo: '设备演示',
     protocol: '开放协议',
     quickStart: '快速开始',
-    api: 'API 文档',
-    customArm: '自定义机械臂',
-    getStarted: '立即开始',
+    api: '协议规范',
+    customArm: '机械臂接入',
+    switchLanguage: 'Switch to English',
     langToggle: 'EN',
   },
   hero: {
@@ -405,12 +412,17 @@ const zh: TranslationDict = {
       },
       {
         num: '03',
-        title: 'MCP & Skills',
+        title: 'MCP',
         subtitle:
-          '一键接入 Codex、Claude Code、Cursor 或命令行 Agent，自动管理租约与截图。',
+          '将 Codex、Claude Code 或 Cursor 接入已启动的设备服务。运行命令前，替换服务地址和 Token。',
       },
       {
         num: '04',
+        title: 'Skills',
+        subtitle: '让 Agent 学会控制已连接的设备。',
+      },
+      {
+        num: '05',
         title: '自定义设备',
         subtitle:
           '用 createDeviceHandler() 封装任意硬件，再通过 Midscene SDK 统一驱动。',
@@ -503,6 +515,7 @@ const zh: TranslationDict = {
       },
     ],
     codeTabs: {
+      install: '安装',
       server: 'Server',
       sdk: 'SDK',
       codex: 'Codex',
