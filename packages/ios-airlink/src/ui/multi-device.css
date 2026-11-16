@@ -1,0 +1,2115 @@
+.ios-airlink-loading {
+  display: grid;
+  place-items: center;
+  height: 100vh;
+  background: #fafafa;
+}
+
+:root {
+  --iu-bg: #fafafa;
+  --iu-surface: #ffffff;
+  --iu-border: #e4e4e7;
+  --iu-text: #09090b;
+  --iu-muted: #71717a;
+  --iu-primary: #18181b;
+  --iu-primary-hover: #27272a;
+}
+
+.ios-airlink-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--iu-bg);
+  color: var(--iu-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "PingFang SC",
+    sans-serif;
+}
+
+/* Topbar */
+.ios-airlink-topbar {
+  height: 56px;
+  flex: none;
+  padding: 0 24px;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--iu-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ios-airlink-topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ios-airlink-topbar-logo {
+  width: 26px;
+  height: 26px;
+  flex: none;
+}
+
+.ios-airlink-topbar-title {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--iu-text);
+}
+
+.ios-airlink-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ios-airlink-primary-btn.ant-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--iu-primary);
+  border-color: var(--iu-primary);
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  font-size: 12px;
+  font-weight: 500;
+  height: 32px;
+  padding: 0 12px;
+}
+
+.ios-airlink-primary-btn.ant-btn-primary:hover {
+  background: var(--iu-primary-hover) !important;
+  border-color: var(--iu-primary-hover) !important;
+}
+
+.ios-airlink-outline-btn.ant-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 8px;
+  border-color: var(--iu-border);
+  background: var(--iu-surface);
+  color: var(--iu-text);
+  font-size: 12px;
+  height: 32px;
+  padding: 0 12px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+
+.ios-airlink-outline-btn.ant-btn svg {
+  color: var(--iu-text-secondary);
+  flex: none;
+}
+
+/* Grid Main */
+.ios-airlink-grid-main {
+  flex: 1;
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 28px 24px 48px;
+}
+
+.ios-airlink-empty-grid {
+  min-height: calc(100vh - 140px);
+  display: grid;
+  place-items: center;
+}
+
+.ios-airlink-empty-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 32px 40px;
+  border-radius: 16px;
+  border: 1px dashed #d4d4d8;
+  background: var(--iu-surface);
+}
+
+.ios-airlink-empty-title {
+  font-size: 14px;
+  color: var(--iu-muted);
+}
+
+.ios-airlink-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(276px, 1fr));
+  gap: 20px;
+}
+
+/* Device Card */
+.ios-airlink-card {
+  background: var(--iu-surface);
+  border: 1px solid var(--iu-border);
+  border-radius: 14px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.ios-airlink-card:hover {
+  border-color: #d4d4d8;
+  box-shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.08);
+}
+
+.ios-airlink-card-stage {
+  height: 236px;
+  background: #f4f4f5;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--iu-border);
+}
+
+.ios-airlink-card-badges {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 3;
+}
+
+.ios-airlink-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 11px;
+  font-weight: 500;
+  background: #fffbeb;
+  color: #b45309;
+  border: 1px solid #fde68a;
+  cursor: pointer;
+}
+
+.ios-airlink-status-badge i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #f59e0b;
+}
+
+.ios-airlink-status-badge.ready {
+  background: #ecfdf5;
+  color: #047857;
+  border-color: #a7f3d0;
+}
+
+.ios-airlink-status-badge.ready i {
+  background: #10b981;
+}
+
+.ios-airlink-source-tag {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid var(--iu-border);
+  border-radius: 6px;
+  padding: 2px 7px;
+  font-size: 11px;
+  color: #52525b;
+}
+
+.ios-airlink-thumb-bezel {
+  height: 196px;
+  aspect-ratio: 9 / 19.3;
+  border-radius: 20px;
+  background: #18181b;
+  padding: 4px;
+  box-shadow: 0 10px 24px -8px rgba(0, 0, 0, 0.25);
+  display: flex;
+}
+
+.ios-airlink-thumb-screen {
+  flex: 1;
+  min-height: 0;
+  border-radius: 16px;
+  overflow: hidden;
+  background: #09090b;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ios-airlink-thumb-screen > img,
+.ios-airlink-phone-screen > img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.ios-airlink-device-preview-error {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(4px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  text-align: center;
+  gap: 8px;
+  z-index: 4;
+}
+
+.ios-airlink-device-preview-error strong {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--iu-text);
+}
+
+.ios-airlink-device-preview-error p {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--iu-muted);
+  max-width: 240px;
+  line-height: 1.5;
+}
+
+.ios-airlink-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--iu-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Add Card in Grid */
+.ios-airlink-add-grid-card {
+  min-height: 302px;
+  border-radius: 14px;
+  border: 1.5px dashed #d4d4d8;
+  background: rgba(255, 255, 255, 0.55);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--iu-muted);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background-color 0.15s;
+}
+
+.ios-airlink-add-grid-card:hover {
+  border-color: var(--iu-primary);
+  color: var(--iu-text);
+  background: var(--iu-surface);
+}
+
+.ios-airlink-add-grid-plus {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  border: 1px solid var(--iu-border);
+  background: var(--iu-surface);
+  display: grid;
+  place-items: center;
+  font-size: 18px;
+}
+
+/* Popover Details */
+.ios-airlink-popover-details {
+  width: 248px;
+}
+
+.ios-airlink-kv-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid #f4f4f5;
+  font-size: 12px;
+}
+
+.ios-airlink-kv-row:last-child {
+  border-bottom: none;
+}
+
+.ios-airlink-kv-label {
+  color: var(--iu-muted);
+  flex: none;
+}
+
+.ios-airlink-kv-value {
+  color: var(--iu-text);
+  font-weight: 500;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.ios-airlink-kv-value code {
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 11px;
+  color: #52525b;
+}
+
+.ios-airlink-device-notice {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #92400e;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+/* Add Device Modal */
+.ios-airlink-add-modal .ant-modal-content {
+  overflow: hidden;
+  border-radius: 16px;
+  padding: 0;
+}
+
+.ios-airlink-setup-studio {
+  display: grid;
+  grid-template-columns: 400px minmax(0, 1fr);
+  min-height: 520px;
+  max-height: 82vh;
+  background: var(--iu-surface);
+}
+
+.ios-airlink-setup-panel {
+  min-height: 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--iu-border);
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+}
+
+.ios-airlink-setup-preview {
+  min-width: 0;
+  min-height: 0;
+  background: var(--iu-bg);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.ios-airlink-preview {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ios-airlink-connect-nav {
+  margin-bottom: 10px;
+}
+
+.ios-airlink-back-workspace.ant-btn {
+  padding: 0 4px;
+  color: var(--iu-muted);
+  font-size: 12px;
+}
+
+.ios-airlink-setup-form-wrap {
+  width: 100%;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.ios-airlink-setup-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.ios-airlink-setup-heading {
+  margin: 0 0 14px;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--iu-text);
+}
+
+.ios-airlink-setup-form {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ios-airlink-step-card {
+  background: #fafafa;
+  border: 1px solid var(--iu-border);
+  border-radius: 12px;
+  padding: 13px 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.ios-airlink-step-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--iu-text);
+}
+
+.ios-airlink-step-card-meta {
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--iu-muted);
+}
+
+.ios-airlink-step-card-source .ant-segmented {
+  background: #f4f4f5;
+  padding: 3px;
+  border-radius: 8px;
+}
+
+.ios-airlink-step-card-source .ant-segmented-item {
+  font-size: 12px;
+  color: var(--iu-muted);
+  border-radius: 6px;
+}
+
+.ios-airlink-step-card-source .ant-segmented-item-selected {
+  background: #ffffff;
+  color: var(--iu-text);
+  font-weight: 500;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.ios-airlink-step-card .ant-form-item {
+  margin-bottom: 0;
+}
+
+.ios-airlink-submit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 8px;
+}
+
+.ios-airlink-submit-row .session-setup-submit.ant-btn-primary {
+  flex: 1;
+  min-width: 0;
+  margin-top: 0;
+}
+
+.ios-airlink-cancel-btn.ant-btn {
+  flex: none;
+  height: 38px;
+  border-radius: 8px;
+  border-color: var(--iu-border);
+  background: var(--iu-surface);
+  color: var(--iu-text);
+  font-size: 13px;
+  padding: 0 14px;
+}
+
+.ios-airlink-pending-preview {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+}
+
+.ios-airlink-pending-bezel {
+  height: 360px;
+}
+
+.ios-airlink-pending-progress {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  background: var(--iu-surface);
+  border: 1px solid var(--iu-border);
+  border-radius: 999px;
+  padding: 8px 16px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+
+.ios-airlink-progress-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #a1a1aa;
+}
+
+.ios-airlink-progress-step i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #d4d4d8;
+}
+
+.ios-airlink-progress-step.done {
+  color: #047857;
+}
+
+.ios-airlink-progress-step.done i {
+  background: #10b981;
+}
+
+.ios-airlink-progress-step.active {
+  color: var(--iu-text);
+  font-weight: 500;
+}
+
+.ios-airlink-progress-step.active i {
+  background: var(--iu-primary);
+}
+
+.ios-airlink-pending-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.ios-airlink-pending-waiting {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: #a1a1aa;
+  font-size: 12px;
+}
+
+.ios-airlink-setup-panel .session-setup-submit.ant-btn-primary {
+  background: var(--iu-primary);
+  border-color: var(--iu-primary);
+  color: #ffffff;
+  border-radius: 8px;
+  height: 38px;
+  font-size: 13px;
+  font-weight: 500;
+  margin-top: 4px;
+}
+
+.ios-airlink-setup-panel
+  .session-setup-submit.ant-btn-primary:hover:not(:disabled) {
+  background: var(--iu-primary-hover) !important;
+  border-color: var(--iu-primary-hover) !important;
+}
+
+.ios-airlink-setup-panel .session-setup-submit.ant-btn-primary:disabled {
+  background: var(--iu-primary) !important;
+  border-color: var(--iu-primary) !important;
+  color: #ffffff !important;
+  opacity: 0.42;
+}
+
+.ios-airlink-preview-empty {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  text-align: center;
+  color: var(--iu-muted);
+}
+
+.ios-airlink-preview-empty-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  border: 1px solid var(--iu-border);
+  background: var(--iu-surface);
+  display: grid;
+  place-items: center;
+  color: var(--iu-muted);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+
+.ios-airlink-preview-empty p {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--iu-muted);
+}
+
+.ios-airlink-phone-bezel {
+  height: 540px;
+  aspect-ratio: 9 / 19.3;
+  max-width: 100%;
+  border-radius: 40px;
+  background: #18181b;
+  padding: 10px;
+  box-shadow: 0 20px 44px -12px rgba(0, 0, 0, 0.25);
+  display: flex;
+}
+
+.ios-airlink-phone-screen {
+  flex: 1;
+  min-height: 0;
+  border-radius: 31px;
+  overflow: hidden;
+  background: #09090b;
+  position: relative;
+}
+
+.ios-airlink-recovery-preview {
+  min-height: 260px;
+  position: relative;
+}
+
+.ios-airlink-status-icon {
+  display: inline-flex;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  align-items: center;
+  position: relative;
+  color: var(--iu-muted);
+}
+@media (max-width: 768px) {
+  .ios-airlink-setup-studio {
+    grid-template-columns: 1fr;
+    max-height: none;
+  }
+  .ios-airlink-setup-panel {
+    border-right: none;
+    border-bottom: 1px solid var(--iu-border);
+  }
+}
+
+/* ==========================================================================
+   Design polish layer
+   ========================================================================== */
+
+:root {
+  --iu-ring: rgba(24, 24, 27, 0.08);
+  --iu-shadow-xs: 0 1px 2px rgba(16, 24, 40, 0.04);
+  --iu-shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px
+    rgba(16, 24, 40, 0.06);
+  --iu-shadow-lg: 0 24px 48px -12px rgba(16, 24, 40, 0.18), 0 0 0 1px
+    rgba(16, 24, 40, 0.04);
+  --iu-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --iu-green: #10b981;
+}
+
+.ios-airlink-shell,
+.ios-airlink-add-modal {
+  font-feature-settings: "cv11", "ss01", "tnum";
+  -webkit-font-smoothing: antialiased;
+  letter-spacing: -0.003em;
+}
+
+/* Topbar */
+.ios-airlink-shell .ios-airlink-topbar {
+  height: 60px;
+  padding: 0 28px;
+  background: rgba(250, 250, 250, 0.78);
+  backdrop-filter: saturate(180%) blur(16px);
+  border-bottom-color: rgba(228, 228, 231, 0.7);
+}
+.ios-airlink-shell .ios-airlink-topbar-logo {
+  width: 28px;
+  height: 28px;
+}
+.ios-airlink-shell .ios-airlink-topbar-title {
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+/* Buttons */
+.ios-airlink-shell .ant-btn,
+.ios-airlink-add-modal .ant-btn {
+  transition: background-color 0.15s var(--iu-ease), border-color 0.15s
+    var(--iu-ease), box-shadow 0.15s var(--iu-ease), transform 0.1s
+    var(--iu-ease);
+}
+.ios-airlink-shell .ant-btn:active:not(:disabled),
+.ios-airlink-add-modal .ant-btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+.ios-airlink-shell .ios-airlink-primary-btn.ant-btn-primary,
+.ios-airlink-add-modal .ios-airlink-primary-btn.ant-btn-primary {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 1px 2px
+    rgba(0, 0, 0, 0.12);
+}
+.ios-airlink-shell .ios-airlink-outline-btn.ant-btn:hover:not(:disabled) {
+  border-color: #d4d4d8 !important;
+  background: #f4f4f5 !important;
+  color: var(--iu-text) !important;
+}
+
+/* Grid */
+.ios-airlink-shell .ios-airlink-grid-main {
+  padding: 32px 28px 56px;
+}
+.ios-airlink-shell .ios-airlink-card-grid {
+  grid-template-columns: repeat(auto-fill, minmax(264px, 1fr));
+  gap: 18px;
+}
+
+/* Device card */
+.ios-airlink-shell .ios-airlink-card {
+  border-radius: 16px;
+  border-color: rgba(228, 228, 231, 0.9);
+  box-shadow: var(--iu-shadow-xs);
+  transition: transform 0.2s var(--iu-ease), box-shadow 0.2s var(--iu-ease),
+    border-color 0.2s var(--iu-ease);
+}
+.ios-airlink-shell .ios-airlink-card:hover {
+  transform: translateY(-2px);
+  border-color: #d4d4d8;
+  box-shadow: 0 12px 28px -12px rgba(16, 24, 40, 0.16);
+}
+.ios-airlink-shell .ios-airlink-card-stage {
+  height: 252px;
+  padding: 20px;
+  border-bottom: 1px solid #f1f1f3;
+  background: radial-gradient(
+      120% 80% at 50% 0%,
+      #ffffff 0%,
+      rgba(255, 255, 255, 0) 60%
+    ),
+    radial-gradient(
+      circle at 1px 1px,
+      rgba(24, 24, 27, 0.07) 1px,
+      transparent 0
+    )
+    0 0 / 14px 14px, #f6f6f7;
+}
+.ios-airlink-shell .ios-airlink-thumb-bezel {
+  height: 204px;
+  border-radius: 24px;
+  padding: 4px;
+  background: linear-gradient(145deg, #3f3f46, #18181b 45%, #27272a);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), inset 0 0 0 1px
+    rgba(255, 255, 255, 0.08), 0 16px 32px -14px rgba(0, 0, 0, 0.45);
+  transition: transform 0.25s var(--iu-ease);
+}
+.ios-airlink-shell .ios-airlink-card:hover .ios-airlink-thumb-bezel {
+  transform: scale(1.025);
+}
+.ios-airlink-shell .ios-airlink-thumb-screen {
+  border-radius: 20px;
+}
+
+/* Badges on card */
+.ios-airlink-shell .ios-airlink-status-badge,
+.ios-airlink-shell .ios-airlink-source-tag {
+  height: 24px;
+  backdrop-filter: blur(8px);
+  box-shadow: var(--iu-shadow-xs);
+}
+.ios-airlink-shell .ios-airlink-status-badge {
+  padding: 0 10px 0 8px;
+  background: rgba(255, 251, 235, 0.92);
+  transition: box-shadow 0.15s var(--iu-ease);
+}
+.ios-airlink-shell .ios-airlink-status-badge.ready {
+  background: rgba(236, 253, 245, 0.92);
+}
+.ios-airlink-shell .ios-airlink-status-badge:hover {
+  box-shadow: 0 0 0 3px var(--iu-ring);
+}
+.ios-airlink-shell .ios-airlink-status-badge.ready i {
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18);
+  animation: ios-airlink-pulse 2.4s ease-in-out infinite;
+}
+.ios-airlink-shell .ios-airlink-source-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.86);
+  border-color: rgba(228, 228, 231, 0.9);
+  font-weight: 500;
+  color: #52525b;
+}
+@keyframes ios-airlink-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(16, 185, 129, 0.06);
+  }
+}
+.ios-airlink-shell .ios-airlink-card-title {
+  font-size: 14px;
+  letter-spacing: -0.015em;
+}
+
+/* Error overlay on card */
+.ios-airlink-shell .ios-airlink-device-preview-error {
+  background: rgba(250, 250, 250, 0.86);
+  backdrop-filter: blur(10px) saturate(140%);
+}
+
+/* Add-device grid card */
+.ios-airlink-shell .ios-airlink-add-grid-card {
+  min-height: 302px;
+  border-radius: 16px;
+  border: 1.5px dashed #d4d4d8;
+  background: radial-gradient(
+      circle at 1px 1px,
+      rgba(24, 24, 27, 0.05) 1px,
+      transparent 0
+    )
+    0 0 / 14px 14px, rgba(255, 255, 255, 0.4);
+  transition: border-color 0.2s var(--iu-ease), background-color 0.2s
+    var(--iu-ease), color 0.2s var(--iu-ease);
+}
+.ios-airlink-shell .ios-airlink-add-grid-plus {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  font-size: 20px;
+  box-shadow: var(--iu-shadow-sm);
+  transition: transform 0.2s var(--iu-ease);
+}
+.ios-airlink-shell .ios-airlink-add-grid-card:hover .ios-airlink-add-grid-plus {
+  transform: rotate(90deg);
+}
+
+/* Empty state */
+.ios-airlink-shell .ios-airlink-empty-card {
+  padding: 40px 56px;
+  border-radius: 20px;
+  border: 1.5px dashed #d4d4d8;
+  background: radial-gradient(
+      circle at 1px 1px,
+      rgba(24, 24, 27, 0.05) 1px,
+      transparent 0
+    )
+    0 0 / 14px 14px, #fff;
+}
+
+/* Popover */
+.ios-airlink-popover-details {
+  width: 260px;
+  padding: 2px;
+}
+.ios-airlink-popover-details .ios-airlink-kv-row {
+  padding: 8px 0;
+}
+
+/* ---------- Add device modal ---------- */
+.ios-airlink-add-modal .ant-modal-content {
+  border-radius: 20px;
+  box-shadow: var(--iu-shadow-lg);
+}
+.ios-airlink-add-modal .ant-modal-close {
+  top: 14px;
+  inset-inline-end: 14px;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+}
+.ios-airlink-add-modal .ant-modal-close:hover {
+  background: rgba(24, 24, 27, 0.06);
+}
+.ios-airlink-add-modal .ios-airlink-setup-studio,
+.ios-airlink-inline-setup .ios-airlink-setup-studio {
+  grid-template-columns: 408px minmax(0, 1fr);
+  min-height: 560px;
+}
+.ios-airlink-inline-setup {
+  width: 100%;
+  max-width: 860px;
+  margin: 12px auto 0;
+  border-radius: 22px;
+  overflow: hidden;
+  background: #ffffff;
+  border: 1px solid rgba(24, 24, 27, 0.08);
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.08);
+}
+.ios-airlink-inline-setup--camera {
+  max-width: 980px;
+}
+.ios-airlink-add-modal .ios-airlink-setup-panel,
+.ios-airlink-inline-setup .ios-airlink-setup-panel {
+  padding: 24px 24px 20px;
+  border-right-color: #f1f1f3;
+}
+.ios-airlink-add-modal .ios-airlink-setup-preview,
+.ios-airlink-inline-setup .ios-airlink-setup-preview {
+  background: radial-gradient(
+      70% 60% at 50% 40%,
+      rgba(255, 255, 255, 0.9) 0%,
+      rgba(255, 255, 255, 0) 70%
+    ),
+    radial-gradient(
+      circle at 1px 1px,
+      rgba(24, 24, 27, 0.07) 1px,
+      transparent 0
+    )
+    0 0 / 16px 16px, #f6f6f7;
+}
+.ios-airlink-add-modal .ios-airlink-setup-heading,
+.ios-airlink-inline-setup .ios-airlink-setup-heading {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  margin-bottom: 18px;
+}
+.ios-airlink-add-modal .ios-airlink-setup-form,
+.ios-airlink-inline-setup .ios-airlink-setup-form {
+  gap: 10px;
+}
+
+/* Step cards */
+.ios-airlink-add-modal .ios-airlink-step-card,
+.ios-airlink-inline-setup .ios-airlink-step-card {
+  background: #fff;
+  border: 1px solid #ececef;
+  border-radius: 14px;
+  padding: 14px 16px;
+  gap: 12px;
+  box-shadow: var(--iu-shadow-xs);
+  transition: border-color 0.2s var(--iu-ease), box-shadow 0.2s var(--iu-ease);
+}
+.ios-airlink-add-modal .ios-airlink-step-card:hover {
+  border-color: #e0e0e4;
+}
+.ios-airlink-add-modal .ios-airlink-step-card-head {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.ios-airlink-step-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.ios-airlink-step-index {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 600;
+  color: #52525b;
+  background: #f4f4f5;
+  box-shadow: inset 0 0 0 1px #e4e4e7;
+  transition: background-color 0.2s var(--iu-ease), color 0.2s var(--iu-ease);
+}
+.ios-airlink-step-index.done {
+  color: #fff;
+  background: var(--iu-primary);
+  box-shadow: none;
+}
+.ios-airlink-add-modal .ios-airlink-step-card-meta,
+.ios-airlink-inline-setup .ios-airlink-step-card-meta {
+  font-size: 11.5px;
+  font-weight: 400;
+  color: #a1a1aa;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #fafafa;
+  box-shadow: inset 0 0 0 1px #f1f1f3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60%;
+}
+
+/* Bluetooth peers */
+.ios-airlink-add-modal .ios-airlink-bluetooth-status {
+  margin-top: 0;
+  gap: 6px;
+}
+.ios-airlink-add-modal .ios-airlink-bluetooth-device {
+  margin-left: 0;
+  padding: 9px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 500;
+  color: var(--iu-text);
+  background: #fafafa;
+  box-shadow: inset 0 0 0 1px #f1f1f3;
+  transition: background-color 0.15s var(--iu-ease), box-shadow 0.15s
+    var(--iu-ease);
+}
+.ios-airlink-add-modal .ios-airlink-bluetooth-device:hover:not(:disabled) {
+  background: #f4f4f5;
+}
+.ios-airlink-add-modal .ios-airlink-bluetooth-device[aria-pressed="true"] {
+  color: var(--iu-text);
+  background: #fff;
+  box-shadow: inset 0 0 0 1.5px var(--iu-primary), 0 0 0 3px var(--iu-ring);
+}
+.ios-airlink-add-modal
+  .ios-airlink-bluetooth-device[aria-pressed="true"]
+  > svg {
+  color: var(--iu-primary);
+}
+.ios-airlink-add-modal .ios-airlink-bluetooth-device:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(24, 24, 27, 0.18);
+}
+.ios-airlink-add-modal .ios-airlink-online-dot {
+  background: var(--iu-green);
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.16);
+}
+.ios-airlink-add-modal .ios-airlink-waiting {
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: #fafafa;
+  box-shadow: inset 0 0 0 1px #f1f1f3;
+  color: var(--iu-muted);
+  font-size: 12.5px;
+}
+.ios-airlink-add-modal .ios-airlink-waiting-ring {
+  border-color: #a1a1aa;
+  border-right-color: transparent;
+}
+
+/* Segmented */
+.ios-airlink-add-modal .ios-airlink-step-card-source .ant-segmented {
+  padding: 3px;
+  border-radius: 10px;
+  background: #f4f4f5;
+  box-shadow: inset 0 0 0 1px #ececef;
+}
+.ios-airlink-add-modal .ios-airlink-step-card-source .ant-segmented-item {
+  border-radius: 7px;
+  font-weight: 500;
+  transition: color 0.15s var(--iu-ease);
+}
+.ios-airlink-add-modal .ios-airlink-step-card-source .ant-segmented-item-label {
+  min-height: 28px;
+  line-height: 28px;
+  font-size: 12.5px;
+}
+.ios-airlink-add-modal
+  .ios-airlink-step-card-source
+  .ant-segmented-item-selected,
+.ios-airlink-add-modal .ios-airlink-step-card-source .ant-segmented-thumb {
+  border-radius: 7px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.08), 0 0 0 1px rgba(16, 24, 40, 0.04);
+}
+
+/* Device field */
+.ios-airlink-add-modal .ios-airlink-device-field .ant-form-item-label {
+  padding-bottom: 6px;
+}
+.ios-airlink-add-modal .ios-airlink-device-field .ant-form-item-label > label {
+  font-size: 12px;
+  color: var(--iu-muted);
+}
+.ios-airlink-add-modal
+  .ios-airlink-device-field
+  .ant-form-item-required::before {
+  display: none !important;
+}
+.ios-airlink-add-modal .ios-airlink-refresh.ant-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+}
+.ios-airlink-add-modal .ios-airlink-refresh.ant-btn:hover:not(:disabled) {
+  color: var(--iu-text);
+  background: #f4f4f5;
+}
+.ios-airlink-add-modal .ant-select .ant-select-selector {
+  height: 38px !important;
+  border-radius: 10px !important;
+  border-color: #e4e4e7 !important;
+  box-shadow: var(--iu-shadow-xs) !important;
+  padding: 0 12px !important;
+  align-items: center;
+}
+.ios-airlink-add-modal .ant-select:hover .ant-select-selector {
+  border-color: #d4d4d8 !important;
+}
+.ios-airlink-add-modal .ant-select-focused .ant-select-selector {
+  border-color: var(--iu-primary) !important;
+  box-shadow: 0 0 0 3px var(--iu-ring) !important;
+}
+.ios-airlink-add-modal .ant-select-selection-item,
+.ios-airlink-add-modal .ant-select-selection-placeholder {
+  font-size: 13px;
+  line-height: 36px !important;
+}
+
+/* Checkbox */
+.ios-airlink-add-modal .ios-airlink-reuse-configuration.ant-checkbox-wrapper {
+  font-size: 12.5px;
+  color: #52525b;
+}
+.ios-airlink-add-modal .ant-checkbox-checked .ant-checkbox-inner {
+  background-color: var(--iu-primary);
+  border-color: var(--iu-primary);
+}
+.ios-airlink-add-modal .ant-checkbox-inner {
+  border-radius: 5px;
+}
+
+/* Submit row */
+.ios-airlink-add-modal .ios-airlink-submit-row {
+  padding-top: 16px;
+}
+.ios-airlink-add-modal .session-setup-submit.ant-btn-primary {
+  height: 40px;
+  border-radius: 10px;
+  font-size: 13.5px;
+  font-weight: 500;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 1px 2px
+    rgba(0, 0, 0, 0.14), 0 4px 12px -4px rgba(0, 0, 0, 0.24);
+}
+.ios-airlink-add-modal .session-setup-submit.ant-btn-primary:disabled {
+  opacity: 0.32;
+  box-shadow: none;
+}
+.ios-airlink-add-modal .session-setup-submit.ant-btn-loading {
+  opacity: 0.9 !important;
+}
+.ios-airlink-add-modal .ios-airlink-cancel-btn.ant-btn {
+  height: 40px;
+  border-radius: 10px;
+  border-color: #e4e4e7;
+  box-shadow: var(--iu-shadow-xs);
+}
+.ios-airlink-add-modal .ios-airlink-cancel-btn.ant-btn:hover:not(:disabled) {
+  border-color: #d4d4d8 !important;
+  background: #f4f4f5 !important;
+  color: var(--iu-text) !important;
+}
+
+/* Preview empty state */
+.ios-airlink-add-modal .ios-airlink-preview-empty {
+  gap: 14px;
+}
+.ios-airlink-add-modal .ios-airlink-preview-empty-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  color: #3f3f46;
+  border-color: #ececef;
+  box-shadow: var(--iu-shadow-sm), 0 0 0 8px rgba(255, 255, 255, 0.6);
+}
+.ios-airlink-add-modal .ios-airlink-preview-empty p {
+  font-size: 13px;
+  color: #71717a;
+  max-width: 260px;
+  line-height: 1.6;
+}
+
+/* Phone bezel (pending + zoom) */
+.ios-airlink-phone-bezel {
+  background: linear-gradient(
+    145deg,
+    #52525b 0%,
+    #18181b 30%,
+    #09090b 70%,
+    #3f3f46 100%
+  );
+  padding: 9px;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.7),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.1),
+    0 30px 60px -20px rgba(16, 24, 40, 0.45),
+    0 12px 24px -12px rgba(16, 24, 40, 0.25);
+}
+.ios-airlink-phone-screen {
+  border-radius: 32px;
+  background: radial-gradient(120% 80% at 50% 0%, #1f1f23 0%, #09090b 70%);
+}
+.ios-airlink-pending-waiting {
+  color: #a1a1aa;
+  gap: 14px;
+  letter-spacing: 0;
+}
+.ios-airlink-pending-waiting .ant-spin-dot-item {
+  background-color: #e4e4e7;
+}
+.ios-airlink-pending-img {
+  animation: ios-airlink-fade 0.3s var(--iu-ease);
+}
+@keyframes ios-airlink-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Progress stepper */
+.ios-airlink-pending-preview {
+  gap: 24px;
+}
+.ios-airlink-pending-progress {
+  gap: 0;
+  padding: 6px 8px;
+  border-radius: 999px;
+  border: 1px solid #ececef;
+  background: rgba(255, 255, 255, 0.86);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--iu-shadow-sm);
+}
+.ios-airlink-progress-step {
+  position: relative;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #a1a1aa;
+  transition: color 0.2s var(--iu-ease), background-color 0.2s var(--iu-ease);
+}
+.ios-airlink-progress-step + .ios-airlink-progress-step {
+  margin-left: 18px;
+}
+.ios-airlink-progress-step + .ios-airlink-progress-step::before {
+  content: "";
+  position: absolute;
+  left: -16px;
+  top: 50%;
+  width: 14px;
+  height: 1px;
+  background: #e4e4e7;
+}
+.ios-airlink-progress-step i {
+  width: 7px;
+  height: 7px;
+  transition: background-color 0.2s var(--iu-ease), box-shadow 0.2s
+    var(--iu-ease);
+}
+.ios-airlink-progress-step.done {
+  color: #047857;
+}
+.ios-airlink-progress-step.done i {
+  background: var(--iu-green);
+}
+.ios-airlink-progress-step.active {
+  color: var(--iu-text);
+  background: #f4f4f5;
+}
+.ios-airlink-progress-step.active i {
+  background: var(--iu-primary);
+  animation: ios-airlink-active-dot 1.2s ease-in-out infinite;
+}
+@keyframes ios-airlink-active-dot {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(24, 24, 27, 0.25);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(24, 24, 27, 0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ios-airlink-shell *,
+  .ios-airlink-add-modal * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* Card: single-row footer + hover motion */
+.ios-airlink-shell .ios-airlink-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 48px;
+  padding: 0 10px 0 16px;
+}
+.ios-airlink-shell .ios-airlink-card-title {
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+.ios-airlink-card-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0.65;
+  transition: opacity 0.2s var(--iu-ease);
+}
+.ios-airlink-card:hover .ios-airlink-card-tools,
+.ios-airlink-card:focus-within .ios-airlink-card-tools {
+  opacity: 1;
+}
+.ios-airlink-shell .ios-airlink-icon-btn.ant-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: #71717a;
+}
+.ios-airlink-shell .ios-airlink-icon-btn.ant-btn:hover:not(:disabled) {
+  color: var(--iu-text) !important;
+  background: #f4f4f5 !important;
+}
+.ios-airlink-shell .ios-airlink-icon-btn.danger.ant-btn:hover:not(:disabled) {
+  color: #dc2626 !important;
+  background: #fef2f2 !important;
+}
+
+.ios-airlink-shell .ios-airlink-card {
+  position: relative;
+  transition: transform 0.35s var(--iu-ease), box-shadow 0.35s var(--iu-ease),
+    border-color 0.35s var(--iu-ease);
+}
+.ios-airlink-shell .ios-airlink-card:hover {
+  transform: translateY(-4px);
+  border-color: #d4d4d8;
+  box-shadow: 0 2px 4px rgba(16, 24, 40, 0.04), 0 20px 40px -16px
+    rgba(16, 24, 40, 0.22);
+}
+.ios-airlink-shell .ios-airlink-card-stage {
+  cursor: default;
+  overflow: hidden;
+}
+.ios-airlink-shell .ios-airlink-card-stage::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    60% 55% at 50% 55%,
+    rgba(255, 255, 255, 0.95) 0%,
+    rgba(255, 255, 255, 0) 70%
+  );
+  opacity: 0;
+  transition: opacity 0.35s var(--iu-ease);
+  pointer-events: none;
+}
+.ios-airlink-shell .ios-airlink-card:hover .ios-airlink-card-stage::before {
+  opacity: 1;
+}
+.ios-airlink-shell .ios-airlink-thumb-bezel {
+  position: relative;
+  transition: transform 0.4s var(--iu-ease), box-shadow 0.4s var(--iu-ease);
+}
+.ios-airlink-shell .ios-airlink-card:hover .ios-airlink-thumb-bezel {
+  transform: translateY(-3px) scale(1.04);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), inset 0 0 0 1px
+    rgba(255, 255, 255, 0.08), 0 26px 40px -16px rgba(0, 0, 0, 0.5);
+}
+.ios-airlink-shell .ios-airlink-card-badges {
+  transition: transform 0.35s var(--iu-ease);
+}
+
+/* Unified phone bezel preview for AirPlay, USB, and Camera */
+.ios-airlink-phone-bezel.ios-airlink-pending-bezel {
+  height: 430px;
+}
+.ios-airlink-phone-screen .ios-airlink-live {
+  background: transparent;
+  overflow: hidden;
+}
+.ios-airlink-phone-screen .ios-airlink-live > img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.ios-airlink-phone-screen .ios-airlink-airplay-screen-guide {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  padding: 20px 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+  color: #e4e4e7;
+}
+.ios-airlink-phone-screen .ios-airlink-airplay-screen-guide *,
+.ios-airlink-phone-screen
+  .ios-airlink-airplay-screen-guide
+  .ios-airlink-airplay-guide {
+  box-sizing: border-box;
+  max-width: 100%;
+}
+.ios-airlink-phone-screen
+  .ios-airlink-airplay-screen-guide
+  .ios-airlink-airplay-guide {
+  width: 100%;
+  min-width: 0;
+}
+.ios-airlink-phone-screen .ios-airlink-airplay-screen-guide > svg {
+  width: 26px;
+  height: 26px;
+  color: #a1a1aa;
+  margin-bottom: 2px;
+}
+.ios-airlink-phone-screen .ios-airlink-airplay-screen-guide > strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: #fafafa;
+}
+.ios-airlink-phone-screen .ios-airlink-airplay-screen-guide > p {
+  margin: 0;
+  font-size: 11.5px;
+  color: #f87171;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.ios-airlink-phone-screen
+  .ios-airlink-airplay-screen-guide
+  .ios-airlink-airplay-instruction {
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 0 0 10px;
+  color: #a1a1aa;
+}
+.ios-airlink-phone-screen
+  .ios-airlink-airplay-screen-guide
+  .ios-airlink-airplay-receiver {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  margin: 0 0 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 11.5px;
+  line-height: 1.45;
+  font-weight: 500;
+  color: #fafafa;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.ios-airlink-phone-screen
+  .ios-airlink-airplay-screen-guide
+  .ios-airlink-airplay-code {
+  flex-direction: column;
+  gap: 3px;
+}
+.ios-airlink-phone-screen
+  .ios-airlink-airplay-screen-guide
+  .ios-airlink-airplay-code
+  > span {
+  font-size: 11px;
+  color: #a1a1aa;
+}
+.ios-airlink-phone-screen
+  .ios-airlink-airplay-screen-guide
+  .ios-airlink-airplay-code
+  strong {
+  font-size: 20px;
+  line-height: 26px;
+  letter-spacing: 4px;
+  font-weight: 600;
+  color: #ffffff;
+}
+/* Camera calibration 2-step wizard inside Add Device modal */
+.ios-airlink-add-modal
+  .ios-airlink-setup-studio.ios-airlink-setup-studio--camera,
+.ios-airlink-inline-setup
+  .ios-airlink-setup-studio.ios-airlink-setup-studio--camera {
+  grid-template-columns: minmax(0, 1fr);
+}
+.ios-airlink-add-modal
+  .ios-airlink-setup-studio--camera
+  .ios-airlink-setup-preview,
+.ios-airlink-inline-setup
+  .ios-airlink-setup-studio--camera
+  .ios-airlink-setup-preview {
+  display: none;
+}
+.ios-airlink-add-modal
+  .ios-airlink-setup-studio--camera
+  .ios-airlink-setup-panel,
+.ios-airlink-inline-setup
+  .ios-airlink-setup-studio--camera
+  .ios-airlink-setup-panel {
+  border-right: none;
+  padding: 20px 28px 24px;
+  background-color: #fafafb;
+  background-image: radial-gradient(rgba(15, 23, 42, 0.05) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+.ios-airlink-setup-form-wrap--camera,
+.ios-airlink-setup-card--camera {
+  width: 100%;
+  max-width: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+.ios-airlink-camera-wizard {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.ios-airlink-wizard-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-right: 36px;
+}
+.ios-airlink-wizard-steps {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: #ffffff;
+  border: 1px solid var(--iu-border);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+}
+.ios-airlink-wizard-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--iu-muted);
+}
+button.ios-airlink-wizard-step:not(:disabled) {
+  cursor: pointer;
+}
+.ios-airlink-wizard-step i {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 600;
+  background: #f1f5f9;
+  color: #64748b;
+}
+.ios-airlink-wizard-step.active {
+  color: var(--iu-text);
+  font-weight: 600;
+}
+.ios-airlink-wizard-step.active i {
+  background: #18181b;
+  color: #ffffff;
+}
+.ios-airlink-wizard-step.done {
+  color: #047857;
+}
+.ios-airlink-wizard-step.done i {
+  background: #ecfdf5;
+  color: #047857;
+}
+.ios-airlink-wizard-divider {
+  width: 28px;
+  height: 1px;
+  background: var(--iu-border);
+}
+.ios-airlink-wizard-spacer {
+  width: 96px;
+}
+.ios-airlink-wizard-pair {
+  display: grid;
+  grid-template-columns: auto minmax(0, 380px);
+  align-items: center;
+  justify-content: center;
+  gap: 40px;
+  padding: 12px 0;
+}
+.ios-airlink-wizard-pair-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 22px;
+  border-radius: 16px;
+  background: #ffffff;
+  border: 1px solid var(--iu-border);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+}
+.ios-airlink-wizard-calibrate-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.ios-airlink-wizard-calibrate {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 24px;
+}
+.ios-airlink-wizard-editor-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 16px;
+  background: #ffffff;
+  border: 1px solid var(--iu-border);
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.04);
+}
+.ios-airlink-wizard-preview-col {
+  display: grid;
+  place-items: center;
+}
+.ios-airlink-wizard-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.ios-airlink-wizard-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ios-airlink-wizard-footer .session-setup-submit {
+  width: auto;
+  min-width: 156px;
+  padding: 0 20px;
+}
+.ios-airlink-camera-pair-info {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ios-airlink-camera-connected-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: #ecfdf5;
+  color: #047857;
+  font-size: 13px;
+  font-weight: 500;
+}
+.ios-airlink-pwa-steps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+.ios-airlink-pwa-chip {
+  font-size: 12px;
+  font-weight: 500;
+  color: #334155;
+  white-space: nowrap;
+}
+.ios-airlink-pwa-arrow {
+  font-size: 11px;
+  color: #94a3b8;
+}
+.ios-airlink-camera-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--iu-muted);
+  font-size: 13px;
+  text-align: center;
+}
+.ios-airlink-camera-monitor {
+  width: 100%;
+  max-width: 400px;
+  border-radius: 14px;
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.12), 0 4px 10px
+    rgba(15, 23, 42, 0.06);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ios-airlink-camera-monitor .ios-airlink-live,
+.ios-airlink-camera-monitor img {
+  width: 100%;
+  height: auto;
+  max-height: 440px;
+  object-fit: contain;
+  display: block;
+}
+.ios-airlink-camera-link-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ios-airlink-camera-link-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 10px;
+  border-radius: 10px;
+  background: #fafafa;
+  border: 1px solid #ececef;
+  transition: border-color 150ms ease, background-color 150ms ease, box-shadow
+    150ms ease;
+}
+.ios-airlink-camera-link-select {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.ios-airlink-camera-link-item:hover {
+  border-color: #d4d4d8;
+  background: #f4f4f5;
+}
+.ios-airlink-camera-link-item.active {
+  background: #ffffff;
+  border-color: #18181b;
+  box-shadow: 0 2px 8px rgba(24, 24, 27, 0.06);
+}
+.ios-airlink-camera-link-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #d4d4d8;
+  transition: background-color 150ms ease;
+}
+.ios-airlink-camera-link-item.active .ios-airlink-camera-link-dot {
+  background: #18181b;
+}
+.ios-airlink-camera-link-item code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 11.5px;
+  color: #52525b;
+}
+.ios-airlink-camera-link-item.active code {
+  color: #18181b;
+  font-weight: 500;
+}
+.ios-airlink-camera-link-copy {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #71717a;
+  cursor: pointer;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+.ios-airlink-camera-link-copy:hover {
+  background: rgba(24, 24, 27, 0.06);
+  color: #18181b;
+}
+.ios-airlink-camera-tip {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--iu-muted);
+}
+.ios-airlink-qr-card {
+  padding: 10px;
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.ios-airlink-camera-check {
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: rgba(16, 185, 129, 0.16);
+  color: #10b981;
+  font-size: 18px;
+  font-weight: 600;
+}
+.ios-airlink-phone-screen
+  .ios-airlink-airplay-screen-guide
+  > p.ios-airlink-camera-sub {
+  margin: 0;
+  font-size: 11.5px;
+  color: #a1a1aa;
+  line-height: 1.5;
+}
+.ios-airlink-camera-calibrate-grid {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+}
+.ios-airlink-camera-corner-stage {
+  container-type: size;
+  width: 100%;
+  height: 390px;
+  display: grid;
+  place-items: center;
+  padding: 10px;
+  border-radius: 14px;
+  background: #18181b;
+  border: 1px solid #27272a;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.ios-airlink-camera-corner-stage .camera-corner-editor {
+  width: 100%;
+  margin: 0;
+  display: grid;
+  place-items: center;
+}
+.ios-airlink-camera-corner-stage .camera-corner-frame {
+  position: relative;
+  width: 100%;
+  background: #09090b;
+}
+.ios-airlink-camera-corner-stage .camera-corner-frame img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+}
+.ios-airlink-camera-corner-stage .camera-corner-frame svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.ios-airlink-camera-corner-stage .camera-corner-frame polygon {
+  fill: none;
+  stroke: #10b981;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+.ios-airlink-camera-corner-stage .camera-corner-frame button {
+  position: absolute;
+  z-index: 2;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  transform: translate(-50%, -50%);
+  border: 0;
+  background: transparent;
+  cursor: crosshair;
+  touch-action: none;
+}
+.ios-airlink-camera-corner-stage .camera-corner-ring {
+  position: absolute;
+  inset: 7px;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.45), 0 1px 6px rgba(0, 0, 0, 0.45);
+}
+.ios-airlink-camera-corner-stage button:hover .camera-corner-ring,
+.ios-airlink-camera-corner-stage button:focus-visible .camera-corner-ring {
+  border-color: #10b981;
+}
+.ios-airlink-camera-corner-stage .camera-corner-label {
+  position: absolute;
+  top: -16px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #ffffff;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  white-space: nowrap;
+}
+.ios-airlink-phone-bezel.ios-airlink-camera-result-bezel {
+  height: 390px;
+}
+.ios-airlink-phone-screen .range-output {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+}
+.ios-airlink-phone-screen .corrected-preview-canvas {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+}
+/* Device card click-to-zoom detail modal */
+.ios-airlink-thumb-clickable {
+  border: 0;
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+.ios-airlink-detail-modal .ant-modal-content {
+  border-radius: 22px;
+  overflow: hidden;
+  padding: 0;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.22);
+}
+.ios-airlink-detail-studio {
+  display: grid;
+  grid-template-columns: 330px minmax(0, 1fr);
+  min-height: 540px;
+}
+.ios-airlink-detail-preview {
+  display: grid;
+  place-items: center;
+  padding: 28px 20px;
+  background-color: #f6f6f7;
+  background-image: radial-gradient(
+    circle at 1px 1px,
+    rgba(24, 24, 27, 0.07) 1px,
+    transparent 0
+  );
+  background-size: 16px 16px;
+  border-right: 1px solid #f1f1f3;
+}
+.ios-airlink-phone-bezel.ios-airlink-detail-bezel {
+  height: 480px;
+}
+.ios-airlink-detail-info {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 28px 28px 24px;
+  background: #ffffff;
+}
+.ios-airlink-detail-head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding-right: 32px;
+}
+.ios-airlink-detail-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--iu-text);
+  line-height: 1.3;
+  word-break: break-word;
+}
+.ios-airlink-detail-kv-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 14px;
+  background: #fafafb;
+  border: 1px solid var(--iu-border);
+}
+.ios-airlink-detail-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ios-airlink-detail-id code {
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ios-airlink-occupancy-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  background: #ecfdf5;
+  color: #047857;
+}
+.ios-airlink-occupancy-pill i {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #10b981;
+}
+.ios-airlink-occupancy-pill.occupied {
+  background: #fef3c7;
+  color: #b45309;
+}
+.ios-airlink-occupancy-pill.occupied i {
+  background: #f59e0b;
+}
+.ios-airlink-detail-actions {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 8px;
+}
+.ios-airlink-spinner-wrap {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #71717a;
+  font-size: 12.5px;
+}
+.ios-airlink-phone-screen .ios-airlink-spinner-wrap,
+.ios-airlink-camera-corner-stage .ios-airlink-spinner-wrap {
+  color: #a1a1aa;
+}
+.ios-airlink-spinner {
+  display: inline-block;
+  border-radius: 999px;
+  border: 2px solid rgba(113, 113, 122, 0.22);
+  border-top-color: currentColor;
+  animation: iu-spin 0.72s linear infinite;
+  box-sizing: border-box;
+}
+.ios-airlink-phone-screen .ios-airlink-spinner,
+.ios-airlink-camera-corner-stage .ios-airlink-spinner {
+  border-color: rgba(255, 255, 255, 0.18);
+  border-top-color: currentColor;
+}
+@keyframes iu-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

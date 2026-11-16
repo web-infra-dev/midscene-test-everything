@@ -11,11 +11,11 @@ pnpm build
 
 ## Build and test
 
-Workspace packages import compiled output. Rebuild the affected package and its dependencies before running a focused suite. For example, to work on iPhone Use, run the following commands.
+Workspace packages import compiled output. Rebuild the affected package and its dependencies before running a focused suite. For example, to work on iOS AirLink, run the following commands.
 
 ```sh
-pnpm --filter @midscene/iphone-use... -r build
-pnpm --filter @midscene/iphone-use test
+pnpm --filter @midscene/ios-airlink... -r build
+pnpm --filter @midscene/ios-airlink test
 ```
 
 Keep regression tests in the owning package's `tests/` directory. Use simulated hardware for automated tests. When reporting validation for hardware changes, describe simulated and physical results separately. Before moving physical hardware, obtain operator confirmation and use measured setup values and verified routes.
@@ -40,4 +40,4 @@ Keep the root READMEs focused on the project overview and quick start. Update bo
 
 ## Pull requests
 
-Open a pull request against `main` from a branch for your change. Use scoped Conventional Commits for commit messages, for example `fix(iphone-use): handle a disconnected device`. Summarize what changed and complete the [PR checklist](./.github/pull_request_template.md) with the checks you ran.
+Open a pull request against `main` from a branch for your change. Use scoped Conventional Commits for commit messages, for example `fix(ios-airlink): handle a disconnected device`. Summarize what changed and complete the [PR checklist](./.github/pull_request_template.md) with the checks you ran.

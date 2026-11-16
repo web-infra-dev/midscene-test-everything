@@ -212,13 +212,13 @@ const en: TranslationDict = {
           {
             num: '01',
             title: 'Install & build',
-            cmd: 'pnpm iphone-use install',
+            cmd: 'pnpm ios-airlink install',
             desc: 'Installs the macOS BLE HID bridge and device service.',
           },
           {
             num: '02',
             title: 'Pair & start',
-            cmd: 'pnpm iphone-use start',
+            cmd: 'pnpm ios-airlink start',
             desc: 'Pairs Mac Bluetooth HID with iPhone and exposes Universal Device.',
           },
           {
@@ -388,13 +388,13 @@ const zh: TranslationDict = {
           {
             num: '01',
             title: '安装与构建',
-            cmd: 'pnpm iphone-use install',
+            cmd: 'pnpm ios-airlink install',
             desc: '安装 macOS 蓝牙 HID 桥接程序与设备服务。',
           },
           {
             num: '02',
             title: '配对并启动',
-            cmd: 'pnpm iphone-use start',
+            cmd: 'pnpm ios-airlink start',
             desc: '将 Mac 蓝牙 HID 与 iPhone 配对并暴露 Universal Device 接口。',
           },
           {

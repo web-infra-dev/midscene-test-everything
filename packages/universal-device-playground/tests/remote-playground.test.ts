@@ -8,17 +8,17 @@ import { launchUniversalDevicePlayground } from '../dist/index.js';
 test('Playground discovers, claims, previews and releases one device from the service', async () => {
   // The service is built alongside the Playground, but is not its runtime dependency.
   const serviceModule = new URL(
-    '../../iphone-use/dist/server.js',
+    '../../ios-airlink/dist/server.js',
     import.meta.url,
   ).href;
   const workspaceModule = new URL(
-    '../../iphone-use/dist/workspaces.js',
+    '../../ios-airlink/dist/workspaces.js',
     import.meta.url,
   ).href;
   const { runServer } = await import(serviceModule);
   const { DeviceWorkspaces } = await import(workspaceModule);
   const storeModule = new URL(
-    '../../iphone-use/dist/hardware/config/store.js',
+    '../../ios-airlink/dist/hardware/config/store.js',
     import.meta.url,
   ).href;
   const { DeviceConfigStore } = await import(storeModule);

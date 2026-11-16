@@ -73,7 +73,7 @@ importers:
         specifier: workspace:*
         version: link:../packages/universal-device
 
-  packages/iphone-use:
+  packages/ios-airlink:
     dependencies:
       '@midscene/core':
         specifier: 1.17.5
