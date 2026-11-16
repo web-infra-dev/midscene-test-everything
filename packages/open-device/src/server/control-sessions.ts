@@ -14,10 +14,27 @@ export type ControlledDevice = {
   execute(action: InputAction, signal: AbortSignal): Promise<void>;
 };
 
+export type ControlErrorCode =
+  | 'UNAUTHORIZED'
+  | 'NOT_FOUND'
+  | 'INVALID_REQUEST'
+  | 'PAYLOAD_TOO_LARGE'
+  | 'DEVICE_BUSY'
+  | 'DEVICE_OFFLINE'
+  | 'ACTION_IN_PROGRESS'
+  | 'ACTION_UNSUPPORTED'
+  | 'ACTION_FAILED'
+  | 'SESSION_EXPIRED'
+  | 'PREVIEW_UNAVAILABLE'
+  | 'SERVICE_STOPPING'
+  | 'SERVICE_UPDATING'
+  | 'SERVICE_UNAVAILABLE';
+
 export class ControlError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly code?: ControlErrorCode,
   ) {
     super(message);
   }
@@ -61,7 +78,11 @@ export class ControlSessions {
 
   prepareUpdate() {
     if (this.closed || this.updateUntil > Date.now())
-      throw new ControlError(503, 'An update is already in progress.');
+      throw new ControlError(
+        503,
+        'An update is already in progress.',
+        'SERVICE_UPDATING',
+      );
     const busy = [...this.byDevice.keys()];
     if (busy.length) return { busy, expiresAt: undefined };
     // Acquisition and this check run synchronously in the same process.
@@ -70,17 +91,38 @@ export class ControlSessions {
   }
 
   acquire(deviceId: string) {
-    if (this.closed) throw new ControlError(503, '设备服务正在停止。');
+    if (this.closed)
+      throw new ControlError(
+        503,
+        'Device service is stopping.',
+        'SERVICE_STOPPING',
+      );
     if (this.updateUntil > Date.now())
-      throw new ControlError(503, '设备服务正在更新，请稍后重试。');
+      throw new ControlError(
+        503,
+        'Device service is updating, please retry shortly.',
+        'SERVICE_UPDATING',
+      );
     if (this.busy(deviceId))
-      throw new ControlError(409, '设备正在使用，请先断开现有连接。');
+      throw new ControlError(
+        409,
+        'Device is busy; disconnect the existing session first.',
+        'DEVICE_BUSY',
+      );
     const device = this.readyDevice(deviceId);
     if (!device || device.signal.aborted)
-      throw new ControlError(409, '设备未就绪，请先在设备管理台连接手机。');
+      throw new ControlError(
+        409,
+        'Device is not ready; connect it in the device manager first.',
+        'DEVICE_OFFLINE',
+      );
     const resourceId = device.resourceId ?? deviceId;
     if (this.busy(resourceId))
-      throw new ControlError(409, '设备正在使用，请先断开现有连接。');
+      throw new ControlError(
+        409,
+        'Device is busy; disconnect the existing session first.',
+        'DEVICE_BUSY',
+      );
     const lease: Lease = {
       id: randomUUID(),
       deviceId,
@@ -104,7 +146,11 @@ export class ControlSessions {
       lease.device.signal.aborted ||
       lease.expires <= Date.now()
     )
-      throw new ControlError(410, '设备控制会话已结束，请重新连接。');
+      throw new ControlError(
+        410,
+        'Control session has ended; reconnect to continue.',
+        'SESSION_EXPIRED',
+      );
     return lease;
   }
 
@@ -130,7 +176,11 @@ export class ControlSessions {
         return send(201, this.acquire(deviceId));
       }
       const route = /^\/sessions\/([^/]+)(?:\/([^/]+))?$/.exec(path);
-      if (!route) return send(404, { error: 'Unknown device API route' });
+      if (!route)
+        return send(404, {
+          error: 'Unknown device API route',
+          code: 'NOT_FOUND',
+        });
       const id = decodeURIComponent(route[1]);
       const operation = route[2];
       if (!operation && req.method === 'DELETE') {
@@ -146,11 +196,31 @@ export class ControlSessions {
       if (operation === 'screenshot' && req.method === 'GET') {
         const frame = await lease.device.screenshot();
         this.require(id);
+        const accept = req.headers.accept ?? '';
+        if (
+          accept.includes('image/jpeg') &&
+          !accept.includes('application/json')
+        ) {
+          res.writeHead(200, {
+            'Content-Type': 'image/jpeg',
+            'X-Screen-Width': String(frame.width),
+            'X-Screen-Height': String(frame.height),
+            'X-Screen-Sequence': String(frame.sequence),
+            'X-Screen-Received-At': String(frame.receivedAt),
+          });
+          res.end(frame.jpeg);
+          return;
+        }
         return send(200, { ...frame, jpeg: frame.jpeg.toString('base64') });
       }
       if (operation === 'preview' && req.method === 'GET') {
         const open = lease.device.openPreview;
-        if (!open) throw new ControlError(404, 'Device has no live preview');
+        if (!open)
+          throw new ControlError(
+            404,
+            'Device has no live preview',
+            'PREVIEW_UNAVAILABLE',
+          );
         lease.preview ??= new ControlPreview(
           (signal) => open.call(lease.device, signal),
           lease.lifetime.signal,
@@ -161,9 +231,17 @@ export class ControlSessions {
         const action = inputAction.parse(await readBody(req));
         this.require(id);
         if (lease.device.actions && !lease.device.actions.includes(action.type))
-          throw new ControlError(422, 'Device does not support this action');
+          throw new ControlError(
+            422,
+            'Device does not support this action',
+            'ACTION_UNSUPPORTED',
+          );
         if (lease.action)
-          throw new ControlError(409, '设备正在执行另一项操作。');
+          throw new ControlError(
+            409,
+            'Another action is already in progress.',
+            'ACTION_IN_PROGRESS',
+          );
         const request = new AbortController();
         const abort = () => request.abort();
         res.once('close', abort);
@@ -180,18 +258,25 @@ export class ControlSessions {
           res.off('close', abort);
         }
       }
-      return send(404, { error: 'Unknown device API route' });
+      return send(404, {
+        error: 'Unknown device API route',
+        code: 'NOT_FOUND',
+      });
     } catch (error) {
       if (res.destroyed) return;
       if (res.headersSent) return res.destroy();
+      const isBadInput =
+        error instanceof z.ZodError ||
+        error instanceof SyntaxError ||
+        error instanceof URIError;
       const status =
+        error instanceof ControlError ? error.status : isBadInput ? 400 : 409;
+      const code: ControlErrorCode =
         error instanceof ControlError
-          ? error.status
-          : error instanceof z.ZodError ||
-              error instanceof SyntaxError ||
-              error instanceof URIError
-            ? 400
-            : 409;
+          ? (error.code ?? 'ACTION_FAILED')
+          : isBadInput
+            ? 'INVALID_REQUEST'
+            : 'ACTION_FAILED';
       send(status, {
         error:
           error instanceof z.ZodError
@@ -199,6 +284,7 @@ export class ControlSessions {
             : error instanceof Error
               ? error.message
               : String(error),
+        code,
       });
     }
   }
@@ -220,7 +306,7 @@ async function readBody(req: IncomingMessage) {
     size += bytes.length;
     if (size > 32 * 1024) {
       req.resume();
-      throw new ControlError(413, 'Request too large');
+      throw new ControlError(413, 'Request too large', 'PAYLOAD_TOO_LARGE');
     }
     chunks.push(bytes);
   }

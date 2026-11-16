@@ -4,7 +4,11 @@ import type { DeviceProfile } from '../protocol.js';
 import { ControlSessions, type ControlledDevice } from './control-sessions.js';
 import { handleDeviceDocs } from './docs.js';
 
-export { ControlError, type ControlledDevice } from './control-sessions.js';
+export {
+  ControlError,
+  type ControlErrorCode,
+  type ControlledDevice,
+} from './control-sessions.js';
 export { openAPI } from './openapi.js';
 
 export function createDeviceHandler(options: {
@@ -37,7 +41,10 @@ export function createDeviceHandler(options: {
     };
     if (token.length !== supplied.length || !timingSafeEqual(token, supplied)) {
       res.setHeader('WWW-Authenticate', 'Bearer');
-      send(401, { error: 'A device service access token is required' });
+      send(401, {
+        error: 'A device service access token is required',
+        code: 'UNAUTHORIZED',
+      });
     } else if (path === '/api/v1/devices' && req.method === 'GET') {
       void Promise.resolve()
         .then(() => options.listDevices())
@@ -51,7 +58,12 @@ export function createDeviceHandler(options: {
             })),
           }),
         )
-        .catch(() => send(503, { error: 'The device backend is unavailable' }));
+        .catch(() =>
+          send(503, {
+            error: 'The device backend is unavailable',
+            code: 'SERVICE_UNAVAILABLE',
+          }),
+        );
     } else {
       void sessions.handle(req, res, path.slice('/api/v1'.length));
     }

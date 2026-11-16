@@ -6,7 +6,9 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": ["dist"],
+  "bin": { "open-device": "./dist/cli.js" },
   "scripts": {
+    "cli": "node dist/cli.js",
     "build": "rslib build",
     "rfc:preview": "npx --yes serve rfc",
     "typecheck": "tsc --noEmit -p tsconfig.build.json && tsc --noEmit -p tsconfig.tests.json",
