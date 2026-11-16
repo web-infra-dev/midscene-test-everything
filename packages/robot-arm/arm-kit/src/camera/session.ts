@@ -173,6 +173,16 @@ export class CameraSession implements CalibrationVision {
     await scoped.load();
     return scoped;
   }
+  /**
+   * A camera-level perspective, loaded independently of whichever screen is
+   * currently active. A 3D build that renders several screens at once must not
+   * inherit the console's active perspective.
+   */
+  async forCamera(): Promise<CameraSession> {
+    const scoped = new CameraSession(this.camera, this.stream, this.directory);
+    await scoped.load();
+    return scoped;
+  }
   hasSavedPerspective(): boolean {
     return this.savedPerspective;
   }

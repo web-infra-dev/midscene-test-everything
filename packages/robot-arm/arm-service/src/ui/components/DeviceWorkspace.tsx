@@ -45,6 +45,7 @@ import { CameraStagePreview } from './CameraStagePreview';
 import { DeviceCalibration } from './DeviceCalibration';
 import { DeviceTransfer } from './DeviceTransfer';
 import { RobotConnectionDialog } from './RobotConnectionDialog';
+import { TwinPanel, type TwinViewPreset } from './TwinPanel';
 import { ActionAudit } from './robot-arm/ActionAudit';
 import { ControllerMotionSettings } from './robot-arm/ControllerMotionSettings';
 import { DeviceSettings } from './robot-arm/DeviceSettings';
@@ -71,6 +72,7 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
   const [wizardScreen, setWizardScreen] = useState<string>();
   const [transferId, setTransferId] = useState<string>();
   const [preferredView, setCameraView] = useState<CameraView>('raw');
+  const [twinView, setTwinView] = useState<TwinViewPreset>('default');
   const [previewError, setPreviewError] = useState<string>();
   const [previewRevision, setPreviewRevision] = useState(0);
   const {
@@ -612,8 +614,8 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
         />
       ) : camera && selected ? (
         <main className="app-workspace streams-section">
-          <section className="camera-stage">
-            <header className="camera-stage-header">
+          <header className="camera-stage-header workspace-toolbar">
+            <div className="workspace-toolbar-left">
               <div className="camera-stage-title">
                 <Typography.Title level={4} style={{ margin: 0 }}>
                   {selected.name}
@@ -633,186 +635,214 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
                   </Typography.Text>
                 </div>
               </div>
-              <div className="camera-stage-actions">
-                {availableScreens.length > 1 && activeScreen && (
-                  <Select
-                    aria-label={language === 'zh' ? '标定屏幕' : 'Screen'}
-                    value={activeScreen.id}
-                    loading={switchingScreen}
-                    onChange={(id) => {
-                      setPreferredScreenId(id);
-                      identifyScreen(selected.id, id);
-                    }}
-                    options={availableScreens.map((s) => ({
-                      value: s.id,
-                      label: s.name,
-                    }))}
-                    style={{ width: 160 }}
-                  />
-                )}
-
-                {activeScreen &&
-                  (standalone || (connected && setupSession)) && (
-                    <CameraPerspectiveActions
-                      key={JSON.stringify([
-                        selected.id,
-                        activeScreen.id,
-                        standalone,
-                        setupSession,
-                      ])}
-                      cameraId={selected.id}
-                      screen={activeScreen}
-                      robot={
-                        connected && setupSession
-                          ? {
-                              session: setupSession,
-                              detect: openCameraCorrection,
-                            }
-                          : undefined
-                      }
-                      disabled={!previewEnabled}
-                      onChanged={async (view) => {
-                        setCameraView(view);
-                        setPreviewRevision((n) => n + 1);
-                        await refresh(false);
-                      }}
-                    />
-                  )}
-                {previewTarget && (
-                  <Segmented
-                    className="rv-segmented"
-                    aria-label={language === 'zh' ? '画面类型' : 'Camera view'}
-                    value={cameraView}
-                    onChange={(value) => setCameraView(value as CameraView)}
-                    options={[
-                      {
-                        value: 'raw',
-                        label: language === 'zh' ? '原始画面' : 'Original',
-                      },
-                      {
-                        value: 'corrected',
-                        label: language === 'zh' ? '校正画面' : 'Corrected',
-                      },
-                    ]}
-                  />
-                )}
-                <Tooltip title={t('refresh')}>
-                  <Button
-                    type="text"
-                    aria-label={t('refresh')}
-                    icon={<RefreshCw size={16} />}
-                    loading={status === 'loading'}
-                    onClick={() => {
-                      setPreviewRevision((value) => value + 1);
-                      // Reload the preview, not the device list: probing while
-                      // this camera is capturing can disturb the stream.
-                      void refresh(false);
-                    }}
-                  />
-                </Tooltip>
-                <Tooltip title={cameraActionLabel}>
-                  <Button
-                    type="text"
-                    aria-label={cameraActionLabel}
-                    icon={
-                      previewEnabled ? (
-                        <StopCircle size={16} />
-                      ) : (
-                        <Play size={16} />
-                      )
-                    }
-                    loading={starting || pendingId === selected.id}
-                    onClick={() => {
-                      setPreviewError(undefined);
-                      if (standalone) {
-                        setPausedCamera(
-                          previewEnabled ? selected.id : undefined,
-                        );
-                        setPreviewRevision((n) => n + 1);
-                      } else if (connected)
-                        void (running ? stop(selected.id) : start(selected.id));
-                    }}
-                  />
-                </Tooltip>
-              </div>
-            </header>
-            <PerspectiveObservationCard
-              observation={perspective}
-              screenName={activeScreen?.name ?? selected.name}
-              onRecalibrate={openCameraCorrection}
-            />
-            <CameraStagePreview
-              available={Boolean(previewEnabled && previewError !== previewKey)}
-              outlines={stageOutlines}
-              frameSize={cameraView === 'corrected' ? previewTarget : undefined}
-            >
-              {previewEnabled && previewError === previewKey ? (
-                <Empty
-                  description={
-                    language === 'zh'
-                      ? '画面加载失败，请刷新重试'
-                      : 'Preview unavailable. Refresh to retry.'
-                  }
-                />
-              ) : previewEnabled && previewId ? (
-                <PreviewControl
-                  key={previewKey}
-                  activeScreenId={activeScreen?.id}
-                  alt={
-                    cameraView === 'corrected'
-                      ? (activeScreen?.name ?? selected.name)
-                      : selected.name
-                  }
-                  available={controlAvailable}
-                  longPressEnabled={Boolean(
-                    arm.capabilities?.screenActions.includes('longPress'),
-                  )}
-                  className="stream-preview"
-                  control={previewControl}
-                  enabled={controlEnabled}
-                  onError={() => setPreviewError(previewKey)}
-                  onLoad={(event) => {
-                    const { naturalWidth: width, naturalHeight: height } =
-                      event.currentTarget;
-                    if (width && height)
-                      setFrame((previous) =>
-                        previous?.key === previewKey &&
-                        previous.width === width &&
-                        previous.height === height
-                          ? previous
-                          : { key: previewKey, width, height },
-                      );
+              {availableScreens.length > 1 && activeScreen && (
+                <Select
+                  aria-label={language === 'zh' ? '标定屏幕' : 'Screen'}
+                  value={activeScreen.id}
+                  loading={switchingScreen}
+                  onChange={(id) => {
+                    setPreferredScreenId(id);
+                    identifyScreen(selected.id, id);
                   }}
-                  screens={controlScreens}
-                  src={`${cameraPreviewUrl(previewId, cameraView)}&revision=${encodeURIComponent(previewKey)}`}
-                  view={cameraView}
+                  options={availableScreens.map((s) => ({
+                    value: s.id,
+                    label: s.name,
+                  }))}
+                  style={{ width: 180 }}
                 />
-              ) : starting ? (
-                <Spin aria-label={t('cameraStarting')} />
-              ) : (
-                <>
-                  <VideoOff size={40} strokeWidth={1.25} />
-                  <span>{t('noStream')}</span>
-                </>
               )}
-            </CameraStagePreview>
-            {(error || selected.error || selected.stream?.error) && (
-              <Typography.Text type="danger" role="alert">
-                {error || selected.error || selected.stream?.error}
-              </Typography.Text>
-            )}
-            <CameraRail
-              entries={
-                standalone
-                  ? cameras.map((entry) =>
-                      entry.id === camera.id ? camera : entry,
+            </div>
+            <div className="camera-stage-actions">
+              {activeScreen && (standalone || (connected && setupSession)) && (
+                <CameraPerspectiveActions
+                  key={JSON.stringify([
+                    selected.id,
+                    activeScreen.id,
+                    standalone,
+                    setupSession,
+                  ])}
+                  cameraId={selected.id}
+                  screen={activeScreen}
+                  robot={
+                    connected && setupSession
+                      ? {
+                          session: setupSession,
+                          detect: openCameraCorrection,
+                        }
+                      : undefined
+                  }
+                  disabled={!previewEnabled}
+                  onChanged={async (view) => {
+                    setCameraView(view);
+                    setPreviewRevision((n) => n + 1);
+                    await refresh(false);
+                  }}
+                />
+              )}
+              {previewTarget && (
+                <Segmented
+                  className="rv-segmented"
+                  aria-label={language === 'zh' ? '画面类型' : 'Camera view'}
+                  value={cameraView}
+                  onChange={(value) => setCameraView(value as CameraView)}
+                  options={[
+                    {
+                      value: 'raw',
+                      label: language === 'zh' ? '原始画面' : 'Original',
+                    },
+                    {
+                      value: 'corrected',
+                      label: language === 'zh' ? '校正画面' : 'Corrected',
+                    },
+                  ]}
+                />
+              )}
+              <Tooltip title={t('refresh')}>
+                <Button
+                  type="text"
+                  aria-label={t('refresh')}
+                  icon={<RefreshCw size={16} />}
+                  loading={status === 'loading'}
+                  onClick={() => {
+                    setPreviewRevision((value) => value + 1);
+                    // Reload the preview, not the device list: probing while
+                    // this camera is capturing can disturb the stream.
+                    void refresh(false);
+                  }}
+                />
+              </Tooltip>
+              <Tooltip title={cameraActionLabel}>
+                <Button
+                  type="text"
+                  aria-label={cameraActionLabel}
+                  icon={
+                    previewEnabled ? (
+                      <StopCircle size={16} />
+                    ) : (
+                      <Play size={16} />
                     )
-                  : cameras
-              }
-              selectedId={selectedId}
-              onSelect={select}
-            />
-          </section>
+                  }
+                  loading={starting || pendingId === selected.id}
+                  onClick={() => {
+                    setPreviewError(undefined);
+                    if (standalone) {
+                      setPausedCamera(previewEnabled ? selected.id : undefined);
+                      setPreviewRevision((n) => n + 1);
+                    } else if (connected)
+                      void (running ? stop(selected.id) : start(selected.id));
+                  }}
+                />
+              </Tooltip>
+              <span className="workspace-toolbar-divider" aria-hidden="true" />
+              <Segmented
+                className="rv-segmented"
+                aria-label={language === 'zh' ? '3D 视角' : '3D view'}
+                value={twinView}
+                onChange={(value) => setTwinView(value as TwinViewPreset)}
+                options={[
+                  {
+                    value: 'default',
+                    label: language === 'zh' ? '默认视角' : 'Default',
+                  },
+                  {
+                    value: 'camera',
+                    label: language === 'zh' ? '相机视角' : 'Camera',
+                  },
+                  {
+                    value: 'screen',
+                    label: language === 'zh' ? '聚焦屏幕' : 'Screen',
+                  },
+                ]}
+              />
+            </div>
+          </header>
+          <div className="workspace-views">
+            <section className="camera-stage">
+              <PerspectiveObservationCard
+                observation={perspective}
+                screenName={activeScreen?.name ?? selected.name}
+                onRecalibrate={openCameraCorrection}
+              />
+              <div className="camera-frame">
+                <CameraStagePreview
+                  available={Boolean(
+                    previewEnabled && previewError !== previewKey,
+                  )}
+                  outlines={stageOutlines}
+                  frameSize={
+                    cameraView === 'corrected' ? previewTarget : undefined
+                  }
+                >
+                  {previewEnabled && previewError === previewKey ? (
+                    <Empty
+                      description={
+                        language === 'zh'
+                          ? '画面加载失败，请刷新重试'
+                          : 'Preview unavailable. Refresh to retry.'
+                      }
+                    />
+                  ) : previewEnabled && previewId ? (
+                    <PreviewControl
+                      key={previewKey}
+                      activeScreenId={activeScreen?.id}
+                      alt={
+                        cameraView === 'corrected'
+                          ? (activeScreen?.name ?? selected.name)
+                          : selected.name
+                      }
+                      available={controlAvailable}
+                      longPressEnabled={Boolean(
+                        arm.capabilities?.screenActions.includes('longPress'),
+                      )}
+                      className="stream-preview"
+                      control={previewControl}
+                      enabled={controlEnabled}
+                      onError={() => setPreviewError(previewKey)}
+                      onLoad={(event) => {
+                        const { naturalWidth: width, naturalHeight: height } =
+                          event.currentTarget;
+                        if (width && height)
+                          setFrame((previous) =>
+                            previous?.key === previewKey &&
+                            previous.width === width &&
+                            previous.height === height
+                              ? previous
+                              : { key: previewKey, width, height },
+                          );
+                      }}
+                      screens={controlScreens}
+                      src={`${cameraPreviewUrl(previewId, cameraView)}&revision=${encodeURIComponent(previewKey)}`}
+                      view={cameraView}
+                    />
+                  ) : starting ? (
+                    <Spin aria-label={t('cameraStarting')} />
+                  ) : (
+                    <>
+                      <VideoOff size={40} strokeWidth={1.25} />
+                      <span>{t('noStream')}</span>
+                    </>
+                  )}
+                </CameraStagePreview>
+                <CameraRail
+                  entries={
+                    standalone
+                      ? cameras.map((entry) =>
+                          entry.id === camera.id ? camera : entry,
+                        )
+                      : cameras
+                  }
+                  selectedId={selectedId}
+                  onSelect={select}
+                />
+              </div>
+              {(error || selected.error || selected.stream?.error) && (
+                <Typography.Text type="danger" role="alert">
+                  {error || selected.error || selected.stream?.error}
+                </Typography.Text>
+              )}
+            </section>
+            <TwinPanel connected={connected} viewPreset={twinView} />
+          </div>
         </main>
       ) : (
         <section className="camera-empty">

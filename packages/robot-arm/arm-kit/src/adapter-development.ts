@@ -16,6 +16,7 @@ export type {
   SampleQuality,
   MeasuredPose,
   MeasuredJoints,
+  RobotMotionSample,
   ReadinessPolicy,
 } from './kernel/contracts.js';
 export type {

@@ -238,6 +238,10 @@ export class RobotDriverBoundary {
   latestToolVectorSample() {
     return this.adapter.latestToolVectorSample?.();
   }
+  /** Passive joint sample for a 3D mirror; never issues a controller command. */
+  latestMotionSample() {
+    return this.adapter.latestMotionSample?.();
+  }
   async status(fresh = true): Promise<RobotStatus> {
     const payloadEpoch = this.payloadEpoch;
     const generation = this.generation;

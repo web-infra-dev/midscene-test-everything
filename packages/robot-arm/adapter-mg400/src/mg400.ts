@@ -15,6 +15,7 @@ import {
   type RobotArmFeedbackStatus,
   type RobotDriver,
   type RobotKinematics,
+  type RobotMotionSample,
   type RobotState,
   type RobotStatus,
   SCREEN_TILT_LIMIT_DEGREES,
@@ -809,12 +810,100 @@ export class Mg400Adapter implements RobotArmAdapter {
     orientation: 'yaw',
     fixedOrientation: { x: 0, y: 0, z: 0, w: 1 },
     screenNormalToleranceDegrees: SCREEN_TILT_LIMIT_DEGREES,
+    // URDF-derived chain for the optional 3D mirror. Origins are millimetres;
+    // the STL vertices are metres. The passive links reproduce the parallelogram
+    // closed loop, so only J1..J4 are driven.
+    visual: {
+      id: 'dobot-mg400',
+      assetBaseUrl: '/models/mg400/',
+      format: 'stl',
+      assetUnits: 'm',
+      toolMountLink: 'link5',
+      toolMountOffsetMm: [0, 0, -85],
+      homeJointDegrees: [0, 10.3, 35.5, 0],
+      links: [
+        { name: 'base_link', mesh: 'base_link.STL', originMm: [0, 0, 0] },
+        {
+          name: 'link1',
+          parent: 'base_link',
+          mesh: 'link1.STL',
+          originMm: [-5, 0, 109],
+          axis: [0, 0, 1],
+          jointIndex: 1,
+        },
+        {
+          name: 'link2_1',
+          parent: 'link1',
+          mesh: 'link2_1.STL',
+          originMm: [43.50076, -35.77488, 118.99568],
+          axis: [0, 1, 0],
+          jointIndex: 2,
+        },
+        {
+          name: 'link2_2',
+          parent: 'link1',
+          mesh: 'link2_2.STL',
+          originMm: [4.52886, -30.5, 141.5],
+          axis: [0, 1, 0],
+          mimic: { link: 'link2_1', multiplier: 1 },
+        },
+        {
+          name: 'fake_link',
+          parent: 'link2_1',
+          originMm: [-1.05126, 35.77488, 175.00116],
+          axis: [0, 1, 0],
+          jointIndex: 3,
+        },
+        {
+          name: 'link3_1',
+          parent: 'fake_link',
+          mesh: 'link3_1.STL',
+          originMm: [0, 0, 0],
+          axis: [0, 1, 0],
+          mimic: { link: 'link3_2', multiplier: 1 },
+        },
+        {
+          name: 'link3_2',
+          parent: 'link2_2',
+          mesh: 'link3_2.STL',
+          originMm: [-1.0505, 6.5, 174.99685],
+          axis: [0, 1, 0],
+          mimic: { link: 'link2_2', multiplier: -1 },
+        },
+        {
+          name: 'link4_1',
+          parent: 'link3_1',
+          mesh: 'link4_1.STL',
+          originMm: [174.96978, -17, 3.25187],
+          axis: [0, 1, 0],
+          mimic: { link: 'link4_2', multiplier: -1 },
+        },
+        {
+          name: 'link4_2',
+          parent: 'link3_2',
+          mesh: 'link4_2.STL',
+          originMm: [67.89659, 0.5, 11.972],
+          axis: [0, 1, 0],
+          mimic: { link: 'fake_link', multiplier: 1 },
+        },
+        {
+          name: 'link5',
+          parent: 'link4_1',
+          mesh: 'link5.STL',
+          originMm: [65.99962, 17, 31.0008],
+          axis: [0, 0, 1],
+          jointIndex: 4,
+        },
+      ],
+    },
   };
   readonly setupDefaults = robotSetupDefaults('mg400');
   readonly readinessPolicy = { maxStateAgeMs: 1000, required: [] };
   readonly driver: RobotDriver;
   readonly motionLimits: NonNullable<RobotArmAdapter['motionLimits']>;
   private sampleSequence = 0;
+  private motionSequence = 0;
+  private lastMotionFrameAt = 0;
   private lastCommandAt = 0;
   private softwarePaused = false;
   private safetyPriority = 0;
@@ -1369,6 +1458,27 @@ export class Mg400Adapter implements RobotArmAdapter {
     | undefined {
     return undefined;
   }
+  /**
+   * Passive joint sample for a 3D mirror. The 30004 frame is the only source a
+   * renderer may use: its joint angles are the controller's own, while the
+   * tool vector in the same frame is explicitly not trusted (see above).
+   */
+  latestMotionSample(): RobotMotionSample | undefined {
+    const frame = this.feedback.current();
+    if (!frame) return undefined;
+    if (frame.receivedAt !== this.lastMotionFrameAt) {
+      this.lastMotionFrameAt = frame.receivedAt;
+      this.motionSequence += 1;
+    }
+    return {
+      seq: this.motionSequence,
+      receivedAt: frame.receivedAt,
+      controllerMs: Number(frame.controllerTimestampMs),
+      joints: frame.jointActualDegrees.slice(0, this.kinematics.jointCount),
+      source: 'push',
+      stale: false,
+    };
+  }
   private async beginSequence(
     targets: readonly LinearSequenceTarget[],
     options: LinearSequenceOptions,
@@ -1646,6 +1756,7 @@ export class Mg400Adapter implements RobotArmAdapter {
   private async readStatus(fresh: boolean): Promise<RobotStatus> {
     const s = fresh ? await this.getStateFresh() : await this.getState();
     const quality = { ...this.pollSample(), receivedAt: s.updatedAt };
+    const feedback = this.feedback.current();
     return {
       connection: s.connected ? 'connected' : 'disconnected',
       authority: 'unknown',
@@ -1663,6 +1774,20 @@ export class Mg400Adapter implements RobotArmAdapter {
       faults: s.faults,
       quality,
       pose: s.pose ? { ...quality, pose: s.pose } : undefined,
+      ...(feedback
+        ? {
+            joints: {
+              sampleId: `push-${feedback.controllerTimestampMs}`,
+              receivedAt: new Date(feedback.receivedAt).toISOString(),
+              source: 'push' as const,
+              stale: false,
+              values: feedback.jointActualDegrees.slice(
+                0,
+                this.kinematics.jointCount,
+              ),
+            },
+          }
+        : {}),
       vendorMode: s.mode,
     };
   }

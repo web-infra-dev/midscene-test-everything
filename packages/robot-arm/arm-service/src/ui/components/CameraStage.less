@@ -13,6 +13,27 @@
   justify-content: space-between;
 }
 
+/* Shared workspace toolbar: context (camera + screen) on the left, camera
+   actions and the 3D view preset on the right. */
+.workspace-toolbar {
+  min-height: 40px;
+}
+
+.workspace-toolbar-left {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.workspace-toolbar-divider {
+  width: 1px;
+  height: 20px;
+  margin: 0 2px;
+  background: var(--rv-border, rgb(15 23 42 / 10%));
+}
+
 .camera-stage-title {
   display: flex;
   flex-wrap: wrap;
@@ -55,6 +76,7 @@
   }
   flex-wrap: wrap;
   gap: 8px;
+  margin-left: auto;
 }
 
 /* Keep the stage at the frame's ratio while capping its height. */
@@ -187,14 +209,14 @@
   background: var(--midscene-surface-muted, #f5f5f5);
   color: var(--midscene-text-secondary, rgb(0 0 0 / 70%));
 
-  /* Equal halves: a two-track grid gives each side the width of the longer
-     label, so the pair reads as one control instead of two. Flex cannot do
-     this here, because an item never shrinks below its own text. */
+  /* Equal tracks: a grid gives every label the same width, so a pair reads as
+     one control instead of two. Flex cannot do this here, because an item never
+     shrinks below its own text. `grid-auto-flow` also covers a three-way switch
+     (Split / Camera / 3D) without another rule. */
   .ant-segmented-group {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    /* antd leaves `justify-items: flex-start` on the group, which keeps each
-       grid item at its own text width. */
+    grid-auto-columns: 1fr;
+    grid-auto-flow: column;
     justify-items: stretch;
   }
 

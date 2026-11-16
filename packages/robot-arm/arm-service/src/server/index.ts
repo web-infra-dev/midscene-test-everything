@@ -51,6 +51,8 @@ import type {
   SessionInput,
 } from './session.js';
 import { StatusPanel } from './status-panel.js';
+import type { TwinSceneSnapshot } from './twin-types.js';
+import { TwinStream, buildTwinScene } from './twin.js';
 
 export interface PlaygroundOptions {
   /** Resolve the controller address on startup and on each reconnect. */
@@ -158,6 +160,7 @@ export async function startPlaygroundHost({
   let screenControl: ScreenControl | undefined;
   let arm: ArmController | undefined;
   let armControls: PlaygroundArmControls | undefined;
+  const twinStream = new TwinStream(() => arm);
   let host: string | undefined;
   let connecting = false;
   let connectionError: string | undefined;
@@ -586,6 +589,23 @@ export async function startPlaygroundHost({
           200,
           await connectionStatus(url.searchParams.get('fresh') === 'true'),
         );
+      if (url.pathname === '/api/twin/scene' && req.method === 'GET') {
+        if (!arm || !devices) {
+          const empty: TwinSceneSnapshot = {
+            ready: false,
+            blockedReasons: ['arm-disconnected'],
+            screens: [],
+            skippedScreens: [],
+            generatedAt: new Date().toISOString(),
+          };
+          return send(200, empty);
+        }
+        return send(200, await buildTwinScene(arm, devices));
+      }
+      if (url.pathname === '/api/twin/stream' && req.method === 'GET') {
+        twinStream.handle(req, res);
+        return;
+      }
       if (url.pathname === '/api/arm/stop' && req.method === 'POST') {
         if (!armControls || connecting)
           return send(409, { error: 'Connect the arm first' });
@@ -1328,6 +1348,7 @@ export async function startPlaygroundHost({
           return send(400, { error: 'Unknown camera view' });
         const client = url.searchParams.get('client') ?? undefined;
         const viewer = url.searchParams.get('viewer') ?? undefined;
+        const screenId = url.searchParams.get('screen') ?? undefined;
         if (!devices && id) {
           if (url.searchParams.has('screen'))
             return send(400, {
@@ -1356,6 +1377,7 @@ export async function startPlaygroundHost({
           view === 'corrected',
           client,
           viewer,
+          view === 'corrected' ? screenId : undefined,
         );
         return;
       }
@@ -1481,6 +1503,7 @@ export async function startPlaygroundHost({
         await disconnectArm();
         for (const preview of markerPreviews.values()) preview.close();
         markerPreviews.clear();
+        twinStream.close();
         await cameraManager.close();
         await drained;
       })();

@@ -20,6 +20,46 @@ export interface JointDefinition {
   unit: 'degrees' | 'mm';
   limits?: { min: number; max: number; source: string };
 }
+/**
+ * One link of a browser-renderable robot skeleton. It is presentation data, not
+ * a motion contract: origins and axes are read-only geometry, and a live joint
+ * value is mapped in through `jointIndex`/`jointSign` before any renderer sees
+ * it. Units are millimetres/degrees unless `assetUnits` says otherwise.
+ */
+export interface RobotVisualLink {
+  name: string;
+  parent?: string;
+  /** Shown mesh file under `assetBaseUrl`; a link without one is a frame. */
+  mesh?: string;
+  /** Position in the parent frame, millimetres. */
+  originMm: [number, number, number];
+  /** Rotation axis in this link's own frame for a revolute joint. */
+  axis?: [number, number, number];
+  /** 1-based controller joint index that drives this link. */
+  jointIndex?: number;
+  jointSign?: number;
+  jointOffsetDeg?: number;
+  /** Passive link driven by another link, e.g. a parallelogram linkage. */
+  mimic?: { link: string; multiplier: number; offsetDeg?: number };
+}
+export interface RobotVisualModel {
+  id: string;
+  /** Prefix every `mesh` is resolved against, e.g. `/models/mg400/`. */
+  assetBaseUrl: string;
+  format: 'glb' | 'stl';
+  /** Unit of the mesh coordinates; origins are always millimetres. */
+  assetUnits: 'm' | 'mm';
+  links: RobotVisualLink[];
+  /** Link the ToolProfile is mounted on. */
+  toolMountLink: string;
+  /**
+   * Flange face in the mount link's own frame, millimetres. A URDF link origin
+   * often sits above the physical mounting face, so the tool starts here.
+   */
+  toolMountOffsetMm?: [number, number, number];
+  /** Optional ready pose used before the first live sample. */
+  homeJointDegrees?: number[];
+}
 export interface RobotKinematics {
   /** Optional drawing and joint marker coordinates in its view box. */
   schematic?: {
@@ -36,6 +76,8 @@ export interface RobotKinematics {
   orientationToleranceRadians?: number;
   workspace?: Workspace;
   screenNormalToleranceDegrees?: number;
+  /** Optional 3D skeleton; absent means the browser cannot draw this arm. */
+  visual?: RobotVisualModel;
 }
 export interface SampleQuality {
   sampleId: string;
@@ -48,6 +90,22 @@ export interface MeasuredPose extends SampleQuality {
 }
 export interface MeasuredJoints extends SampleQuality {
   values: number[];
+}
+/**
+ * A passive, high-rate motion sample for a 3D mirror. Unlike `MeasuredPose` it
+ * carries joints only, because a push channel can be trusted for joint angles
+ * while its Cartesian vector can disagree with `GetPose`.
+ */
+export interface RobotMotionSample {
+  seq: number;
+  /** Host receive time, milliseconds. */
+  receivedAt: number;
+  /** Controller timestamp when the frame carries one. */
+  controllerMs?: number;
+  /** Controller joint order, degrees. */
+  joints: number[];
+  source: 'push' | 'poll';
+  stale: boolean;
 }
 /** Vendor-native diagnostics, independent of measured motion readiness. */
 export interface ControllerStateSample {
@@ -201,6 +259,11 @@ export interface RobotArmAdapter {
   latestToolVectorSample?():
     | { pose: CartesianPose; receivedAt: number }
     | undefined;
+  /**
+   * Latest passive joint sample for a 3D mirror. Implementations must not issue
+   * a controller command here; callers poll it at render rate.
+   */
+  latestMotionSample?(): RobotMotionSample | undefined;
 }
 /**
  * One direction of continuous jog. `axisID` values follow the controller

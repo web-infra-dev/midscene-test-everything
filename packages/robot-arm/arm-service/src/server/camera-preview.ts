@@ -195,9 +195,18 @@ export async function streamCameraPreview(
   corrected = false,
   client?: string,
   viewer?: string,
+  screenId?: string,
 ) {
   const { camera } = entry;
-  if (corrected && !camera.getRectifiedPreviewTarget())
+  // A camera can hold one perspective per screen. The 3D twin names the screen
+  // so two slabs can stream different rectifications of the same raw frames;
+  // the camera id names the camera-level perspective.
+  const session = screenId
+    ? screenId === camera.camera.id
+      ? await camera.forCamera()
+      : await camera.forScreen(screenId)
+    : camera;
+  if (corrected && !session.getRectifiedPreviewTarget())
     throw Object.assign(
       new Error('Save perspective correction before viewing it'),
       { status: 409 },
@@ -213,8 +222,12 @@ export async function streamCameraPreview(
     await streamFrames(
       res,
       camera.stream,
-      corrected ? (frame) => rectifyPreviewFrame(camera, frame) : undefined,
-      corrected ? CORRECTED_PREVIEW_INTERVAL_MS : 0,
+      corrected ? (frame) => rectifyPreviewFrame(session, frame) : undefined,
+      corrected
+        ? viewer?.startsWith('twin-')
+          ? 100
+          : CORRECTED_PREVIEW_INTERVAL_MS
+        : 0,
     );
   } catch (error) {
     untrack();

@@ -1,0 +1,157 @@
+// The workspace is always a split: the camera and the 3D twin sit side by side
+// as two equal dark viewports, with no mode switch.
+.workspace-views {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+}
+
+@media (max-width: 1180px) {
+  .workspace-views {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto;
+  }
+}
+
+/* The camera is one card: viewport + a clickable thumbnail strip at its bottom.
+   The strip lives inside the card so the camera and the 3D panel still end on
+   the same baseline. */
+.camera-frame {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--rv-border, rgb(15 23 42 / 10%));
+  border-radius: 12px;
+  background: #0b0e14;
+}
+
+.camera-frame .camera-stage-preview {
+  flex: 1;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: #0b0e14;
+}
+
+.camera-frame .camera-rail {
+  flex-shrink: 0;
+  grid-auto-columns: 112px;
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid rgb(255 255 255 / 8%);
+  background: #0b0e14;
+  color: #cbd5e1;
+}
+
+.camera-frame .camera-rail-item {
+  border-color: rgb(255 255 255 / 10%);
+  background: rgb(255 255 255 / 4%);
+  color: #e5e7eb;
+}
+
+.camera-frame .camera-rail-item:hover {
+  background: rgb(255 255 255 / 8%);
+}
+
+.camera-frame .camera-rail-item.is-active {
+  border-color: #8ef6ff;
+  box-shadow: 0 0 0 1px #8ef6ff;
+}
+
+/* The 3D viewport keeps the original dark glass look: it is the same kind of
+   dark surface as the camera image, framed by the light workspace. */
+.twin-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--rv-border, rgb(15 23 42 / 10%));
+  border-radius: 12px;
+  background: #0b0e14;
+}
+
+.twin-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: #0b0e14;
+
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    outline: none;
+    touch-action: none;
+  }
+}
+
+.twin-placeholder {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 14px;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  color: #cbd5e1;
+  background: #0b0e14;
+  text-align: center;
+
+  .ant-empty-description,
+  .ant-typography {
+    color: #cbd5e1;
+  }
+}
+
+.twin-checklist {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  color: #cbd5e1;
+  font-size: 13px;
+  list-style: none;
+
+  li {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+.twin-progress {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  padding: 8px 14px;
+  border: 1px solid rgb(142 246 255 / 24%);
+  border-radius: 999px;
+  color: #d8f8ff;
+  background: rgb(6 10 14 / 78%);
+  font-size: 12px;
+  transform: translate(-50%, -50%);
+
+  &.is-error {
+    max-width: min(560px, 80vw);
+    border-color: rgb(255 120 120 / 40%);
+    border-radius: 10px;
+    color: #ffd0d0;
+    text-align: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .twin-panel {
+    scroll-behavior: auto;
+  }
+}

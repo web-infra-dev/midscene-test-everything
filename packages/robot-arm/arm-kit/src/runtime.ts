@@ -1246,6 +1246,14 @@ export class RobotArmRuntime extends RobotKernel {
       readinessPolicy: this.adapter.adapter.readinessPolicy,
     };
   }
+  /**
+   * Latest passive joint sample for a browser 3D mirror. It is served from the
+   * adapter's push cache and never issues a controller command, so a renderer
+   * can poll it at frame rate without competing with motion confirmation.
+   */
+  motionSample() {
+    return this.adapter.latestMotionSample();
+  }
   async state(
     toolProfileId?: string,
     options: { fresh?: boolean } = {},
