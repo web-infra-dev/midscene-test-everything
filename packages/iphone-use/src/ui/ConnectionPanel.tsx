@@ -1,26 +1,27 @@
-import type { PlaygroundControllerResult } from '@midscene/device-manager-ui/shell/controller/types.ts';
 import {
   Button,
   Checkbox,
   Form,
+  type FormInstance,
   Input,
   Segmented,
   Select,
   Space,
-  Spin,
   message,
 } from 'antd';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { AirPlaySetupInfo } from '../hardware/types.js';
 import { AirPlayPreview } from './AirPlayPreview';
 import { CameraCalibration } from './CameraCalibration';
-import { Frame } from './ScreenPreview';
+import { Frame, Spinner } from './ScreenPreview';
 import {
   bluetoothLabel,
   resolveBluetoothSelection,
 } from './bluetooth-selection';
+import { useI18n } from './i18n';
 import { navigate } from './routes';
+import { subscribeSSE } from './sse';
 
 type Choice = {
   id: string;
@@ -183,8 +184,12 @@ function BluetoothPeers({
   disabled?: boolean;
   onSelect: (id: string) => void;
 }) {
+  const { t } = useI18n();
   return (
-    <fieldset aria-label="选择蓝牙手机" className="iphone-use-bluetooth-status">
+    <fieldset
+      aria-label={t('选择蓝牙手机', 'Select Bluetooth phone')}
+      className="iphone-use-bluetooth-status"
+    >
       {peers.map((peer) => {
         const occupied = reserved.includes(peer.id);
         return (
@@ -199,7 +204,7 @@ function BluetoothPeers({
             <span className="iphone-use-online-dot" />
             <span>{bluetoothLabel(peer, peers)}</span>
             {occupied ? (
-              <small>使用中</small>
+              <small>{t('使用中', 'In Use')}</small>
             ) : selected === peer.id ? (
               <svg
                 aria-hidden="true"
@@ -244,6 +249,7 @@ export function BindingSetup({
   onBluetoothStatus?: (connected: boolean | undefined) => void;
   onStop?: () => void;
 }) {
+  const { t, te } = useI18n();
   const [state, setState] = useState<Binding>();
   const [airplay, setAirplay] = useState<AirPlaySetupInfo>();
   const [eventsOnline, setEventsOnline] = useState(false);
@@ -252,62 +258,98 @@ export function BindingSetup({
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   useEffect(() => {
-    if (error) void message.warning(error);
-  }, [error]);
+    if (error) void message.warning(te(error));
+  }, [error, te]);
   useEffect(() => {
     if (!recovery || verifying) return;
-    const events = new EventSource(
+    return subscribeSSE(
       baseUrl.replace(/\/setup\/[^/]+\/?$/, '/bluetooth/events'),
+      {
+        onMessage: (data) => {
+          const status = JSON.parse(data) as {
+            hosts: { id: string; reports: number[] }[];
+          };
+          onBluetoothStatus?.(
+            status.hosts.some(
+              (host) =>
+                host.id === selectedPeerId &&
+                [1, 2, 3].every((report) => host.reports.includes(report)),
+            ),
+          );
+        },
+        onError: () => onBluetoothStatus?.(undefined),
+      },
+      'iphone-use:bluetooth',
     );
-    events.onmessage = (event) => {
-      const status = JSON.parse(event.data) as {
-        hosts: { id: string; reports: number[] }[];
-      };
-      onBluetoothStatus?.(
-        status.hosts.some(
-          (host) =>
-            host.id === selectedPeerId &&
-            [1, 2, 3].every((report) => host.reports.includes(report)),
-        ),
-      );
-    };
-    events.onerror = () => onBluetoothStatus?.(undefined);
-    return () => events.close();
   }, [baseUrl, recovery, verifying, selectedPeerId, onBluetoothStatus]);
+  const selectReceiver = useCallback(
+    async (isStopped?: () => boolean) => {
+      setError('');
+      if (source === 'airplay') {
+        const result = (await (
+          await request(`${baseUrl}/select`, {}, 240_000)
+        ).json()) as {
+          airplay?: AirPlaySetupInfo;
+          selectedPeer?: string;
+        };
+        if (isStopped?.()) return;
+        if (result.selectedPeer) {
+          setState(
+            (current) =>
+              ({
+                ...(current ?? {
+                  source: 'airplay',
+                  computerName: '',
+                  devices: [],
+                  bluetooth: { hosts: [] },
+                }),
+                selectedPeer: result.selectedPeer,
+                airplay: result.airplay ?? current?.airplay,
+              }) as Binding,
+          );
+        }
+        if (result.airplay) {
+          setAirplay((current) =>
+            current?.state === 'streaming' ? current : result.airplay,
+          );
+        }
+        setPreview(true);
+        return;
+      }
+      const value: Binding = await (await request(`${baseUrl}/state`)).json();
+      await request(
+        `${baseUrl}/select`,
+        { usbDeviceId: value.selectedUSB },
+        240_000,
+      );
+      const next: Binding = await (await request(`${baseUrl}/state`)).json();
+      if (!isStopped?.()) {
+        setState(next);
+        setAirplay((current) => current ?? next.airplay);
+        setPreview(true);
+      }
+    },
+    [baseUrl, source],
+  );
   useEffect(() => {
     let stopped = false;
-    void (async () => {
-      try {
-        const value: Binding = await (await request(`${baseUrl}/state`)).json();
-        await request(
-          `${baseUrl}/select`,
-          { usbDeviceId: value.selectedUSB },
-          240_000,
-        );
-        const next: Binding = await (await request(`${baseUrl}/state`)).json();
-        if (!stopped) {
-          setState(next);
-          setAirplay((current) => current ?? next.airplay);
-          setPreview(true);
-        }
-      } catch (cause) {
-        if (!stopped) setError(String(cause));
-      }
-    })();
+    void selectReceiver(() => stopped).catch((cause) => {
+      if (!stopped) setError(String(cause));
+    });
     return () => {
       stopped = true;
     };
-  }, [baseUrl]);
+  }, [selectReceiver]);
   useEffect(() => {
     if (source !== 'airplay' || verifying) return;
-    const events = new EventSource(`${baseUrl}/events`);
-    events.onmessage = (event) => {
-      const value = JSON.parse(event.data) as { airplay?: AirPlaySetupInfo };
-      if (value.airplay) setAirplay(value.airplay);
-      setEventsOnline(true);
-    };
-    events.onerror = () => setEventsOnline(false);
-    return () => events.close();
+    return subscribeSSE(`${baseUrl}/events`, {
+      onMessage: (data) => {
+        const value = JSON.parse(data) as { airplay?: AirPlaySetupInfo };
+        if (value.airplay) setAirplay(value.airplay);
+        setEventsOnline(true);
+      },
+      onError: () => setEventsOnline(false),
+    });
   }, [baseUrl, source, verifying]);
   useEffect(() => {
     if (
@@ -338,20 +380,19 @@ export function BindingSetup({
       <>
         {!recovery && (
           <div className="iphone-use-submit-row">
-            {info?.state === 'failed' ? (
+            {info?.state === 'failed' || (!info && Boolean(error)) ? (
               <Button
                 type="primary"
                 block
                 className="session-setup-submit"
                 disabled={checking}
                 onClick={() => {
-                  setError('');
-                  void request(`${baseUrl}/select`, {}).catch((cause) =>
+                  void selectReceiver().catch((cause) =>
                     setError(String(cause)),
                   );
                 }}
               >
-                重试接收器
+                {t('重试接收器', 'Retry Receiver')}
               </Button>
             ) : (
               <Button
@@ -368,7 +409,7 @@ export function BindingSetup({
                 }
                 onClick={confirm}
               >
-                验证并连接
+                {t('验证并连接', 'Verify & Connect')}
               </Button>
             )}
             {onStop && (
@@ -377,7 +418,7 @@ export function BindingSetup({
                 disabled={false}
                 onClick={onStop}
               >
-                取消连接
+                {t('取消连接', 'Cancel')}
               </Button>
             )}
           </div>
@@ -388,6 +429,7 @@ export function BindingSetup({
               info={info}
               frameUrl={`${baseUrl}/frame`}
               verifying={checking}
+              setupError={error}
             />,
             previewTarget,
           )}
@@ -400,14 +442,20 @@ export function BindingSetup({
         <p>
           USB ·{' '}
           {state.devices.find((d) => d.id === state.selectedUSB)?.name ??
-            '已选择手机'}
+            t('已选择手机', 'Phone selected')}
         </p>
       )}
-      <strong>{state?.selectedPeer ? '确认画面' : '蓝牙连接'}</strong>
+      <strong>
+        {state?.selectedPeer
+          ? t('确认画面', 'Confirm Screen')
+          : t('蓝牙连接', 'Bluetooth Connection')}
+      </strong>
       {!state?.selectedPeer && (
         <p>
-          在 iPhone「设置 → 蓝牙」中连接「{state?.computerName ?? 'Mac'}
-          」，并在「辅助功能 → 触控」中启用辅助触控。
+          {t(
+            `在 iPhone「设置 → 蓝牙」中连接「${state?.computerName ?? 'Mac'}」，并在「辅助功能 → 触控」中启用辅助触控。`,
+            `Connect to "${state?.computerName ?? 'Mac'}" in Settings → Bluetooth on your iPhone, and enable AssistiveTouch in Accessibility → Touch.`,
+          )}
         </p>
       )}
       <div className="iphone-use-bluetooth-status">
@@ -420,7 +468,7 @@ export function BindingSetup({
         {!peers.length && (
           <span className="iphone-use-waiting">
             <span className="iphone-use-waiting-ring" aria-hidden="true" />
-            等待手机连接…
+            {t('等待手机连接…', 'Waiting for iPhone…')}
           </span>
         )}
       </div>
@@ -431,7 +479,7 @@ export function BindingSetup({
         disabled={!peer || !preview}
         onClick={confirm}
       >
-        确认并验证指针
+        {t('确认并验证指针', 'Confirm & Verify Pointer')}
       </Button>
       {preview &&
         previewTarget &&
@@ -475,8 +523,13 @@ function PendingScreenPreview({
     };
   }, [apiBase]);
 
+  const { t } = useI18n();
   const sourceText =
-    source === 'camera' ? '摄像头' : source === 'airplay' ? 'AirPlay' : 'USB';
+    source === 'camera'
+      ? t('摄像头', 'Camera')
+      : source === 'airplay'
+        ? 'AirPlay'
+        : 'USB';
   const calibrating = phase === 'connecting' || Boolean(src);
   return (
     <div className="iphone-use-pending-preview">
@@ -485,13 +538,17 @@ function PendingScreenPreview({
           {src ? (
             <img
               src={src}
-              alt="设备画面预览"
+              alt={t('设备画面预览', 'Device screen preview')}
               className="iphone-use-pending-img"
             />
           ) : (
             <div className="iphone-use-pending-waiting">
-              <Spin />
-              <span>{calibrating ? '正在校准指针…' : '正在连接设备…'}</span>
+              <Spinner />
+              <span>
+                {calibrating
+                  ? t('正在校准指针…', 'Calibrating pointer…')
+                  : t('正在连接设备…', 'Connecting device…')}
+              </span>
             </div>
           )}
         </div>
@@ -499,19 +556,19 @@ function PendingScreenPreview({
       <div className="iphone-use-pending-progress">
         <div className="iphone-use-progress-step done">
           <i />
-          <span>蓝牙已连接</span>
+          <span>{t('蓝牙已连接', 'Bluetooth Ready')}</span>
         </div>
         <div
           className={`iphone-use-progress-step ${calibrating ? 'done' : 'active'}`}
         >
           <i />
-          <span>{sourceText} 画面就绪</span>
+          <span>{t(`${sourceText} 画面就绪`, `${sourceText} Ready`)}</span>
         </div>
         <div
           className={`iphone-use-progress-step ${calibrating ? 'active' : ''}`}
         >
           <i />
-          <span>指针校准</span>
+          <span>{t('指针校准', 'Pointer Calibrated')}</span>
         </div>
       </div>
     </div>
@@ -531,11 +588,16 @@ export function ConnectionPanel({
   cancelling = false,
 }: {
   controller: {
-    state: Pick<
-      PlaygroundControllerResult['state'],
-      'form' | 'sessionMutating'
-    >;
-    actions: Pick<PlaygroundControllerResult['actions'], 'createSession'>;
+    state: {
+      form: FormInstance;
+      sessionMutating: boolean;
+    };
+    actions: {
+      createSession: (
+        input?: Record<string, unknown>,
+        options?: { silent?: boolean },
+      ) => Promise<boolean>;
+    };
   };
   previewTarget: HTMLElement | null;
   apiBase?: string;
@@ -547,6 +609,7 @@ export function ConnectionPanel({
   onCancel?: () => void;
   cancelling?: boolean;
 }) {
+  const { t, te } = useI18n();
   const { state, actions } = controller;
   const reservedPeerKey = JSON.stringify(reservedPeers);
   const reservedSourceKey = JSON.stringify(reservedSources);
@@ -635,41 +698,45 @@ export function ConnectionPanel({
     };
   }, [source, refresh, pending, apiBase, reservedSourceKey]);
   useEffect(() => {
-    const events = new EventSource(`${apiBase}/iphone-use/bluetooth/events`);
-    events.onmessage = (event) => {
-      try {
-        const value = JSON.parse(event.data);
-        setConnectedPeers(value.hosts);
-        value.hosts = value.hosts.filter(
-          (peer: Choice) => !reservedPeers.includes(peer.id),
-        );
-        setPeers(value.hosts);
-        setBluetoothName(value.serviceName ?? 'Midscene');
-        setBluetoothState(value.state);
-        setBluetoothOnline(true);
-        const peer = resolveBluetoothSelection(
-          preferredPeer.current,
-          value.hosts,
-          reservedPeers,
-        );
-        if (peer) preferredPeer.current = peer;
-        if (state.form.getFieldValue('bluetoothPeerId') !== peer)
+    return subscribeSSE(
+      `${apiBase}/iphone-use/bluetooth/events`,
+      {
+        onMessage: (data) => {
+          try {
+            const value = JSON.parse(data);
+            setConnectedPeers(value.hosts);
+            value.hosts = value.hosts.filter(
+              (peer: Choice) => !reservedPeers.includes(peer.id),
+            );
+            setPeers(value.hosts);
+            setBluetoothName(value.serviceName ?? 'Midscene');
+            setBluetoothState(value.state);
+            setBluetoothOnline(true);
+            const peer = resolveBluetoothSelection(
+              preferredPeer.current,
+              value.hosts,
+              reservedPeers,
+            );
+            if (peer) preferredPeer.current = peer;
+            if (state.form.getFieldValue('bluetoothPeerId') !== peer)
+              state.form.setFieldsValue({
+                bluetoothPeerId: peer,
+              });
+          } catch {
+            setBluetoothOnline(false);
+          }
+        },
+        onError: () => {
+          setBluetoothOnline(false);
+          setPeers([]);
+          setConnectedPeers([]);
           state.form.setFieldsValue({
-            bluetoothPeerId: peer,
+            bluetoothPeerId: undefined,
           });
-      } catch {
-        setBluetoothOnline(false);
-      }
-    };
-    events.onerror = () => {
-      setBluetoothOnline(false);
-      setPeers([]);
-      setConnectedPeers([]);
-      state.form.setFieldsValue({
-        bluetoothPeerId: undefined,
-      });
-    };
-    return () => events.close();
+        },
+      },
+      'iphone-use:bluetooth',
+    );
   }, [state.form, apiBase, reservedPeerKey]);
   // The initial SSE snapshot restores state; it is not a new failure event.
   const cancelled = useRef(false);
@@ -677,7 +744,7 @@ export function ConnectionPanel({
   useEffect(() => {
     const notice = error || connection.error || '';
     if (!cancelled.current && notice && notice !== notifiedError.current)
-      void message.warning(notice);
+      void message.warning(te(notice));
     notifiedError.current = notice;
   }, [error, connection.error]);
   const baseUrl = connection.setupId
@@ -711,7 +778,9 @@ export function ConnectionPanel({
         className={`iphone-use-setup-card${pending && baseUrl && !cameraWizardActive ? ' iphone-use-pending' : ''}${cameraWizardActive ? ' iphone-use-setup-card--camera' : ''}`}
       >
         {!cameraWizardActive && (
-          <h2 className="iphone-use-setup-heading">添加设备</h2>
+          <h2 className="iphone-use-setup-heading">
+            {t('添加设备', 'Add Device')}
+          </h2>
         )}
         <Form
           form={state.form}
@@ -751,10 +820,19 @@ export function ConnectionPanel({
                 >
                   1
                 </i>
-                蓝牙连接
+                {t('蓝牙连接', 'Bluetooth')}
               </span>
-              <span className="iphone-use-step-card-meta">
-                设置 → 蓝牙 · {bluetoothName}
+              <span
+                className="iphone-use-step-card-meta"
+                title={t(
+                  `设置 → 蓝牙 · ${bluetoothName}`,
+                  `Settings → Bluetooth · ${bluetoothName}`,
+                )}
+              >
+                {t(
+                  `设置 → 蓝牙 · ${bluetoothName}`,
+                  `Settings · ${bluetoothName}`,
+                )}
               </span>
             </div>
             <div className="iphone-use-bluetooth-status" aria-live="polite">
@@ -772,12 +850,15 @@ export function ConnectionPanel({
                     aria-hidden="true"
                   />
                   {!bluetoothOnline
-                    ? '正在连接蓝牙服务…'
+                    ? t('正在连接蓝牙服务…', 'Connecting Bluetooth service…')
                     : bluetoothState.toLowerCase() === 'bluetooth off'
-                      ? '请开启 Mac 蓝牙'
+                      ? t('请开启 Mac 蓝牙', 'Turn on Mac Bluetooth')
                       : /not allowed|failed|unavailable/i.test(bluetoothState)
-                        ? '蓝牙服务不可用，请检查系统蓝牙权限'
-                        : '等待手机连接…'}
+                        ? t(
+                            '蓝牙服务不可用，请检查系统蓝牙权限',
+                            'Bluetooth unavailable. Check system Bluetooth permissions.',
+                          )
+                        : t('等待手机连接…', 'Waiting for iPhone…')}
                 </span>
               )}
             </div>
@@ -791,13 +872,16 @@ export function ConnectionPanel({
             <div className="iphone-use-step-card-head">
               <span className="iphone-use-step-title">
                 <i className="iphone-use-step-index">2</i>
-                开启辅助触控
+                {t('开启辅助触控', 'Enable AssistiveTouch')}
               </span>
               <span
                 className="iphone-use-step-card-meta"
-                title="手机设置 → 辅助功能 → 触控 → 辅助触控"
+                title={t(
+                  '手机设置 → 辅助功能 → 触控 → 辅助触控',
+                  'Settings → Accessibility → Touch → AssistiveTouch',
+                )}
               >
-                辅助功能 → 触控
+                {t('辅助功能 → 触控', 'Accessibility → Touch')}
               </span>
             </div>
           </div>
@@ -806,7 +890,7 @@ export function ConnectionPanel({
             <div className="iphone-use-step-card-head">
               <span className="iphone-use-step-title">
                 <i className="iphone-use-step-index">3</i>
-                画面来源
+                {t('画面来源', 'Screen Source')}
               </span>
             </div>
             <Form.Item name="source" hidden>
@@ -814,12 +898,13 @@ export function ConnectionPanel({
             </Form.Item>
             <Segmented
               block
+              disabled={pending}
               value={source}
               onChange={(val) => state.form.setFieldValue('source', val)}
               options={[
                 { value: 'usb', label: 'USB' },
                 { value: 'airplay', label: 'AirPlay' },
-                { value: 'camera', label: '独立摄像头' },
+                { value: 'camera', label: t('独立摄像头', 'Camera') },
               ]}
             />
             {source !== 'airplay' && (
@@ -830,8 +915,14 @@ export function ConnectionPanel({
                   <span className="iphone-use-device-label">
                     <span>
                       {source === 'usb'
-                        ? `USB 手机 · ${devices.length} 台设备`
-                        : `摄像头 · ${devices.length} 台设备`}
+                        ? t(
+                            `USB 手机 · ${devices.length} 台设备`,
+                            `USB Phone · ${devices.length}`,
+                          )
+                        : t(
+                            `摄像头 · ${devices.length} 台设备`,
+                            `Camera · ${devices.length}`,
+                          )}
                     </span>
                     <RefreshDevices
                       loading={loading}
@@ -839,22 +930,27 @@ export function ConnectionPanel({
                     />
                   </span>
                 }
-                rules={[{ required: true, message: '请先选择设备' }]}
+                rules={[
+                  {
+                    required: true,
+                    message: t('请先选择设备', 'Please select a device'),
+                  },
+                ]}
               >
                 <Select
                   disabled={loading && !devices.length}
                   placeholder={
                     loading
-                      ? '正在查找设备…'
+                      ? t('正在查找设备…', 'Finding devices…')
                       : !devices.length
-                        ? '未发现设备'
+                        ? t('未发现设备', 'No devices found')
                         : !availableDevices.length
-                          ? '设备均在使用中'
-                          : '请选择设备'
+                          ? t('设备均在使用中', 'All devices in use')
+                          : t('请选择设备', 'Select a device')
                   }
                   options={devices.map((d) => ({
                     value: d.id,
-                    label: `${choiceLabel(d)}${reservedSources.includes(`${source}:${d.id}`) ? '（使用中）' : ''}`,
+                    label: `${choiceLabel(d)}${reservedSources.includes(`${source}:${d.id}`) ? t('（使用中）', ' (In Use)') : ''}`,
                     disabled: reservedSources.includes(`${source}:${d.id}`),
                   }))}
                 />
@@ -866,7 +962,7 @@ export function ConnectionPanel({
               className="iphone-use-reuse-item"
             >
               <Checkbox className="iphone-use-reuse-configuration">
-                使用已保存的校准配置
+                {t('使用已保存的校准配置', 'Reuse saved calibration')}
               </Checkbox>
             </Form.Item>
           </div>
@@ -899,8 +995,8 @@ export function ConnectionPanel({
                 }
               >
                 {source === 'airplay' && !pending
-                  ? '启动 AirPlay 接收器'
-                  : '连接设备'}
+                  ? t('启动 AirPlay 接收器', 'Start AirPlay Receiver')
+                  : t('连接设备', 'Connect Device')}
               </Button>
               {pending && onCancel && (
                 <Button
@@ -909,7 +1005,7 @@ export function ConnectionPanel({
                   loading={cancelling}
                   onClick={onCancel}
                 >
-                  取消连接
+                  {t('取消连接', 'Cancel')}
                 </Button>
               )}
             </div>
@@ -969,10 +1065,19 @@ export function ConnectionPanel({
               </div>
               <p>
                 {source === 'usb'
-                  ? '连接数据线并解锁，首次请信任 Mac'
+                  ? t(
+                      '连接数据线并解锁，首次请信任 Mac',
+                      'Connect USB cable and unlock; trust this Mac if prompted',
+                    )
                   : source === 'airplay'
-                    ? '控制中心 → 屏幕镜像'
-                    : '摄像头画面预览（连接后扫码校正）'}
+                    ? t(
+                        '控制中心 → 屏幕镜像',
+                        'Control Center → Screen Mirroring',
+                      )
+                    : t(
+                        '摄像头画面预览（连接后扫码校正）',
+                        'Camera preview (scan QR to calibrate after connecting)',
+                      )}
               </p>
             </div>,
             previewTarget,
@@ -990,11 +1095,11 @@ export function ConnectionPanel({
             ) : (
               <div className="iphone-use-camera-loading">
                 {cameraPreview.error ? (
-                  <span>{cameraPreview.error}</span>
+                  <span>{te(cameraPreview.error)}</span>
                 ) : (
                   <>
-                    <Spin />
-                    <span>正在打开摄像头…</span>
+                    <Spinner />
+                    <span>{t('正在打开摄像头…', 'Opening camera…')}</span>
                   </>
                 )}
               </div>

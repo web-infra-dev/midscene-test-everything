@@ -14,7 +14,7 @@ import {
 export function serviceOptions(input: unknown): OpenDeviceOptions {
   const value = input as Partial<OpenDeviceOptions> | undefined;
   if (typeof value?.host !== 'string' || typeof value?.token !== 'string')
-    throw new Error('请输入设备服务地址和访问凭证。');
+    throw new Error('Enter the device service URL and access token.');
   return { host: value.host.trim(), token: value.token };
 }
 
@@ -33,19 +33,20 @@ export class RemoteSessionManager implements PlaygroundSessionManager {
 
   async getSetupSchema() {
     return {
-      title: '连接设备',
-      description: '选择设备服务中已配置的设备。',
+      title: 'Connect Device',
+      description: 'Select a configured device from the device service.',
       autoSubmitWhenReady: false,
       fields: [],
     };
   }
 
   async createSession(input: Record<string, unknown> = {}) {
-    if (this.device || this.opening) throw new Error('请先断开当前设备。');
+    if (this.device || this.opening)
+      throw new Error('Disconnect the current device first.');
     const options = serviceOptions(input);
     const deviceId = input.deviceId;
     if (typeof deviceId !== 'string' || !deviceId)
-      throw new Error('请选择一台设备。');
+      throw new Error('Select a device.');
 
     this.opening = true;
     const generation = this.generation;
@@ -53,7 +54,8 @@ export class RemoteSessionManager implements PlaygroundSessionManager {
       const profile = (await listOpenDevices(options)).find(
         (item) => item.id === deviceId,
       );
-      if (!profile) throw new Error('找不到所选设备，请刷新设备列表。');
+      if (!profile)
+        throw new Error('Selected device not found. Refresh the device list.');
       const device = await OpenDevice.connect({
         ...options,
         deviceId,
@@ -63,7 +65,7 @@ export class RemoteSessionManager implements PlaygroundSessionManager {
       });
       if (generation !== this.generation) {
         await device.destroy();
-        throw new Error('连接已取消。');
+        throw new Error('Connection cancelled.');
       }
       this.device = device;
       return {

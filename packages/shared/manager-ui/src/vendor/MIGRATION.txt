@@ -1,7 +1,0 @@
-visualizer/: copied directly from official web-infra-dev/midscene v1.17.5,
-commit fa2ecdff05106b71b210298bcd8b8c9cd80e52d6.
-See visualizer/README.md and upstream-files.json for copy provenance and local changes.
-No @midscene/visualizer npm dependency or pnpm patch is used.
-
-polyfills/async-hooks.ts: copied earlier from midscene-private/packages/shared/src/polyfills/async-hooks.ts.
-License: upstream MIT (see LICENSE).

@@ -27,8 +27,7 @@
     "@techstark/opencv-js": "5.0.0-release.1",
     "pacote": "^21",
     "sharp": "^0.34.3",
-    "zod": "3.25.76",
-    "@midscene/device-manager-ui": "workspace:*"
+    "zod": "3.25.76"
   },
   "devDependencies": {
     "@types/pacote": "11.1.8",

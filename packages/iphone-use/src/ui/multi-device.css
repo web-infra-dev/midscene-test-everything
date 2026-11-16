@@ -67,6 +67,9 @@
 }
 
 .iphone-use-primary-btn.ant-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   background: var(--iu-primary);
   border-color: var(--iu-primary);
   border-radius: 8px;
@@ -83,6 +86,9 @@
 }
 
 .iphone-use-outline-btn.ant-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   border-radius: 8px;
   border-color: var(--iu-border);
   background: var(--iu-surface);
@@ -91,6 +97,11 @@
   height: 32px;
   padding: 0 12px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+
+.iphone-use-outline-btn.ant-btn svg {
+  color: var(--iu-text-secondary);
+  flex: none;
 }
 
 /* Grid Main */
@@ -227,6 +238,16 @@
   overflow: hidden;
   background: #09090b;
   position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.iphone-use-thumb-screen > img,
+.iphone-use-phone-screen > img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
 }
 
 .iphone-use-device-preview-error {
@@ -913,15 +934,31 @@
 .iphone-use-add-modal .ant-modal-close:hover {
   background: rgba(24, 24, 27, 0.06);
 }
-.iphone-use-add-modal .iphone-use-setup-studio {
+.iphone-use-add-modal .iphone-use-setup-studio,
+.iphone-use-inline-setup .iphone-use-setup-studio {
   grid-template-columns: 408px minmax(0, 1fr);
   min-height: 560px;
 }
-.iphone-use-add-modal .iphone-use-setup-panel {
+.iphone-use-inline-setup {
+  width: 100%;
+  max-width: 860px;
+  margin: 12px auto 0;
+  border-radius: 22px;
+  overflow: hidden;
+  background: #ffffff;
+  border: 1px solid rgba(24, 24, 27, 0.08);
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.08);
+}
+.iphone-use-inline-setup--camera {
+  max-width: 980px;
+}
+.iphone-use-add-modal .iphone-use-setup-panel,
+.iphone-use-inline-setup .iphone-use-setup-panel {
   padding: 24px 24px 20px;
   border-right-color: #f1f1f3;
 }
-.iphone-use-add-modal .iphone-use-setup-preview {
+.iphone-use-add-modal .iphone-use-setup-preview,
+.iphone-use-inline-setup .iphone-use-setup-preview {
   background: radial-gradient(
       70% 60% at 50% 40%,
       rgba(255, 255, 255, 0.9) 0%,
@@ -934,18 +971,21 @@
     )
     0 0 / 16px 16px, #f6f6f7;
 }
-.iphone-use-add-modal .iphone-use-setup-heading {
+.iphone-use-add-modal .iphone-use-setup-heading,
+.iphone-use-inline-setup .iphone-use-setup-heading {
   font-size: 17px;
   font-weight: 600;
   letter-spacing: -0.025em;
   margin-bottom: 18px;
 }
-.iphone-use-add-modal .iphone-use-setup-form {
+.iphone-use-add-modal .iphone-use-setup-form,
+.iphone-use-inline-setup .iphone-use-setup-form {
   gap: 10px;
 }
 
 /* Step cards */
-.iphone-use-add-modal .iphone-use-step-card {
+.iphone-use-add-modal .iphone-use-step-card,
+.iphone-use-inline-setup .iphone-use-step-card {
   background: #fff;
   border: 1px solid #ececef;
   border-radius: 14px;
@@ -966,6 +1006,8 @@
   display: inline-flex;
   align-items: center;
   gap: 10px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .iphone-use-step-index {
   width: 20px;
@@ -986,7 +1028,8 @@
   background: var(--iu-primary);
   box-shadow: none;
 }
-.iphone-use-add-modal .iphone-use-step-card-meta {
+.iphone-use-add-modal .iphone-use-step-card-meta,
+.iphone-use-inline-setup .iphone-use-step-card-meta {
   font-size: 11.5px;
   font-weight: 400;
   color: #a1a1aa;
@@ -1482,15 +1525,23 @@
   color: #ffffff;
 }
 /* Camera calibration 2-step wizard inside Add Device modal */
-.iphone-use-add-modal .iphone-use-setup-studio.iphone-use-setup-studio--camera {
+.iphone-use-add-modal .iphone-use-setup-studio.iphone-use-setup-studio--camera,
+.iphone-use-inline-setup
+  .iphone-use-setup-studio.iphone-use-setup-studio--camera {
   grid-template-columns: minmax(0, 1fr);
 }
 .iphone-use-add-modal
   .iphone-use-setup-studio--camera
+  .iphone-use-setup-preview,
+.iphone-use-inline-setup
+  .iphone-use-setup-studio--camera
   .iphone-use-setup-preview {
   display: none;
 }
-.iphone-use-add-modal .iphone-use-setup-studio--camera .iphone-use-setup-panel {
+.iphone-use-add-modal .iphone-use-setup-studio--camera .iphone-use-setup-panel,
+.iphone-use-inline-setup
+  .iphone-use-setup-studio--camera
+  .iphone-use-setup-panel {
   border-right: none;
   padding: 20px 28px 24px;
   background-color: #fafafb;
@@ -2021,4 +2072,35 @@ button.iphone-use-wizard-step:not(:disabled) {
   justify-content: flex-end;
   gap: 10px;
   padding-top: 8px;
+}
+.iphone-use-spinner-wrap {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #71717a;
+  font-size: 12.5px;
+}
+.iphone-use-phone-screen .iphone-use-spinner-wrap,
+.iphone-use-camera-corner-stage .iphone-use-spinner-wrap {
+  color: #a1a1aa;
+}
+.iphone-use-spinner {
+  display: inline-block;
+  border-radius: 999px;
+  border: 2px solid rgba(113, 113, 122, 0.22);
+  border-top-color: currentColor;
+  animation: iu-spin 0.72s linear infinite;
+  box-sizing: border-box;
+}
+.iphone-use-phone-screen .iphone-use-spinner,
+.iphone-use-camera-corner-stage .iphone-use-spinner {
+  border-color: rgba(255, 255, 255, 0.18);
+  border-top-color: currentColor;
+}
+@keyframes iu-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }

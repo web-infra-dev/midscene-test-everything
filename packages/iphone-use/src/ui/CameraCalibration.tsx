@@ -1,8 +1,10 @@
 import type { CameraScreenSettings } from '@midscene/robotics-vision';
 import { CameraCornerEditor } from '@midscene/robotics-vision/ui/CameraCornerEditor';
 import { CorrectedPreview } from '@midscene/robotics-vision/ui/CorrectedPreview';
-import { Button, QRCode, Spin, message } from 'antd';
+import { Button, QRCode, message } from 'antd';
 import { useEffect, useRef, useState } from 'react';
+import { Spinner } from './ScreenPreview';
+import { useI18n } from './i18n';
 
 type CameraCorrection = CameraScreenSettings['correction'];
 
@@ -43,6 +45,7 @@ export function CameraCalibration({
   cancelling?: boolean;
   onCancel: () => void;
 }) {
+  const { t, te } = useI18n();
   const setupId = baseUrl.split('/').filter(Boolean).at(-1)!;
   const [state, setState] = useState<CameraSetupState>();
   const [cameraId, setCameraId] = useState(initialCameraId ?? '');
@@ -76,8 +79,8 @@ export function CameraCalibration({
   }, [baseUrl, stage]);
 
   useEffect(() => {
-    if (error) void message.warning(error);
-  }, [error]);
+    if (error) void message.warning(te(error));
+  }, [error, te]);
 
   async function request(path: string, body?: unknown, timeoutMs = 30_000) {
     const response = await fetch(`${baseUrl}${path}`, {
@@ -273,13 +276,19 @@ export function CameraCalibration({
   const connected = phone?.state === 'connected';
   const cameraName =
     state?.cameras.find((camera) => camera.id === (initialCameraId ?? cameraId))
-      ?.name ?? '摄像头';
+      ?.name ?? t('摄像头', 'Camera');
 
   const copyUrl = (url: string) => {
     void navigator.clipboard
       .writeText(url)
-      .then(() => message.success('已复制手机连接地址'))
-      .catch(() => message.warning('复制失败，请手动复制。'));
+      .then(() =>
+        message.success(t('已复制手机连接地址', 'Copied connection URL')),
+      )
+      .catch(() =>
+        message.warning(
+          t('复制失败，请手动复制。', 'Copy failed. Please copy manually.'),
+        ),
+      );
   };
   const lockStep = busy || saving || verifying;
 
@@ -293,9 +302,12 @@ export function CameraCalibration({
           loading={cancelling}
           onClick={onCancel}
         >
-          ← 返回添加设备
+          {t('← 返回添加设备', '← Back to Add Device')}
         </Button>
-        <div className="iphone-use-wizard-steps" aria-label="校准步骤">
+        <div
+          className="iphone-use-wizard-steps"
+          aria-label={t('校准步骤', 'Calibration Steps')}
+        >
           <button
             type="button"
             className={`iphone-use-wizard-step${stage === 'phone' ? ' active' : ' done'}`}
@@ -303,14 +315,14 @@ export function CameraCalibration({
             onClick={() => setStage('phone')}
           >
             <i>{stage === 'phone' ? '1' : '✓'}</i>
-            <span>扫码连接</span>
+            <span>{t('扫码连接', 'Scan to Connect')}</span>
           </button>
           <span className="iphone-use-wizard-divider" aria-hidden="true" />
           <div
             className={`iphone-use-wizard-step${stage === 'screen' ? ' active' : stage === 'saved' ? ' done' : ''}`}
           >
             <i>{stage === 'saved' ? '✓' : '2'}</i>
-            <span>相机校正</span>
+            <span>{t('相机校正', 'Camera Calibration')}</span>
           </div>
         </div>
         <span className="iphone-use-wizard-spacer" aria-hidden="true" />
@@ -324,14 +336,17 @@ export function CameraCalibration({
                 {connected ? (
                   <>
                     <span className="iphone-use-camera-check">✓</span>
-                    <strong>手机已连接</strong>
+                    <strong>{t('手机已连接', 'Phone Connected')}</strong>
                     <p className="iphone-use-camera-sub">
-                      点击右侧「下一步：相机校正」
+                      {t(
+                        '点击右侧「下一步：相机校正」',
+                        'Click "Next: Camera Calibration" on the right',
+                      )}
                     </p>
                   </>
                 ) : qrUrl ? (
                   <>
-                    <strong>扫码连接手机</strong>
+                    <strong>{t('扫码连接手机', 'Scan to Connect')}</strong>
                     <div className="iphone-use-qr-card">
                       <QRCode
                         value={qrUrl}
@@ -343,13 +358,16 @@ export function CameraCalibration({
                       />
                     </div>
                     <p className="iphone-use-camera-sub">
-                      添加到桌面后打开并保持常亮
+                      {t(
+                        '添加到桌面后打开并保持常亮',
+                        'Add to Home Screen, open, and keep screen on',
+                      )}
                     </p>
                   </>
                 ) : (
                   <div className="iphone-use-pending-waiting">
-                    <Spin />
-                    <span>正在准备二维码…</span>
+                    <Spinner />
+                    <span>{t('正在准备二维码…', 'Preparing QR code…')}</span>
                   </div>
                 )}
               </div>
@@ -364,7 +382,7 @@ export function CameraCalibration({
                 >
                   1
                 </i>
-                手机扫码配对
+                {t('手机扫码配对', 'Pair Phone via QR')}
               </span>
               <span className="iphone-use-step-card-meta">{cameraName}</span>
             </div>
@@ -385,21 +403,31 @@ export function CameraCalibration({
                     className="iphone-use-waiting-ring"
                     aria-hidden="true"
                   />
-                  等待手机从桌面打开校准页并保持常亮
+                  {t(
+                    '等待手机从桌面打开校准页并保持常亮',
+                    'Waiting for calibration page to open from Home Screen',
+                  )}
                 </span>
               )}
-              <div className="iphone-use-pwa-steps" aria-label="桌面打开指引">
-                <span className="iphone-use-pwa-chip">1. 扫码打开</span>
+              <div
+                className="iphone-use-pwa-steps"
+                aria-label={t('桌面打开指引', 'Home Screen Guide')}
+              >
+                <span className="iphone-use-pwa-chip">
+                  {t('1. 扫码打开', '1. Scan QR')}
+                </span>
                 <span className="iphone-use-pwa-arrow" aria-hidden="true">
                   →
                 </span>
                 <span className="iphone-use-pwa-chip">
-                  2. 共享 · 添加到桌面
+                  {t('2. 共享 · 添加到桌面', '2. Share → Add to Home Screen')}
                 </span>
                 <span className="iphone-use-pwa-arrow" aria-hidden="true">
                   →
                 </span>
-                <span className="iphone-use-pwa-chip">3. 从桌面打开</span>
+                <span className="iphone-use-pwa-chip">
+                  {t('3. 从桌面打开', '3. Open from Home')}
+                </span>
               </div>
               {links.length > 0 && (
                 <div className="iphone-use-camera-link-list">
@@ -422,8 +450,8 @@ export function CameraCalibration({
                         <button
                           type="button"
                           className="iphone-use-camera-link-copy"
-                          aria-label={`复制 ${item.url}`}
-                          title="复制链接"
+                          aria-label={t(`复制 ${item.url}`, `Copy ${item.url}`)}
+                          title={t('复制链接', 'Copy URL')}
                           onClick={() => copyUrl(item.url)}
                         >
                           <svg
@@ -462,14 +490,14 @@ export function CameraCalibration({
                 disabled={!state?.phoneConnected || !state?.layout || busy}
                 onClick={() => setStage('screen')}
               >
-                下一步：相机校正
+                {t('下一步：相机校正', 'Next: Camera Calibration')}
               </Button>
               <Button
                 className="iphone-use-cancel-btn"
                 loading={cancelling}
                 onClick={onCancel}
               >
-                取消连接
+                {t('取消连接', 'Cancel')}
               </Button>
             </div>
           </div>
@@ -485,7 +513,10 @@ export function CameraCalibration({
                   >
                     2
                   </i>
-                  拖动四角对齐手机屏幕边缘
+                  {t(
+                    '拖动四角对齐手机屏幕边缘',
+                    'Drag corners to match the phone screen edges',
+                  )}
                 </span>
                 <Button
                   size="small"
@@ -493,7 +524,7 @@ export function CameraCalibration({
                   disabled={!cameraId || !state?.phoneConnected || lockStep}
                   onClick={() => void detect()}
                 >
-                  自动识别
+                  {t('自动识别', 'Auto Detect')}
                 </Button>
               </div>
               <div className="iphone-use-camera-corner-stage">
@@ -509,7 +540,7 @@ export function CameraCalibration({
                     disabled={lockStep}
                   />
                 ) : (
-                  <Spin />
+                  <Spinner />
                 )}
               </div>
             </div>
@@ -525,7 +556,7 @@ export function CameraCalibration({
                     />
                   ) : (
                     <div className="iphone-use-pending-waiting">
-                      <span>校正后预览</span>
+                      <span>{t('校正后预览', 'Rectified Preview')}</span>
                     </div>
                   )}
                 </div>
@@ -535,7 +566,7 @@ export function CameraCalibration({
 
           <div className="iphone-use-wizard-footer">
             <Button disabled={lockStep} onClick={() => setStage('phone')}>
-              ← 重新扫码
+              {t('← 重新扫码', '← Rescan QR')}
             </Button>
             <div className="iphone-use-wizard-footer-actions">
               <Button
@@ -543,7 +574,7 @@ export function CameraCalibration({
                 loading={cancelling}
                 onClick={onCancel}
               >
-                取消连接
+                {t('取消连接', 'Cancel')}
               </Button>
               <Button
                 type="primary"
@@ -554,7 +585,9 @@ export function CameraCalibration({
                 }
                 onClick={() => void confirm()}
               >
-                {saving || verifying ? '正在验证指针…' : '确认并验证指针'}
+                {saving || verifying
+                  ? t('正在验证指针…', 'Verifying Pointer…')
+                  : t('确认并验证指针', 'Confirm & Verify Pointer')}
               </Button>
             </div>
           </div>

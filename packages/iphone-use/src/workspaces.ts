@@ -36,7 +36,11 @@ export class DeviceWorkspaces {
     if (data === this.lastPublished) return;
     this.lastPublished = data;
     for (const response of this.streams)
-      if (!response.destroyed && !response.write(`data: ${data}\n\n`))
+      if (
+        !response.destroyed &&
+        !response.writableEnded &&
+        !response.write(`data: ${data}\n\n`)
+      )
         response.end();
   }
   private watchBluetooth() {
@@ -212,7 +216,7 @@ export class DeviceWorkspaces {
         `data: ${JSON.stringify([...this.entries.values()].map((entry) => this.describe(entry)))}\n\n`,
       );
       const heartbeat = setInterval(() => {
-        if (!res.destroyed) res.write(': heartbeat\n\n');
+        if (!res.destroyed && !res.writableEnded) res.write(': heartbeat\n\n');
       }, 15000);
       res.once('close', () => {
         this.streams.delete(res);

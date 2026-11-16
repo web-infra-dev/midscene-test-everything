@@ -122,7 +122,7 @@ test('recovery waits for a fresh frame; failure can be retried', async () => {
   assert.equal(manager.getConnectionState()!.phase, 'ready');
   assert.equal(manager.getSnapshot().refreshing, false);
   assert.equal(destroy.mock.calls.length, 0);
-  screenshot.mockRejectedValueOnce(new Error('Camera unavailable'));
+  screenshot.mockRejectedValue(new Error('Camera unavailable'));
   await assert.rejects(manager.refreshDevice(), /Camera unavailable/);
   assert.equal(manager.getConnectionState()!.phase, 'failed');
   screenshot.mockResolvedValue(frame);

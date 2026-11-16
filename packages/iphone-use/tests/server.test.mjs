@@ -80,6 +80,16 @@ test('LAN clients can discover saved devices with a token, while setup stays loc
     (await request('/iphone-use/workspaces', authenticated)).status,
     403,
   );
+  assert.equal((await request('/iphone-use/token', authenticated)).status, 403);
+  assert.equal((await request('/iphone-use/token', {})).status, 403);
+  assert.deepEqual(
+    await (
+      await request('/iphone-use/token', {
+        'X-Midscene-Playground': 'workspace',
+      })
+    ).json(),
+    { token: 'test-token' },
+  );
   assert.equal((await request('/', authenticated)).status, 403);
   const localManager = await request('/', {});
   assert.equal(localManager.status, 200);

@@ -8,7 +8,12 @@ import { mountPreviewFeedback } from './preview-feedback';
 
 const defaultHost = 'http://localhost:5801';
 const storageKey = 'midscene.open-device.connections';
-const deviceStatus = { available: '可用', busy: '使用中', offline: '离线' };
+const t = (_zh: string, en: string) => en;
+const deviceStatus = {
+  available: 'Available',
+  busy: 'In Use',
+  offline: 'Offline',
+};
 
 function serviceOrigin(host: string) {
   let url: URL;
@@ -48,7 +53,11 @@ function readConnections(): ServiceConnection[] {
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, { cache: 'no-store', ...options });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error ?? '请求失败，请重试。');
+  if (!response.ok)
+    throw new Error(
+      data.error ??
+        t('请求失败，请重试。', 'Request failed. Please try again.'),
+    );
   return data;
 }
 
@@ -62,7 +71,9 @@ function post<T>(path: string, input: object, signal?: AbortSignal) {
 }
 
 function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : '请求失败，请重试。';
+  return error instanceof Error
+    ? error.message
+    : t('请求失败，请重试。', 'Request failed. Please try again.');
 }
 
 type ConnectionValues = { host: string; token: string; deviceId?: string };
@@ -119,7 +130,12 @@ function ConnectionForm({ initialNotice }: { initialNotice?: string }) {
       }
       setDevices(result.devices);
       if (!result.devices.some((device) => device.status === 'available'))
-        setNotice('没有可用设备，请到设备管理台检查连接。');
+        setNotice(
+          t(
+            '没有可用设备，请到设备管理台检查连接。',
+            'No available devices. Check the connection in the device manager.',
+          ),
+        );
     } catch (error) {
       if (!query.signal.aborted) setNotice(errorMessage(error));
     } finally {
@@ -171,7 +187,7 @@ function ConnectionForm({ initialNotice }: { initialNotice?: string }) {
     >
       <Form.Item
         name="host"
-        label="设备服务地址"
+        label={t('设备服务地址', 'Device Service URL')}
         rules={[
           {
             validator: (_, value: string | undefined) =>
@@ -179,7 +195,10 @@ function ConnectionForm({ initialNotice }: { initialNotice?: string }) {
                 ? Promise.resolve()
                 : Promise.reject(
                     new Error(
-                      '请输入设备服务地址，例如 http://localhost:5801。',
+                      t(
+                        '请输入设备服务地址，例如 http://localhost:5801。',
+                        'Enter the device service URL, e.g. http://localhost:5801.',
+                      ),
                     ),
                   ),
           },
@@ -200,12 +219,15 @@ function ConnectionForm({ initialNotice }: { initialNotice?: string }) {
       </Form.Item>
       <Form.Item
         name="token"
-        label="访问凭证"
+        label={t('访问凭证', 'Access Token')}
         rules={[
           {
             required: true,
             whitespace: true,
-            message: '请输入设备服务访问凭证。',
+            message: t(
+              '请输入设备服务访问凭证。',
+              'Enter the device service access token.',
+            ),
           },
         ]}
       >
@@ -215,14 +237,14 @@ function ConnectionForm({ initialNotice }: { initialNotice?: string }) {
         name="deviceId"
         label={
           <span className="hid-device-label">
-            设备
+            {t('设备', 'Device')}
             <Button
               type="text"
               size="small"
               htmlType="button"
               icon={<ReloadOutlined />}
-              aria-label="刷新设备列表"
-              title="刷新设备列表"
+              aria-label={t('刷新设备列表', 'Refresh device list')}
+              title={t('刷新设备列表', 'Refresh device list')}
               loading={querying}
               onClick={(event) => {
                 event.preventDefault();
@@ -233,8 +255,12 @@ function ConnectionForm({ initialNotice }: { initialNotice?: string }) {
         }
       >
         <Select
-          placeholder="请选择设备"
-          notFoundContent={querying ? '正在查找设备…' : '请点击刷新查询设备'}
+          placeholder={t('请选择设备', 'Select a device')}
+          notFoundContent={
+            querying
+              ? t('正在查找设备…', 'Finding devices…')
+              : t('请点击刷新查询设备', 'Click refresh to query devices')
+          }
           options={devices.map((device) => ({
             label: `${device.name} · ${deviceStatus[device.status]}`,
             value: device.id,
@@ -247,7 +273,7 @@ function ConnectionForm({ initialNotice }: { initialNotice?: string }) {
         type="submit"
         disabled={!deviceId || querying || connecting}
       >
-        {connecting ? '正在连接…' : '连接'}
+        {connecting ? t('正在连接…', 'Connecting…') : t('连接', 'Connect')}
       </button>
       <output>{notice}</output>
     </Form>
@@ -280,7 +306,13 @@ function Disconnect() {
   return (
     <>
       <output>
-        {notice ?? (ended ? '设备控制会话已结束，请重新连接。' : undefined)}
+        {notice ??
+          (ended
+            ? t(
+                '设备控制会话已结束，请重新连接。',
+                'Device control session ended. Please reconnect.',
+              )
+            : undefined)}
       </output>
       <Button
         loading={disconnecting}
@@ -296,7 +328,9 @@ function Disconnect() {
           }
         }}
       >
-        {ended ? '返回连接页面' : '断开设备'}
+        {ended
+          ? t('返回连接页面', 'Back to Connect')
+          : t('断开设备', 'Disconnect')}
       </Button>
     </>
   );

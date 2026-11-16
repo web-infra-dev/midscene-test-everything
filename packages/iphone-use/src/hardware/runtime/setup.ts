@@ -33,7 +33,7 @@ export class DeviceSetupSession implements SetupSession {
   private publish() {
     const data = `data: ${JSON.stringify({ airplay: this.preview?.getSetupInfo?.() })}\n\n`;
     for (const res of this.streams)
-      if (!res.destroyed && !res.write(data)) res.end();
+      if (!res.destroyed && !res.writableEnded && !res.write(data)) res.end();
   }
   constructor(
     private config: DeviceConfig,
@@ -111,7 +111,7 @@ export class DeviceSetupSession implements SetupSession {
       this.streams.add(res);
       this.publish();
       const heartbeat = setInterval(() => {
-        if (!res.destroyed) res.write(': heartbeat\n\n');
+        if (!res.destroyed && !res.writableEnded) res.write(': heartbeat\n\n');
       }, 15000);
       res.once('close', () => {
         clearInterval(heartbeat);
@@ -175,7 +175,10 @@ export class DeviceSetupSession implements SetupSession {
           (this.config.screen.source !== 'usb' ||
             value.usbDeviceId === this.config.screen.deviceId)
         ) {
-          json(res, {});
+          json(res, {
+            airplay: this.preview?.getSetupInfo?.(),
+            selectedPeer: this.config.bluetoothPeerId,
+          });
           return;
         }
         this.unsubscribePreview?.();
@@ -195,7 +198,10 @@ export class DeviceSetupSession implements SetupSession {
         });
         this.publish();
         this.resumeWhenReady();
-        json(res, {});
+        json(res, {
+          airplay: this.preview?.getSetupInfo?.(),
+          selectedPeer: this.config.bluetoothPeerId,
+        });
         return;
       }
       if (path === '/confirm') {

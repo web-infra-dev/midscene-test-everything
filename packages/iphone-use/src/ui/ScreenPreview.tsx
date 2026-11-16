@@ -1,5 +1,25 @@
-import { Alert, Spin } from 'antd';
+import { Alert } from 'antd';
 import { useEffect, useRef, useState } from 'react';
+import { useI18n } from './i18n';
+
+export function Spinner({
+  size = 22,
+  label,
+}: {
+  size?: number;
+  label?: string;
+}) {
+  return (
+    <span className="iphone-use-spinner-wrap">
+      <span
+        className="iphone-use-spinner"
+        style={{ width: size, height: size }}
+        aria-hidden="true"
+      />
+      {label && <span>{label}</span>}
+    </span>
+  );
+}
 
 /** Shared preview loop; pausing keeps the last frame for an interruption mask. */
 export function Frame({
@@ -11,6 +31,7 @@ export function Frame({
   active?: boolean;
   showError?: boolean;
 }) {
+  const { t, te } = useI18n();
   const [src, setSrc] = useState('');
   const [error, setError] = useState('');
   const current = useRef('');
@@ -36,7 +57,10 @@ export function Frame({
           ]),
         });
         if (!response.ok)
-          throw new Error((await response.json()).error ?? '画面获取失败');
+          throw new Error(
+            (await response.json()).error ??
+              t('画面获取失败', 'Failed to fetch screen frame'),
+          );
         if (response.status !== 204) {
           const blob = await response.blob();
           if (stopped) return;
@@ -47,7 +71,7 @@ export function Frame({
           current.current = next;
         }
       } catch (cause) {
-        if (!stopped) setError(String(cause));
+        if (!stopped) setError(te(String(cause)));
       }
       if (!stopped) timer = setTimeout(poll, 200);
     };
@@ -57,15 +81,65 @@ export function Frame({
       lifetime.abort();
       clearTimeout(timer);
     };
-  }, [url, active]);
+  }, [url, active, t, te]);
   return (
     <div className="iphone-use-live">
       {src ? (
-        <img src={src} alt="手机实时画面" />
+        <img src={src} alt={t('手机实时画面', 'Live phone screen')} />
       ) : (
-        active && <Spin tip="等待手机画面" />
+        active && <Spinner label={t('等待手机画面', 'Waiting for screen')} />
       )}
       {showError && error && <Alert type="warning" message={error} />}
+    </div>
+  );
+}
+
+/** Polling screenshot preview for connected device cards and detail modal. */
+export function LiveScreenshot({
+  getScreenshot,
+  paused = false,
+}: {
+  getScreenshot: () => Promise<{
+    screenshot: string;
+    timestamp: number;
+  } | null>;
+  paused?: boolean;
+}) {
+  const { t } = useI18n();
+  const [screenshot, setScreenshot] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (paused) return;
+    let stopped = false;
+    const load = async () => {
+      try {
+        const res = await getScreenshot();
+        if (stopped) return;
+        if (res?.screenshot) {
+          setScreenshot(res.screenshot.trim());
+          setError(null);
+        }
+      } catch (cause) {
+        if (!stopped) {
+          setError(cause instanceof Error ? cause.message : String(cause));
+        }
+      }
+    };
+    void load();
+    const timer = setInterval(() => void load(), 5000);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [getScreenshot, paused]);
+
+  if (screenshot) {
+    return <img src={screenshot} alt={t('设备画面', 'Device screen')} />;
+  }
+  return (
+    <div className="iphone-use-pending-waiting">
+      {error ? <span>{error}</span> : <Spinner />}
     </div>
   );
 }

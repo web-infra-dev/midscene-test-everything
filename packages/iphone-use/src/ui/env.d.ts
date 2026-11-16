@@ -1,1 +1,6 @@
-import '@midscene/device-manager-ui/assets';
+/// <reference types="@rsbuild/core/types" />
+declare module '*.svg?react' {
+  import type { FunctionComponent, SVGProps } from 'react';
+  const component: FunctionComponent<SVGProps<SVGSVGElement>>;
+  export default component;
+}

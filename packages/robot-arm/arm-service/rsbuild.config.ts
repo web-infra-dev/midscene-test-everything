@@ -1,4 +1,3 @@
-import { createRequire } from 'node:module';
 import path from 'node:path';
 import { defineConfig } from '@rsbuild/core';
 import { pluginLess } from '@rsbuild/plugin-less';
@@ -6,9 +5,7 @@ import { pluginNodePolyfill } from '@rsbuild/plugin-node-polyfill';
 import { pluginReact } from '@rsbuild/plugin-react';
 import { pluginSvgr } from '@rsbuild/plugin-svgr';
 
-const polyfill = createRequire(import.meta.url).resolve(
-  '@midscene/device-manager-ui/async-hooks',
-);
+const polyfill = path.resolve(__dirname, './src/ui/async-hooks.ts');
 
 export default defineConfig({
   source: { entry: { index: './src/ui/index.tsx' } },

@@ -61,7 +61,7 @@ export async function launchOpenDevicePlayground(
               ? await manager.openPreview(cancellation.signal)
               : undefined;
           if (!upstream) {
-            res.status(409).json({ error: '请先连接设备。' });
+            res.status(409).json({ error: 'Connect a device first.' });
             return;
           }
           const type = upstream.headers.get('content-type');
@@ -70,7 +70,9 @@ export async function launchOpenDevicePlayground(
             !type?.startsWith('multipart/x-mixed-replace;')
           ) {
             await upstream.body?.cancel();
-            res.status(502).json({ error: '设备服务未返回预览流。' });
+            res.status(502).json({
+              error: 'Device service did not return a preview stream.',
+            });
             return;
           }
           res.set({
@@ -85,7 +87,9 @@ export async function launchOpenDevicePlayground(
           });
         } catch {
           if (!res.destroyed && !res.headersSent)
-            res.status(502).json({ error: '设备预览连接失败。' });
+            res
+              .status(502)
+              .json({ error: 'Failed to connect device preview.' });
         } finally {
           res.off('close', abort);
           abort();

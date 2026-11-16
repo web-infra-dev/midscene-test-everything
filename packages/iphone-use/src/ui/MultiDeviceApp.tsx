@@ -1,5 +1,4 @@
-import { ScreenshotViewer } from '@midscene/device-manager-ui/visualizer';
-import { Button, Form, Modal, Popover, Spin, Tooltip, message } from 'antd';
+import { Button, Form, Modal, Popover, Tooltip, message } from 'antd';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   BindingSetup,
@@ -7,7 +6,10 @@ import {
   ConnectionPanel,
 } from './ConnectionPanel';
 import { ManagerLayout } from './ManagerLayout';
+import { LiveScreenshot, Spinner } from './ScreenPreview';
+import { useI18n } from './i18n';
 import { type Route, navigate } from './routes';
+import { subscribeSSE } from './sse';
 import './multi-device.css';
 
 type Workspace = {
@@ -66,9 +68,9 @@ export function BluetoothStatusIcon({
   );
 }
 
-function sourceLabel(source: string) {
+function sourceLabel(source: string, t: (zh: string, en: string) => string) {
   return source === 'camera'
-    ? '独立摄像头'
+    ? t('独立摄像头', 'Camera')
     : source === 'airplay'
       ? 'AirPlay'
       : 'USB';
@@ -89,6 +91,7 @@ function workspaceName(item: Workspace, list: Workspace[]) {
 }
 
 export function MultiDeviceApp({ route }: { route: Route }) {
+  const { t, te } = useI18n();
   const [workspaces, setWorkspaces] = useState<Workspace[]>();
   const [adding, setAdding] = useState(false);
   const boot = useRef<Promise<unknown>>();
@@ -102,26 +105,26 @@ export function MultiDeviceApp({ route }: { route: Route }) {
   }, []);
 
   useEffect(() => {
-    const events = new EventSource('/iphone-use/workspaces/events');
-    events.onmessage = (event) => {
-      try {
-        setWorkspaces(JSON.parse(event.data) as Workspace[]);
-      } catch {
-        void message.warning('设备状态读取失败，请刷新页面。');
-      }
-    };
-    events.onerror = () =>
-      setWorkspaces((current) =>
-        current?.map((item) => ({
-          ...item,
-          state: {
-            ...item.state,
-            phase: 'failed',
-            error: '设备状态连接中断，正在恢复…',
-          },
-        })),
-      );
-    return () => events.close();
+    return subscribeSSE('/iphone-use/workspaces/events', {
+      onMessage: (data) => {
+        try {
+          setWorkspaces(JSON.parse(data) as Workspace[]);
+        } catch {
+          void message.warning('设备状态读取失败，请刷新页面。');
+        }
+      },
+      onError: () =>
+        setWorkspaces((current) =>
+          current?.map((item) => ({
+            ...item,
+            state: {
+              ...item.state,
+              phase: 'failed',
+              error: '设备状态连接中断，正在恢复…',
+            },
+          })),
+        ),
+    });
   }, []);
 
   const addDevice = useCallback(async () => {
@@ -144,7 +147,15 @@ export function MultiDeviceApp({ route }: { route: Route }) {
 
   useEffect(() => {
     if (!workspaces) return;
-    if (activeId && workspaces.some((item) => item.id === activeId)) return;
+    const current = activeId
+      ? workspaces.find((item) => item.id === activeId)
+      : undefined;
+    if (current) {
+      if (isHome && current.connected) {
+        navigate(`workspace/${current.id}`, true);
+      }
+      return;
+    }
     const fallback = isHome
       ? workspaces.find((item) => !item.connected)
       : workspaces.find((item) => item.connected);
@@ -169,11 +180,14 @@ export function MultiDeviceApp({ route }: { route: Route }) {
 
   const remove = (item: Workspace) => {
     Modal.confirm({
-      title: '移除此设备？',
-      content: '将从当前列表移除此设备并释放连接，已保存的配置仍然保留。',
-      okText: '移除',
+      title: t('移除此设备？', 'Remove this device?'),
+      content: t(
+        '将从当前列表移除此设备并释放连接，已保存的配置仍然保留。',
+        'This removes the device from the active list and releases the connection. Saved calibration profiles are kept.',
+      ),
+      okText: t('移除', 'Remove'),
       okButtonProps: { danger: true },
-      cancelText: '取消',
+      cancelText: t('取消', 'Cancel'),
       centered: true,
       onOk: async () => {
         try {
@@ -184,7 +198,9 @@ export function MultiDeviceApp({ route }: { route: Route }) {
           else navigate('workspace', true);
         } catch (error) {
           void message.warning(
-            error instanceof Error ? error.message : '移除失败，请重试。',
+            error instanceof Error
+              ? te(error.message)
+              : t('移除失败，请重试。', 'Failed to remove. Please try again.'),
           );
           throw error;
         }
@@ -199,61 +215,79 @@ export function MultiDeviceApp({ route }: { route: Route }) {
   )
     return (
       <div className="iphone-use-loading">
-        <Spin />
+        <Spinner size={26} />
       </div>
     );
 
   const connectedDevices = workspaces.filter((item) => item.connected);
   const setupItem = isHome
-    ? workspaces.find((item) => item.id === activeId)
+    ? workspaces.find((item) => item.id === activeId && !item.connected)
     : undefined;
 
+  const inlineSetup = connectedDevices.length === 0 && Boolean(setupItem);
+
   return (
-    <ManagerLayout adding={adding} onAdd={() => void addDevice()}>
-      {connectedDevices.length === 0 ? (
+    <ManagerLayout
+      adding={adding}
+      onAdd={() => void addDevice()}
+      showAdd={!inlineSetup}
+    >
+      {inlineSetup && setupItem ? (
+        <AddDeviceModal
+          inline
+          item={setupItem}
+          workspaces={workspaces}
+          hasConnected={false}
+          reload={reload}
+        />
+      ) : connectedDevices.length === 0 ? (
         <div className="iphone-use-empty-grid">
           <div className="iphone-use-empty-card">
-            <div className="iphone-use-empty-title">暂无已接入设备</div>
+            <div className="iphone-use-empty-title">
+              {t('暂无已接入设备', 'No connected devices')}
+            </div>
             <Button
               type="primary"
               className="iphone-use-primary-btn"
               loading={adding}
               onClick={() => void addDevice()}
             >
-              ＋ 添加设备
+              {t('＋ 添加设备', '+ Add Device')}
             </Button>
           </div>
         </div>
       ) : (
-        <div className="iphone-use-card-grid">
-          {connectedDevices.map((item) => (
-            <DeviceCard
-              key={item.id}
-              item={item}
+        <>
+          <div className="iphone-use-card-grid">
+            {connectedDevices.map((item) => (
+              <DeviceCard
+                key={item.id}
+                item={item}
+                workspaces={workspaces}
+                onRemove={() => remove(item)}
+                reload={reload}
+              />
+            ))}
+            <button
+              type="button"
+              className="iphone-use-add-grid-card"
+              onClick={() => void addDevice()}
+            >
+              <span className="iphone-use-add-grid-plus">＋</span>
+              <span>{t('添加设备', 'Add Device')}</span>
+            </button>
+          </div>
+
+          {setupItem && (
+            <AddDeviceModal
+              item={setupItem}
               workspaces={workspaces}
-              onRemove={() => remove(item)}
+              hasConnected={connectedDevices.length > 0}
+              connectedFallbackId={connectedDevices[0]?.id}
               reload={reload}
             />
-          ))}
-          <button
-            type="button"
-            className="iphone-use-add-grid-card"
-            onClick={() => void addDevice()}
-          >
-            <span className="iphone-use-add-grid-plus">＋</span>
-            <span>添加设备</span>
-          </button>
-        </div>
-      )}
-
-      {setupItem && (
-        <AddDeviceModal
-          item={setupItem}
-          workspaces={workspaces}
-          hasConnected={connectedDevices.length > 0}
-          connectedFallbackId={connectedDevices[0]?.id}
-          reload={reload}
-        />
+          )}
+        </>
       )}
     </ManagerLayout>
   );
@@ -270,11 +304,13 @@ function DeviceCard({
   onRemove: () => void;
   reload: () => Promise<Workspace[]>;
 }) {
+  const { t, te } = useI18n();
   const [previewTarget, setPreviewTarget] = useState<HTMLDivElement | null>(
     null,
   );
   const [detailOpen, setDetailOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [cancellingRecovery, setCancellingRecovery] = useState(false);
   const busy = refreshing || Boolean(item.refreshing);
   const lastRecoverySetup = useRef<string>();
   if (busy && item.source === 'airplay' && item.state?.setupId)
@@ -289,20 +325,27 @@ function DeviceCard({
 
   const recoveryMessage =
     item.state?.phase === 'connecting'
-      ? '正在恢复设备控制…'
+      ? t('正在恢复设备控制…', 'Restoring device control…')
       : recoverySetup
         ? recoveryBluetoothConnected === false
-          ? '等待蓝牙重新连接，请在手机「设置 → 蓝牙」中连接这台 Mac。'
+          ? t(
+              '等待蓝牙重新连接，请在手机「设置 → 蓝牙」中连接这台 Mac。',
+              'Waiting for Bluetooth reconnection. Connect to this Mac in Settings → Bluetooth on your iPhone.',
+            )
           : recoveryBluetoothConnected === true
-            ? '等待手机恢复屏幕镜像…'
-            : '正在获取蓝牙连接状态…'
-        : '正在检查设备连接…';
+            ? t(
+                '等待手机恢复屏幕镜像…',
+                'Waiting for Screen Mirroring to resume…',
+              )
+            : t('正在获取蓝牙连接状态…', 'Checking Bluetooth status…')
+        : t('正在检查设备连接…', 'Checking device connection…');
 
   const ready = item.state?.phase === 'ready' && !item.screenError && !busy;
-  const error =
+  const error = te(
     item.screenError ??
-    item.state?.error ??
-    '设备连接已断开，请检查连接后点击刷新。';
+      item.state?.error ??
+      '设备连接已断开，请检查连接后点击刷新。',
+  );
   const name = workspaceName(item, workspaces);
   const deviceId = item.state?.device?.id;
 
@@ -317,7 +360,9 @@ function DeviceCard({
       );
     } catch (err) {
       void message.warning(
-        err instanceof Error ? err.message : '恢复失败，请重试。',
+        err instanceof Error
+          ? te(err.message)
+          : t('恢复失败，请重试。', 'Recovery failed. Please try again.'),
       );
     } finally {
       await reload().catch(() => {});
@@ -329,58 +374,74 @@ function DeviceCard({
     const response = await fetch(`${item.apiBase}/screenshot`, {
       signal: AbortSignal.timeout(15_000),
     });
-    if (!response.ok) throw new Error('画面获取失败');
+    if (!response.ok)
+      throw new Error(t('画面获取失败', 'Failed to fetch frame'));
     return response.json();
-  }, [item.apiBase]);
+  }, [item.apiBase, t]);
 
   const copyId = () => {
     if (!deviceId) return;
     void navigator.clipboard
       .writeText(deviceId)
-      .then(() => message.success('已复制设备 ID'))
-      .catch(() => message.warning('复制失败，请手动选择设备 ID。'));
+      .then(() => message.success(t('已复制设备 ID', 'Copied device ID')))
+      .catch(() =>
+        message.warning(
+          t(
+            '复制失败，请手动选择设备 ID。',
+            'Copy failed. Please copy the device ID manually.',
+          ),
+        ),
+      );
   };
 
   const statusPopover = (
     <div className="iphone-use-popover-details">
       <div className="iphone-use-kv-row">
-        <span className="iphone-use-kv-label">占用状态</span>
+        <span className="iphone-use-kv-label">
+          {t('占用状态', 'Occupancy')}
+        </span>
         <span className="iphone-use-kv-value">
           <span
             className={`iphone-use-occupancy-pill${item.occupied ? ' occupied' : ''}`}
           >
             <i />
-            {item.occupied ? '使用中' : '空闲可用'}
+            {item.occupied ? t('使用中', 'In Use') : t('空闲可用', 'Available')}
           </span>
         </span>
       </div>
       <div className="iphone-use-kv-row">
-        <span className="iphone-use-kv-label">画面来源</span>
+        <span className="iphone-use-kv-label">{t('画面来源', 'Screen')}</span>
         <span className="iphone-use-kv-value">
-          {sourceLabel(item.source)} ·{' '}
+          {sourceLabel(item.source, t)} ·{' '}
           {item.screenError
-            ? '画面中断'
+            ? t('画面中断', 'Interrupted')
             : item.state?.phase === 'ready'
-              ? '正常'
-              : '不可用'}
+              ? t('正常', 'OK')
+              : t('不可用', 'Unavailable')}
         </span>
       </div>
       <div className="iphone-use-kv-row">
-        <span className="iphone-use-kv-label">蓝牙键鼠</span>
+        <span className="iphone-use-kv-label">
+          {t('蓝牙键鼠', 'Bluetooth HID')}
+        </span>
         <span className="iphone-use-kv-value">
-          {item.state?.phase === 'ready' ? '已连接' : '已断开'}
+          {item.state?.phase === 'ready'
+            ? t('已连接', 'Connected')
+            : t('已断开', 'Disconnected')}
         </span>
       </div>
       <div className="iphone-use-kv-row">
-        <span className="iphone-use-kv-label">指针验证</span>
+        <span className="iphone-use-kv-label">{t('指针验证', 'Pointer')}</span>
         <span className="iphone-use-kv-value">
-          {ready ? '已通过' : '等待重新验证'}
+          {ready
+            ? t('已通过', 'Verified')
+            : t('等待重新验证', 'Needs re-verification')}
         </span>
       </div>
       <div className="iphone-use-kv-row">
-        <span className="iphone-use-kv-label">设备 ID</span>
+        <span className="iphone-use-kv-label">{t('设备 ID', 'Device ID')}</span>
         <span className="iphone-use-kv-value">
-          <code>{deviceId ?? '等待连接'}</code>
+          <code>{deviceId ?? t('等待连接', 'Pending')}</code>
         </span>
       </div>
       {!ready && (
@@ -390,6 +451,26 @@ function DeviceCard({
       )}
     </div>
   );
+
+  const cancelRecovery = () => {
+    if (!recoverySetup || cancellingRecovery) return;
+    const setupId = recoverySetup.split('/').filter(Boolean).at(-1);
+    if (!setupId) return;
+    setCancellingRecovery(true);
+    void fetch(`${recoverySetup}/cancel`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Midscene-Setup': setupId,
+      },
+      body: '{}',
+      signal: AbortSignal.timeout(10_000),
+    })
+      .catch(() => {})
+      .finally(() => {
+        setCancellingRecovery(false);
+      });
+  };
 
   return (
     <article className="iphone-use-card">
@@ -405,27 +486,26 @@ function DeviceCard({
               className={`iphone-use-status-badge${ready ? ' ready' : ''}`}
             >
               <i />
-              {ready ? '连接正常' : busy ? '正在恢复' : '需要处理'}
+              {ready
+                ? t('连接正常', 'Connected')
+                : busy
+                  ? t('正在恢复', 'Recovering')
+                  : t('需要处理', 'Attention')}
             </button>
           </Popover>
           <span className="iphone-use-source-tag">
-            {sourceLabel(item.source)}
+            {sourceLabel(item.source, t)}
           </span>
         </div>
 
         <button
           type="button"
           className="iphone-use-thumb-bezel iphone-use-thumb-clickable"
-          aria-label={`查看 ${name} 详情`}
+          aria-label={t(`查看 ${name} 详情`, `View ${name} details`)}
           onClick={() => setDetailOpen(true)}
         >
           <div className="iphone-use-thumb-screen">
-            <ScreenshotViewer
-              mode="screen-only"
-              serverOnline
-              isUserOperating={!ready}
-              getScreenshot={getScreenshot}
-            />
+            <LiveScreenshot getScreenshot={getScreenshot} paused={!ready} />
           </div>
         </button>
 
@@ -433,10 +513,10 @@ function DeviceCard({
           <div className="iphone-use-device-preview-error">
             <strong>
               {busy
-                ? '正在恢复设备连接…'
+                ? t('正在恢复设备连接…', 'Restoring connection…')
                 : item.screenError
-                  ? '画面已中断'
-                  : '设备连接已断开'}
+                  ? t('画面已中断', 'Screen Interrupted')
+                  : t('设备连接已断开', 'Disconnected')}
             </strong>
             {!busy && <p>{error}</p>}
             <Button
@@ -446,7 +526,7 @@ function DeviceCard({
               loading={busy}
               onClick={() => void refresh()}
             >
-              刷新
+              {t('刷新', 'Refresh')}
             </Button>
           </div>
         )}
@@ -457,11 +537,11 @@ function DeviceCard({
           {name}
         </div>
         <div className="iphone-use-card-tools">
-          <Tooltip title="复制设备 ID">
+          <Tooltip title={t('复制设备 ID', 'Copy Device ID')}>
             <Button
               size="small"
               type="text"
-              aria-label="复制设备 ID"
+              aria-label={t('复制设备 ID', 'Copy Device ID')}
               className="iphone-use-icon-btn"
               disabled={!deviceId}
               onClick={copyId}
@@ -483,11 +563,11 @@ function DeviceCard({
               }
             />
           </Tooltip>
-          <Tooltip title="移除设备">
+          <Tooltip title={t('移除设备', 'Remove Device')}>
             <Button
               size="small"
               type="text"
-              aria-label="移除设备"
+              aria-label={t('移除设备', 'Remove Device')}
               className="iphone-use-icon-btn danger"
               onClick={onRemove}
               icon={
@@ -516,10 +596,11 @@ function DeviceCard({
       <Modal
         open={Boolean(recoverySetup)}
         footer={null}
-        closable={false}
+        closable
+        onCancel={cancelRecovery}
         width={480}
         centered
-        title="恢复 AirPlay 连接"
+        title={t('恢复 AirPlay 连接', 'Restore AirPlay Connection')}
       >
         <div className="iphone-use-recovery-preview" ref={setPreviewTarget}>
           {recoverySetup && (
@@ -554,12 +635,7 @@ function DeviceCard({
           <div className="iphone-use-detail-preview">
             <div className="iphone-use-phone-bezel iphone-use-detail-bezel">
               <div className="iphone-use-phone-screen">
-                <ScreenshotViewer
-                  mode="screen-only"
-                  serverOnline
-                  isUserOperating={!ready}
-                  getScreenshot={getScreenshot}
-                />
+                <LiveScreenshot getScreenshot={getScreenshot} paused={!ready} />
               </div>
             </div>
           </div>
@@ -573,52 +649,72 @@ function DeviceCard({
                 className={`iphone-use-status-badge${ready ? ' ready' : ''}`}
               >
                 <i />
-                {ready ? '连接正常' : busy ? '正在恢复' : '需要处理'}
+                {ready
+                  ? t('连接正常', 'Connected')
+                  : busy
+                    ? t('正在恢复', 'Recovering')
+                    : t('需要处理', 'Attention')}
               </span>
             </div>
 
             <div className="iphone-use-detail-kv-card">
               <div className="iphone-use-kv-row">
-                <span className="iphone-use-kv-label">占用状态</span>
+                <span className="iphone-use-kv-label">
+                  {t('占用状态', 'Occupancy')}
+                </span>
                 <span className="iphone-use-kv-value">
                   <span
                     className={`iphone-use-occupancy-pill${item.occupied ? ' occupied' : ''}`}
                   >
                     <i />
-                    {item.occupied ? '使用中' : '空闲可用'}
+                    {item.occupied
+                      ? t('使用中', 'In Use')
+                      : t('空闲可用', 'Available')}
                   </span>
                 </span>
               </div>
               <div className="iphone-use-kv-row">
-                <span className="iphone-use-kv-label">画面来源</span>
+                <span className="iphone-use-kv-label">
+                  {t('画面来源', 'Screen')}
+                </span>
                 <span className="iphone-use-kv-value">
-                  {sourceLabel(item.source)} ·{' '}
+                  {sourceLabel(item.source, t)} ·{' '}
                   {item.screenError
-                    ? '画面中断'
+                    ? t('画面中断', 'Interrupted')
                     : item.state?.phase === 'ready'
-                      ? '正常'
-                      : '不可用'}
+                      ? t('正常', 'OK')
+                      : t('不可用', 'Unavailable')}
                 </span>
               </div>
               <div className="iphone-use-kv-row">
-                <span className="iphone-use-kv-label">蓝牙键鼠</span>
+                <span className="iphone-use-kv-label">
+                  {t('蓝牙键鼠', 'Bluetooth HID')}
+                </span>
                 <span className="iphone-use-kv-value">
-                  {item.state?.phase === 'ready' ? '已连接' : '已断开'}
+                  {item.state?.phase === 'ready'
+                    ? t('已连接', 'Connected')
+                    : t('已断开', 'Disconnected')}
                 </span>
               </div>
               <div className="iphone-use-kv-row">
-                <span className="iphone-use-kv-label">指针验证</span>
+                <span className="iphone-use-kv-label">
+                  {t('指针验证', 'Pointer')}
+                </span>
                 <span className="iphone-use-kv-value">
-                  {ready ? '已通过' : '等待重新验证'}
+                  {ready
+                    ? t('已通过', 'Verified')
+                    : t('等待重新验证', 'Needs re-verification')}
                 </span>
               </div>
               <div className="iphone-use-kv-row">
-                <span className="iphone-use-kv-label">设备 ID</span>
+                <span className="iphone-use-kv-label">
+                  {t('设备 ID', 'Device ID')}
+                </span>
                 <span className="iphone-use-kv-value iphone-use-detail-id">
-                  <code>{deviceId ?? '等待连接'}</code>
+                  <code>{deviceId ?? t('等待连接', 'Pending')}</code>
                   {deviceId && (
                     <Button size="small" type="text" onClick={copyId}>
-                      复制
+                      {t('复制', 'Copy')}
                     </Button>
                   )}
                 </span>
@@ -639,7 +735,7 @@ function DeviceCard({
                   loading={busy}
                   onClick={() => void refresh()}
                 >
-                  刷新连接
+                  {t('刷新连接', 'Refresh')}
                 </Button>
               )}
               <Button
@@ -649,7 +745,7 @@ function DeviceCard({
                   onRemove();
                 }}
               >
-                移除设备
+                {t('移除设备', 'Remove Device')}
               </Button>
             </div>
           </div>
@@ -660,18 +756,21 @@ function DeviceCard({
 }
 
 function AddDeviceModal({
+  inline = false,
   item,
   workspaces,
   hasConnected,
   connectedFallbackId,
   reload,
 }: {
+  inline?: boolean;
   item: Workspace;
   workspaces: Workspace[];
   hasConnected: boolean;
   connectedFallbackId?: string;
   reload: () => Promise<Workspace[]>;
 }) {
+  const { t, te } = useI18n();
   const [previewTarget, setPreviewTarget] = useState<HTMLDivElement | null>(
     null,
   );
@@ -691,11 +790,16 @@ function AddDeviceModal({
         signal: AbortSignal.timeout(30000),
       });
       if (!response.ok)
-        throw new Error((await response.json()).error ?? '取消失败，请重试。');
+        throw new Error(
+          (await response.json()).error ??
+            t('取消失败，请重试。', 'Failed to cancel. Please try again.'),
+        );
       await reload();
     } catch (error) {
       void message.warning(
-        error instanceof Error ? error.message : '取消失败，请重试。',
+        error instanceof Error
+          ? te(error.message)
+          : t('取消失败，请重试。', 'Failed to cancel. Please try again.'),
       );
     } finally {
       setReturning(false);
@@ -713,7 +817,9 @@ function AddDeviceModal({
       signal: AbortSignal.timeout(11 * 60_000),
     });
     if (!response.ok)
-      throw new Error((await response.json()).error ?? '连接失败');
+      throw new Error(
+        (await response.json()).error ?? t('连接失败', 'Connection failed'),
+      );
     return true;
   };
 
@@ -731,6 +837,54 @@ function AddDeviceModal({
     item.state?.setupKind === 'camera' && item.state?.setupId,
   );
 
+  const studio = (
+    <div
+      className={`iphone-use-setup-studio${cameraWizardActive ? ' iphone-use-setup-studio--camera' : ''}`}
+    >
+      <div className="iphone-use-setup-panel">
+        <ConnectionPanel
+          connection={item.state}
+          initialSource={item.source}
+          controller={{
+            state: { form, sessionMutating: settingUp },
+            actions: { createSession },
+          }}
+          previewTarget={previewTarget}
+          apiBase={item.apiBase}
+          onCancel={() => void returnToAdd()}
+          cancelling={returning}
+          reservedPeers={workspaces
+            .filter((other) => other.id !== item.id && other.connected)
+            .map((other) => other.bluetoothPeerId)
+            .filter((id): id is string => Boolean(id))}
+          reservedSources={workspaces
+            .filter(
+              (other) =>
+                other.id !== item.id && other.connected && other.sourceId,
+            )
+            .map((other) => `${other.source}:${other.sourceId}`)}
+          onConnected={() => {
+            void reload();
+            navigate(`workspace/${item.id}`);
+          }}
+        />
+      </div>
+      <div className="iphone-use-setup-preview">
+        <div className="iphone-use-preview" ref={setPreviewTarget} />
+      </div>
+    </div>
+  );
+
+  if (inline) {
+    return (
+      <div
+        className={`iphone-use-inline-setup${cameraWizardActive ? ' iphone-use-inline-setup--camera' : ''}`}
+      >
+        {studio}
+      </div>
+    );
+  }
+
   return (
     <Modal
       open
@@ -743,41 +897,7 @@ function AddDeviceModal({
       className="iphone-use-add-modal"
       styles={{ body: { padding: 0 } }}
     >
-      <div
-        className={`iphone-use-setup-studio${cameraWizardActive ? ' iphone-use-setup-studio--camera' : ''}`}
-      >
-        <div className="iphone-use-setup-panel">
-          <ConnectionPanel
-            connection={item.state}
-            initialSource={item.source}
-            controller={{
-              state: { form, sessionMutating: settingUp },
-              actions: { createSession },
-            }}
-            previewTarget={previewTarget}
-            apiBase={item.apiBase}
-            onCancel={() => void returnToAdd()}
-            cancelling={returning}
-            reservedPeers={workspaces
-              .filter((other) => other.id !== item.id && other.connected)
-              .map((other) => other.bluetoothPeerId)
-              .filter((id): id is string => Boolean(id))}
-            reservedSources={workspaces
-              .filter(
-                (other) =>
-                  other.id !== item.id && other.connected && other.sourceId,
-              )
-              .map((other) => `${other.source}:${other.sourceId}`)}
-            onConnected={() => {
-              void reload();
-              navigate(`workspace/${item.id}`);
-            }}
-          />
-        </div>
-        <div className="iphone-use-setup-preview">
-          <div className="iphone-use-preview" ref={setPreviewTarget} />
-        </div>
-      </div>
+      {studio}
     </Modal>
   );
 }

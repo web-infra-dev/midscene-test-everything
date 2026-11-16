@@ -1,4 +1,3 @@
-import type {} from '@midscene/device-manager-ui/assets';
 export { App as ArmPlayground } from './App';
 export type { PlaygroundViews } from './extensions';
 export type { RobotArmController } from './hooks/useRobotArm';

@@ -102,6 +102,13 @@ export async function runServer(
         error: 'Open the device manager on the Mac running this service',
       });
   });
+  app.get('/iphone-use/token', (req, res) => {
+    if (req.get('x-midscene-playground') !== 'workspace') {
+      res.status(403).end();
+      return;
+    }
+    res.set('Cache-Control', 'no-store').json({ token: serviceToken });
+  });
   app.post('/iphone-use/update/prepare', (req, res) => {
     const supplied = Buffer.from(req.get('Authorization') ?? '');
     res.set('Cache-Control', 'no-store');

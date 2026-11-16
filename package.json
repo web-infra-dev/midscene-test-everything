@@ -37,7 +37,7 @@
     "tsx": "^4.20.6"
   },
   "lint-staged": {
-    "!(packages/shared/manager-ui/src/vendor/visualizer/**).{js,jsx,ts,tsx,mjs,cjs,json,css}": "pnpm exec biome check --write --no-errors-on-unmatched",
-    "!(packages/shared/manager-ui/src/vendor/visualizer/**).{md,mdx,less,scss,yml,yaml}": "pnpm exec prettier --write"
+    "*.{js,jsx,ts,tsx,mjs,cjs,json,css}": "pnpm exec biome check --write --no-errors-on-unmatched",
+    "*.{md,mdx,less,scss,yml,yaml}": "pnpm exec prettier --write"
   }
 }

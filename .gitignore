@@ -14,4 +14,3 @@ coverage/
 midscene_run/
 
 packages/**/calibration-ui/lib/
-packages/shared/manager-ui/lib/

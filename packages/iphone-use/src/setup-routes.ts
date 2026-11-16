@@ -25,11 +25,15 @@ export function mountSetupRoutes(
     res.write(': connected\n\n');
     streams.add(res);
     const unsubscribe = runtime.input.subscribe((status) => {
-      if (!res.destroyed && !res.write(`data: ${JSON.stringify(status)}\n\n`))
+      if (
+        !res.destroyed &&
+        !res.writableEnded &&
+        !res.write(`data: ${JSON.stringify(status)}\n\n`)
+      )
         res.end();
     });
     const heartbeat = setInterval(() => {
-      if (!res.destroyed) res.write(': heartbeat\n\n');
+      if (!res.destroyed && !res.writableEnded) res.write(': heartbeat\n\n');
     }, 15000);
     res.once('close', () => {
       unsubscribe();
@@ -133,6 +137,7 @@ export function mountSetupRoutes(
   return async () => {
     clearInterval(previewTimer);
     for (const stream of streams) stream.end();
+    streams.clear();
     await previews.close();
   };
 }
