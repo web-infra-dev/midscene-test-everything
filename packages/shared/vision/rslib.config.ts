@@ -4,7 +4,7 @@ import { defineConfig } from '@rslib/core';
 export default defineConfig({
   plugins: [pluginReact()],
   source: {
-    entry: { index: ['./src/**/*.{ts,tsx}', '!./src/setup/standalone/**'] },
+    entry: { index: ['./src/**/*.{ts,tsx}'] },
     tsconfigPath: './tsconfig.build.json',
   },
   lib: [{ format: 'esm', syntax: 'es2022', bundle: false, dts: true }],

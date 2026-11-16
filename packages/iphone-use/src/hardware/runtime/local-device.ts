@@ -111,6 +111,16 @@ export class LocalDevice {
     return connection.session.screenshot();
   }
 
+  previewScreenshot() {
+    const connection = this.controlConnection();
+    if (connection) return connection.session.screenshot();
+    const screen = this.connection?.previewScreen;
+    if (!screen || this.connection?.lifetime.signal.aborted) {
+      throw new Error('Preview not available');
+    }
+    return screen.getFrame({ allowUnchanged: true, timeoutMs: 2000 });
+  }
+
   async destroy() {
     this.destroyed = true;
     if (this.connection) await this.manager.close(this.connection);

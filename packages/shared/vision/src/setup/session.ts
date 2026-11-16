@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import sharp from 'sharp';
 import {
@@ -69,13 +68,6 @@ export class CameraSetupSession {
   ): Promise<void> {
     if (this.closing) throw new Error('Camera setup closed');
     res.setHeader('Cache-Control', 'no-store');
-    if (req.method === 'GET' && path === '/') {
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.end(
-        await readFile(new URL('../setup-page/index.html', import.meta.url)),
-      );
-      return;
-    }
     if (req.method === 'GET' && path === '/state') {
       if (!this.options.phone) await this.phone.start();
       const cameras = await listCameras({ includeBuiltIn: true });

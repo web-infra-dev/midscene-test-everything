@@ -28,6 +28,7 @@ export class DeviceWorkspaces {
   private bluetoothWatch?: () => void;
   private healthTimer?: ReturnType<typeof setInterval>;
   private lastPublished = '';
+  private inUse: (deviceId: string) => boolean = () => false;
   publish() {
     const data = JSON.stringify(
       [...this.entries.values()].map((entry) => this.describe(entry)),
@@ -111,6 +112,19 @@ export class DeviceWorkspaces {
           res.status(409).json({ error: error.message }),
         );
     });
+    router.get('/preview-screenshot', (_req, res) => {
+      void manager
+        .previewScreenshot()
+        .then((frame) => {
+          res.set('Cache-Control', 'no-store').json({
+            screenshot: `data:image/jpeg;base64,${frame.jpeg.toString('base64')}`,
+            timestamp: frame.receivedAt,
+          });
+        })
+        .catch((error: Error) =>
+          res.status(409).json({ error: error.message }),
+        );
+    });
     const entry = {
       id,
       router,
@@ -123,6 +137,13 @@ export class DeviceWorkspaces {
     this.publish();
     return this.describe(entry);
   }
+  private isOccupied(entry?: Entry) {
+    return Boolean(
+      entry?.deviceId &&
+        entry.manager.controlDevice(entry.deviceId) &&
+        this.inUse(entry.deviceId),
+    );
+  }
   private describe(entry: Entry) {
     const snapshot = entry.manager.getSnapshot();
     if (snapshot.state?.phase === 'ready') {
@@ -134,6 +155,7 @@ export class DeviceWorkspaces {
       apiBase: `/iphone-use/workspaces/${entry.id}`,
       ...snapshot,
       connected: entry.connected,
+      occupied: this.isOccupied(entry),
     };
   }
   list() {
@@ -165,6 +187,7 @@ export class DeviceWorkspaces {
     inUse: (deviceId: string) => boolean = () => false,
     phoneCalibration?: PhoneCalibration,
   ) {
+    this.inUse = inUse;
     this.connections.phoneCalibration = phoneCalibration;
     const allowed = (req: Request) =>
       req.get('x-midscene-playground') === 'workspace';
@@ -218,7 +241,7 @@ export class DeviceWorkspaces {
         return;
       }
       const entry = this.entries.get(req.params.id);
-      if (entry?.deviceId && inUse(entry.deviceId)) {
+      if (this.isOccupied(entry)) {
         res
           .status(409)
           .json({ error: '设备正在使用，请先在 Playground 断开连接。' });
@@ -240,7 +263,7 @@ export class DeviceWorkspaces {
         res.status(404).json({ error: '设备工作区不存在。' });
         return;
       }
-      if (entry.deviceId && inUse(entry.deviceId)) {
+      if (this.isOccupied(entry)) {
         res
           .status(409)
           .json({ error: '设备正在使用，请先在 Playground 断开连接。' });

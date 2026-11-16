@@ -54,49 +54,55 @@ export function AirPlayPreview({
   verifying?: boolean;
 }) {
   const streaming = info?.state === 'streaming';
+  const ready = streaming || verifying;
   return (
-    <div className="iphone-use-airplay-preview">
-      <div className="iphone-use-airplay-header">
-        <span>
-          AirPlay{' '}
-          {info && (
-            <span className="iphone-use-airplay-muted">／ {info.name}</span>
+    <div className="iphone-use-pending-preview">
+      <div className="iphone-use-phone-bezel iphone-use-pending-bezel">
+        <div className="iphone-use-phone-screen">
+          {ready ? (
+            <Frame
+              url={frameUrl}
+              active={streaming && !verifying}
+              showError={false}
+            />
+          ) : (
+            <div className="iphone-use-airplay-screen-guide">
+              <ScreenMirroringIcon />
+              <strong>
+                {!info
+                  ? '正在准备接收器…'
+                  : info.state === 'failed'
+                    ? '接收器无法启动'
+                    : info.state === 'interrupted'
+                      ? '投屏画面已中断'
+                      : '等待手机投屏'}
+              </strong>
+              {info?.state === 'failed' ? (
+                <p>{info.error}</p>
+              ) : (
+                info && <ReceiverGuide name={info.name} pin={info.pin} />
+              )}
+            </div>
           )}
-        </span>
-        <span className="iphone-use-airplay-status">
-          {(!info || info.state === 'waiting' || verifying) && (
-            <span className="iphone-use-waiting-ring" aria-hidden="true" />
-          )}
-          {airplayStatusText(info, verifying)}
-        </span>
+        </div>
       </div>
-      <div
-        className={`iphone-use-airplay-body${streaming || verifying ? '' : ' iphone-use-airplay-unavailable'}`}
-      >
-        <Frame
-          url={frameUrl}
-          active={streaming && !verifying}
-          showError={false}
-        />
-        {!streaming && !verifying && (
-          <div className="iphone-use-airplay-empty">
-            <ScreenMirroringIcon />
-            <strong>
-              {!info
-                ? '正在准备接收器…'
-                : info.state === 'failed'
-                  ? '接收器无法启动'
-                  : info.state === 'interrupted'
-                    ? '投屏画面已中断'
-                    : '等待手机投屏'}
-            </strong>
-            {info?.state === 'failed' ? (
-              <p>{info.error}</p>
-            ) : (
-              info && <ReceiverGuide name={info.name} pin={info.pin} />
-            )}
-          </div>
-        )}
+      <div className="iphone-use-pending-progress">
+        <div className="iphone-use-progress-step done">
+          <i />
+          <span>蓝牙已连接</span>
+        </div>
+        <div
+          className={`iphone-use-progress-step ${ready ? 'done' : 'active'}`}
+        >
+          <i />
+          <span>AirPlay 画面就绪</span>
+        </div>
+        <div
+          className={`iphone-use-progress-step ${verifying ? 'active' : ''}`}
+        >
+          <i />
+          <span>指针校准</span>
+        </div>
       </div>
     </div>
   );

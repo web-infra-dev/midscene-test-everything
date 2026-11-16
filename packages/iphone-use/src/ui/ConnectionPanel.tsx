@@ -1,23 +1,10 @@
 import type { PlaygroundControllerResult } from '@midscene/device-manager-ui/shell/controller/types.ts';
-import MidsceneLogo from '@midscene/device-manager-ui/shell/icons/midscene-logo.svg?react';
-import '@midscene/device-manager-ui/shell/SessionSetupPanel.less';
-import type { AirPlaySetupInfo } from '../hardware/types.js';
-import { AirPlayPreview, airplayStatusText } from './AirPlayPreview';
-import { CameraCalibration } from './CameraCalibration';
-import { Frame } from './ScreenPreview';
 import {
-  bluetoothLabel,
-  resolveBluetoothSelection,
-} from './bluetooth-selection';
-import { navigate } from './routes';
-import '@midscene/robotics-vision/styles.css';
-import '@midscene/robotics-vision/screen-setup.less';
-import {
-  Alert,
   Button,
   Checkbox,
   Form,
   Input,
+  Segmented,
   Select,
   Space,
   Spin,
@@ -25,6 +12,15 @@ import {
 } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import type { AirPlaySetupInfo } from '../hardware/types.js';
+import { AirPlayPreview } from './AirPlayPreview';
+import { CameraCalibration } from './CameraCalibration';
+import { Frame } from './ScreenPreview';
+import {
+  bluetoothLabel,
+  resolveBluetoothSelection,
+} from './bluetooth-selection';
+import { navigate } from './routes';
 
 type Choice = {
   id: string;
@@ -256,6 +252,9 @@ export function BindingSetup({
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   useEffect(() => {
+    if (error) void message.warning(error);
+  }, [error]);
+  useEffect(() => {
     if (!recovery || verifying) return;
     const events = new EventSource(
       baseUrl.replace(/\/setup\/[^/]+\/?$/, '/bluetooth/events'),
@@ -338,37 +337,12 @@ export function BindingSetup({
     return (
       <>
         {!recovery && (
-          <div className="iphone-use-airplay-controls">
-            <span className="iphone-use-airplay-status">
-              {(!info || info.state === 'waiting' || checking) && (
-                <span className="iphone-use-waiting-ring" aria-hidden="true" />
-              )}
-              {airplayStatusText(info, checking)}
-            </span>
-            <p className="iphone-use-hint">
-              {info?.state === 'streaming'
-                ? '确认右侧画面是要操作的手机。'
-                : '按右侧提示在手机上开始屏幕镜像。'}
-            </p>
-            <Button
-              type="primary"
-              block
-              className="session-setup-submit"
-              loading={checking}
-              disabled={
-                !peer ||
-                !preview ||
-                !eventsOnline ||
-                info?.state !== 'streaming' ||
-                checking
-              }
-              onClick={confirm}
-            >
-              验证并连接
-            </Button>
-            {info?.state === 'failed' && (
+          <div className="iphone-use-submit-row">
+            {info?.state === 'failed' ? (
               <Button
+                type="primary"
                 block
+                className="session-setup-submit"
                 disabled={checking}
                 onClick={() => {
                   setError('');
@@ -379,19 +353,33 @@ export function BindingSetup({
               >
                 重试接收器
               </Button>
+            ) : (
+              <Button
+                type="primary"
+                block
+                className="session-setup-submit"
+                loading={checking}
+                disabled={
+                  !peer ||
+                  !preview ||
+                  !eventsOnline ||
+                  info?.state !== 'streaming' ||
+                  checking
+                }
+                onClick={confirm}
+              >
+                验证并连接
+              </Button>
             )}
             {onStop && (
               <Button
-                type="text"
-                block
-                size="small"
-                disabled={checking}
+                className="iphone-use-cancel-btn"
+                disabled={false}
                 onClick={onStop}
               >
-                停止接收器
+                取消连接
               </Button>
             )}
-            {error && <Alert type="warning" message={error} />}
           </div>
         )}
         {previewTarget &&
@@ -445,13 +433,91 @@ export function BindingSetup({
       >
         确认并验证指针
       </Button>
-      {error && <Alert type="warning" message={error} />}
       {preview &&
         previewTarget &&
         createPortal(<Frame url={`${baseUrl}/frame`} />, previewTarget)}
     </Space>
   );
 }
+function PendingScreenPreview({
+  apiBase,
+  source,
+  phase,
+}: {
+  apiBase: string;
+  source: string;
+  phase?: string;
+}) {
+  const [src, setSrc] = useState('');
+  useEffect(() => {
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const res = await fetch(`${apiBase}/preview-screenshot`, {
+          cache: 'no-store',
+          signal: AbortSignal.timeout(4000),
+        });
+        if (!stopped && res.ok) {
+          const data = (await res.json()) as { screenshot?: string };
+          if (data.screenshot) setSrc(data.screenshot);
+        }
+      } catch {
+        // Screen source may still be opening; keep polling.
+      } finally {
+        if (!stopped) timer = setTimeout(() => void poll(), 350);
+      }
+    };
+    void poll();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [apiBase]);
+
+  const sourceText =
+    source === 'camera' ? '摄像头' : source === 'airplay' ? 'AirPlay' : 'USB';
+  const calibrating = phase === 'connecting' || Boolean(src);
+  return (
+    <div className="iphone-use-pending-preview">
+      <div className="iphone-use-phone-bezel iphone-use-pending-bezel">
+        <div className="iphone-use-phone-screen">
+          {src ? (
+            <img
+              src={src}
+              alt="设备画面预览"
+              className="iphone-use-pending-img"
+            />
+          ) : (
+            <div className="iphone-use-pending-waiting">
+              <Spin />
+              <span>{calibrating ? '正在校准指针…' : '正在连接设备…'}</span>
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="iphone-use-pending-progress">
+        <div className="iphone-use-progress-step done">
+          <i />
+          <span>蓝牙已连接</span>
+        </div>
+        <div
+          className={`iphone-use-progress-step ${calibrating ? 'done' : 'active'}`}
+        >
+          <i />
+          <span>{sourceText} 画面就绪</span>
+        </div>
+        <div
+          className={`iphone-use-progress-step ${calibrating ? 'active' : ''}`}
+        >
+          <i />
+          <span>指针校准</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ConnectionPanel({
   controller,
   previewTarget,
@@ -461,6 +527,8 @@ export function ConnectionPanel({
   reservedSources = [],
   initialSource = 'usb',
   onConnected,
+  onCancel,
+  cancelling = false,
 }: {
   controller: {
     state: Pick<
@@ -476,6 +544,8 @@ export function ConnectionPanel({
   reservedSources?: string[];
   initialSource?: string;
   onConnected?: () => void;
+  onCancel?: () => void;
+  cancelling?: boolean;
 }) {
   const { state, actions } = controller;
   const reservedPeerKey = JSON.stringify(reservedPeers);
@@ -613,12 +683,13 @@ export function ConnectionPanel({
   const baseUrl = connection.setupId
     ? `${apiBase}/iphone-use/setup/${connection.setupId}`
     : undefined;
-  const lastAirplaySetup = useRef<string>();
-  if (source === 'airplay' && baseUrl && connection.setupKind === 'device')
-    lastAirplaySetup.current = baseUrl;
-  if (!pending) lastAirplaySetup.current = undefined;
   const airplaySetupUrl =
-    source === 'airplay' && pending ? lastAirplaySetup.current : undefined;
+    source === 'airplay' &&
+    pending &&
+    baseUrl &&
+    connection.setupKind === 'device'
+      ? baseUrl
+      : undefined;
   const stopAirplay = () => {
     cancelled.current = true;
     void scopedRequest('/iphone-use/cancel', {}).catch((cause) => {
@@ -626,37 +697,28 @@ export function ConnectionPanel({
       setError(String(cause));
     });
   };
-  if (pending && connection.setupKind === 'camera' && baseUrl) {
-    return createPortal(
-      <div className="iphone-use-camera-page">
-        <CameraCalibration
-          key={baseUrl}
-          baseUrl={baseUrl}
-          cameraId={cameraId}
-          onCancel={() => {
-            void scopedRequest('/iphone-use/cancel', {}).catch((cause) =>
-              setError(String(cause)),
-            );
-          }}
-        />
-      </div>,
-      document.body,
-    );
-  }
+
+  const cameraWizardActive = Boolean(
+    pending && connection.setupKind === 'camera' && baseUrl,
+  );
+  const hideAddForm = Boolean(pending && baseUrl && !airplaySetupUrl);
 
   return (
-    <div className="session-setup-panel">
+    <div
+      className={`iphone-use-setup-form-wrap${cameraWizardActive ? ' iphone-use-setup-form-wrap--camera' : ''}`}
+    >
       <div
-        className={`session-setup-card iphone-use-compact${pending && baseUrl ? ' iphone-use-pending' : ''}`}
+        className={`iphone-use-setup-card${pending && baseUrl && !cameraWizardActive ? ' iphone-use-pending' : ''}${cameraWizardActive ? ' iphone-use-setup-card--camera' : ''}`}
       >
-        <MidsceneLogo className="session-setup-logo" />
-        <h1 className="session-setup-title">连接 iPhone 或 iPad</h1>
+        {!cameraWizardActive && (
+          <h2 className="iphone-use-setup-heading">添加设备</h2>
+        )}
         <Form
           form={state.form}
           layout="vertical"
-          className="session-setup-form"
+          className="iphone-use-setup-form"
           initialValues={{ source: initialSource, reuseConfiguration: true }}
-          hidden={pending && Boolean(baseUrl) && !airplaySetupUrl}
+          style={hideAddForm ? { display: 'none' } : undefined}
           disabled={pending}
           onFinish={async () => {
             setCameraId(state.form.getFieldValue('cameraId'));
@@ -681,15 +743,20 @@ export function ConnectionPanel({
             }
           }}
         >
-          <Form.Item
-            label={
-              <span className="iphone-use-inline-label">
-                <span>1. 蓝牙连接</span>
-                <small>（手机设置 → 蓝牙 · {bluetoothName}）</small>
+          <div className="iphone-use-step-card">
+            <div className="iphone-use-step-card-head">
+              <span className="iphone-use-step-title">
+                <i
+                  className={`iphone-use-step-index${selectedPeerId ? ' done' : ''}`}
+                >
+                  1
+                </i>
+                蓝牙连接
               </span>
-            }
-            className="iphone-use-connection-step"
-          >
+              <span className="iphone-use-step-card-meta">
+                设置 → 蓝牙 · {bluetoothName}
+              </span>
+            </div>
             <div className="iphone-use-bluetooth-status" aria-live="polite">
               <BluetoothPeers
                 peers={connectedPeers}
@@ -714,89 +781,95 @@ export function ConnectionPanel({
                 </span>
               )}
             </div>
-          </Form.Item>
+          </div>
+
           <Form.Item name="bluetoothPeerId" hidden>
             <Input />
           </Form.Item>
-          <Form.Item
-            label={
-              <span className="iphone-use-inline-label">
-                <span>2. 开启辅助触控</span>
-                <small title="手机设置 → 辅助功能 → 触控 → 辅助触控">
-                  （辅助功能 → 触控）
-                </small>
+
+          <div className="iphone-use-step-card">
+            <div className="iphone-use-step-card-head">
+              <span className="iphone-use-step-title">
+                <i className="iphone-use-step-index">2</i>
+                开启辅助触控
               </span>
-            }
-            className="iphone-use-connection-step iphone-use-instruction-only"
-          />
-          <Form.Item
-            name="source"
-            label={
-              <span className="iphone-use-inline-label">
-                <span>3. 选择画面来源</span>
-                <small>
-                  （
-                  {source === 'usb'
-                    ? '连接并解锁，首次请信任 Mac'
-                    : source === 'camera'
-                      ? '连接后扫码校正'
-                      : '控制中心 → 屏幕镜像'}
-                  ）
-                </small>
+              <span
+                className="iphone-use-step-card-meta"
+                title="手机设置 → 辅助功能 → 触控 → 辅助触控"
+              >
+                辅助功能 → 触控
               </span>
-            }
-          >
-            <Select
+            </div>
+          </div>
+
+          <div className="iphone-use-step-card iphone-use-step-card-source">
+            <div className="iphone-use-step-card-head">
+              <span className="iphone-use-step-title">
+                <i className="iphone-use-step-index">3</i>
+                画面来源
+              </span>
+            </div>
+            <Form.Item name="source" hidden>
+              <Input />
+            </Form.Item>
+            <Segmented
+              block
+              value={source}
+              onChange={(val) => state.form.setFieldValue('source', val)}
               options={[
                 { value: 'usb', label: 'USB' },
                 { value: 'airplay', label: 'AirPlay' },
                 { value: 'camera', label: '独立摄像头' },
               ]}
             />
-          </Form.Item>
-          {source !== 'airplay' && (
-            <Form.Item
-              name={source === 'usb' ? 'deviceId' : 'cameraId'}
-              className="iphone-use-device-field"
-              label={
-                <span className="iphone-use-device-label">
-                  <span>
-                    {source === 'usb'
-                      ? `USB 手机 · ${devices.length} 台设备`
-                      : `摄像头 · ${devices.length} 台设备`}
+            {source !== 'airplay' && (
+              <Form.Item
+                name={source === 'usb' ? 'deviceId' : 'cameraId'}
+                className="iphone-use-device-field"
+                label={
+                  <span className="iphone-use-device-label">
+                    <span>
+                      {source === 'usb'
+                        ? `USB 手机 · ${devices.length} 台设备`
+                        : `摄像头 · ${devices.length} 台设备`}
+                    </span>
+                    <RefreshDevices
+                      loading={loading}
+                      onClick={() => setRefresh((v) => v + 1)}
+                    />
                   </span>
-                  <RefreshDevices
-                    loading={loading}
-                    onClick={() => setRefresh((v) => v + 1)}
-                  />
-                </span>
-              }
-              rules={[{ required: true, message: '请先选择设备' }]}
-            >
-              <Select
-                disabled={loading && !devices.length}
-                placeholder={
-                  loading
-                    ? '正在查找设备…'
-                    : !devices.length
-                      ? '未发现设备'
-                      : !availableDevices.length
-                        ? '设备均在使用中'
-                        : '请选择设备'
                 }
-                options={devices.map((d) => ({
-                  value: d.id,
-                  label: `${choiceLabel(d)}${reservedSources.includes(`${source}:${d.id}`) ? '（使用中）' : ''}`,
-                  disabled: reservedSources.includes(`${source}:${d.id}`),
-                }))}
-              />
+                rules={[{ required: true, message: '请先选择设备' }]}
+              >
+                <Select
+                  disabled={loading && !devices.length}
+                  placeholder={
+                    loading
+                      ? '正在查找设备…'
+                      : !devices.length
+                        ? '未发现设备'
+                        : !availableDevices.length
+                          ? '设备均在使用中'
+                          : '请选择设备'
+                  }
+                  options={devices.map((d) => ({
+                    value: d.id,
+                    label: `${choiceLabel(d)}${reservedSources.includes(`${source}:${d.id}`) ? '（使用中）' : ''}`,
+                    disabled: reservedSources.includes(`${source}:${d.id}`),
+                  }))}
+                />
+              </Form.Item>
+            )}
+            <Form.Item
+              name="reuseConfiguration"
+              valuePropName="checked"
+              className="iphone-use-reuse-item"
+            >
+              <Checkbox className="iphone-use-reuse-configuration">
+                使用已保存的校准配置
+              </Checkbox>
             </Form.Item>
-          )}
-          <Form.Item name="reuseConfiguration" valuePropName="checked">
-            <Checkbox className="iphone-use-reuse-configuration">
-              使用已保存的校准配置（取消勾选可重新设置）
-            </Checkbox>
-          </Form.Item>
+          </div>
           {airplaySetupUrl ? (
             <BindingSetup
               source="airplay"
@@ -812,32 +885,98 @@ export function ConnectionPanel({
               }
             />
           ) : (
-            <Button
-              className="session-setup-submit"
-              loading={pending}
-              htmlType="submit"
-              type="primary"
-              block
-              disabled={
-                !peers.some((peer) => peer.id === selectedPeerId) ||
-                !bluetoothOnline ||
-                (source !== 'airplay' && (loading || !selectedAvailable))
-              }
-            >
-              {source === 'airplay'
-                ? '启动 AirPlay 接收器'
-                : source === 'camera' && connection.phase === 'connecting'
-                  ? '正在验证指针…'
+            <div className="iphone-use-submit-row">
+              <Button
+                className="session-setup-submit"
+                loading={pending}
+                htmlType="submit"
+                type="primary"
+                block
+                disabled={
+                  !peers.some((peer) => peer.id === selectedPeerId) ||
+                  !bluetoothOnline ||
+                  (source !== 'airplay' && (loading || !selectedAvailable))
+                }
+              >
+                {source === 'airplay' && !pending
+                  ? '启动 AirPlay 接收器'
                   : '连接设备'}
-            </Button>
+              </Button>
+              {pending && onCancel && (
+                <Button
+                  className="iphone-use-cancel-btn"
+                  disabled={false}
+                  loading={cancelling}
+                  onClick={onCancel}
+                >
+                  取消连接
+                </Button>
+              )}
+            </div>
           )}
         </Form>
-        {source === 'camera' && connection.phase === 'connecting' && (
-          <output>请保持手机和摄像头静止，屏幕保持明亮。</output>
+        {cameraWizardActive && baseUrl && (
+          <CameraCalibration
+            key={baseUrl}
+            baseUrl={baseUrl}
+            cameraId={cameraId}
+            verifying={connection.phase === 'connecting'}
+            cancelling={cancelling}
+            onCancel={() => {
+              if (onCancel) {
+                onCancel();
+              } else {
+                void scopedRequest('/iphone-use/cancel', {}).catch((cause) =>
+                  setError(String(cause)),
+                );
+              }
+            }}
+          />
         )}
-        {!pending && source === 'camera' && connection.error && (
-          <Alert type="warning" message={connection.error} />
-        )}
+        {pending &&
+          !airplaySetupUrl &&
+          !(baseUrl && connection.setupKind === 'device') &&
+          !(baseUrl && connection.setupKind === 'camera') &&
+          previewTarget &&
+          createPortal(
+            <PendingScreenPreview
+              apiBase={apiBase}
+              source={source}
+              phase={connection.phase}
+            />,
+            previewTarget,
+          )}
+        {!pending &&
+          !airplaySetupUrl &&
+          !(source === 'camera' && selectedAvailable && selectedCameraId) &&
+          previewTarget &&
+          createPortal(
+            <div className="iphone-use-preview-empty">
+              <div className="iphone-use-preview-empty-icon" aria-hidden="true">
+                <svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.75"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="m7 7 10 10-5 5V2l5 5L7 17" />
+                </svg>
+              </div>
+              <p>
+                {source === 'usb'
+                  ? '连接数据线并解锁，首次请信任 Mac'
+                  : source === 'airplay'
+                    ? '控制中心 → 屏幕镜像'
+                    : '摄像头画面预览（连接后扫码校正）'}
+              </p>
+            </div>,
+            previewTarget,
+          )}
         {!pending &&
           source === 'camera' &&
           selectedAvailable &&
@@ -845,37 +984,41 @@ export function ConnectionPanel({
           previewTarget &&
           createPortal(
             cameraPreview.url ? (
-              <Frame key={cameraPreview.url} url={cameraPreview.url} />
+              <div className="iphone-use-camera-monitor">
+                <Frame key={cameraPreview.url} url={cameraPreview.url} />
+              </div>
             ) : (
-              <div className="iphone-use-live">
+              <div className="iphone-use-camera-loading">
                 {cameraPreview.error ? (
-                  <Alert type="warning" message={cameraPreview.error} />
+                  <span>{cameraPreview.error}</span>
                 ) : (
-                  <Spin tip="正在打开摄像头" />
+                  <>
+                    <Spin />
+                    <span>正在打开摄像头…</span>
+                  </>
                 )}
               </div>
             ),
             previewTarget,
           )}
-        {pending && baseUrl && !airplaySetupUrl && (
-          <div className="iphone-use-fields">
-            <div ref={setControls} />
-            {baseUrl &&
-              connection.setupKind === 'device' &&
-              !airplaySetupUrl && (
-                <BindingSetup
-                  source={source}
-                  onStop={stopAirplay}
-                  peers={peers}
-                  selectedPeerId={selectedPeerId}
-                  onSelectPeer={selectPeer}
-                  key={baseUrl}
-                  baseUrl={baseUrl}
-                  previewTarget={previewTarget}
-                />
-              )}
-          </div>
-        )}
+        {pending &&
+          baseUrl &&
+          connection.setupKind === 'device' &&
+          !airplaySetupUrl && (
+            <div className="iphone-use-fields">
+              <div ref={setControls} />
+              <BindingSetup
+                source={source}
+                onStop={stopAirplay}
+                peers={peers}
+                selectedPeerId={selectedPeerId}
+                onSelectPeer={selectPeer}
+                key={baseUrl}
+                baseUrl={baseUrl}
+                previewTarget={previewTarget}
+              />
+            </div>
+          )}
       </div>
     </div>
   );

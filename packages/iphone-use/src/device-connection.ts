@@ -240,9 +240,18 @@ export class DeviceConnection {
     }
   }
   async screenshot(): Promise<ScreenFrame> {
-    if (!this.device || this.connectionState?.phase !== 'ready')
-      throw new Error('设备尚未就绪。');
+    if (
+      !this.device ||
+      this.connectionState?.phase !== 'ready' ||
+      this.screenError
+    )
+      throw new Error(this.screenError ?? '设备尚未就绪。');
     return this.device.screenshot();
+  }
+
+  async previewScreenshot(): Promise<ScreenFrame> {
+    if (!this.device) throw new Error('设备尚未连接。');
+    return this.device.previewScreenshot();
   }
 
   controlDevice(id: string): ControlledDevice | undefined {

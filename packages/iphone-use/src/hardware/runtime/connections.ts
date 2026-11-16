@@ -22,6 +22,7 @@ export interface Connection {
   config: DeviceConfig;
   lifetime: AbortController;
   session?: DeviceSession;
+  previewScreen?: ScreenSession;
   setup?: SetupSession;
   opening?: Promise<void>;
   closing?: Promise<void>;
@@ -193,7 +194,14 @@ export class ConnectionManager {
             c.lifetime.signal.throwIfAborted();
             config.camera = settings;
             const screen = await this.runtime.openScreen(config, cameraPreview);
-            await this.openSession(c, screen);
+            c.state.phase = 'connecting';
+            try {
+              await this.openSession(c, screen);
+            } catch (error) {
+              if ((c.state.phase as string) !== 'closed')
+                c.state.phase = 'setup-required';
+              throw error;
+            }
             cameraPreview.transfer();
           },
         });
@@ -260,16 +268,21 @@ export class ConnectionManager {
       );
       if (peer) config.name = peer.name;
       config.modelName = undefined;
-      session = await this.runtime.open(config, preview, signal, save);
+      c.previewScreen = preview;
+      session = await this.runtime.open(config, preview, signal, save, (s) => {
+        c.previewScreen = s;
+      });
       await save();
       signal.throwIfAborted();
       c.session = session;
+      c.previewScreen = undefined;
       c.state.device = {
         id: config.id,
         name: config.name,
         modelName: config.modelName,
       };
     } catch (error) {
+      c.previewScreen = undefined;
       if (session) await session.close();
       else await preview?.close();
       throw error;

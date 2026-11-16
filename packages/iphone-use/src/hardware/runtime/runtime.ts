@@ -116,9 +116,10 @@ export class IPhoneRuntime {
     existingScreen?: ScreenSession,
     signal?: AbortSignal,
     persistConfig?: () => Promise<void>,
+    onScreen?: (screen: ScreenSession) => void,
   ): Promise<DeviceSession> {
     return this.track(
-      this.openDevice(config, existingScreen, signal, persistConfig),
+      this.openDevice(config, existingScreen, signal, persistConfig, onScreen),
     );
   }
   private async openDevice(
@@ -126,6 +127,7 @@ export class IPhoneRuntime {
     existingScreen?: ScreenSession,
     cancellation?: AbortSignal,
     persistConfig?: () => Promise<void>,
+    onScreen?: (screen: ScreenSession) => void,
   ): Promise<DeviceSession> {
     const signal = cancellation
       ? AbortSignal.any([this.lifetime.signal, cancellation])
@@ -144,6 +146,7 @@ export class IPhoneRuntime {
       if (screen && this.screens.get(screen) !== this.screenKey(config))
         throw new Error('Preview does not belong to this device source');
       screen ??= await this.openScreen(config);
+      onScreen?.(screen);
       signal.throwIfAborted();
       if (!config.bluetoothPeerId)
         throw new Error('Select a Bluetooth peer first');

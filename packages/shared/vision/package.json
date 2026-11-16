@@ -5,9 +5,9 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": ["dist", "native", "src/ui/styles.css", "src/ui/screen-setup.less"],
+  "files": ["dist", "native"],
   "scripts": {
-    "build": "rslib build && rsbuild build",
+    "build": "rslib build",
     "typecheck": "tsc --noEmit -p tsconfig.build.json && tsc --noEmit -p tsconfig.tests.json",
     "test": "rstest run"
   },
@@ -28,7 +28,6 @@
       "types": "./dist/ui/index.d.ts",
       "import": "./dist/ui/index.js"
     },
-    "./styles.css": "./src/ui/styles.css",
     "./phone/*": {
       "types": "./dist/phone/*.d.ts",
       "import": "./dist/phone/*.js"
@@ -36,8 +35,7 @@
     "./ui/*": {
       "types": "./dist/ui/*.d.ts",
       "import": "./dist/ui/*.js"
-    },
-    "./screen-setup.less": "./src/ui/screen-setup.less"
+    }
   },
   "dependencies": {
     "@midscene/robotics-shared": "workspace:*",
@@ -46,9 +44,7 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "js-aruco2": "2.0.0",
-    "ws": "8.22.1",
-    "antd": "^5.21.6",
-    "@arco-design/web-react": "2.66.18"
+    "ws": "8.22.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -56,11 +52,8 @@
     "@rslib/core": "^0.18.3",
     "@types/react": "^18.3.1",
     "@types/react-dom": "^18.3.1",
-    "@rsbuild/core": "^1.6.15",
     "@rsbuild/plugin-react": "^1.4.1",
     "@types/ws": "8.18.2",
-    "@rsbuild/plugin-less": "^1.5.0",
-    "less": "^4.2.0",
     "@rstest/core": "0.12.0"
   }
 }
