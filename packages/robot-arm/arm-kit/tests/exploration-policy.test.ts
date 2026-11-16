@@ -15,15 +15,15 @@ it('keeps dev standard holdouts out of the six fitting targets', () => {
     { x: 200, y: 720 },
   ]);
 });
-it('selects four distributed corners and two independent edge checks with opposite corners measured first', () => {
+it('selects four distributed corners and two independent edge checks in serpentine order', () => {
   const targets = explorationTargets({ width: 400, height: 800 }, true);
   expect(targets.map((t) => [t.point.x, t.point.y, t.purpose])).toEqual([
     [40, 80, 'fit'],
-    [360, 720, 'fit'],
     [360, 80, 'fit'],
-    [40, 720, 'fit'],
-    [40, 400, 'check'],
     [360, 400, 'check'],
+    [40, 400, 'check'],
+    [40, 720, 'fit'],
+    [360, 720, 'fit'],
   ]);
 });
 it('accepts the real iPhone viewport without an extra preflight coverage gate', () => {

@@ -39,8 +39,8 @@ export const assistedCalibrationZh: Record<string, string> = {
   'Continue to boundary verification': '继续边界验证',
   'Sampling and fitting are followed by automatic hover and contact boundary verification. Record the Safe Position afterwards, then review and save.':
     '采样拟合后自动执行悬停与接触边界验证，再记录安全位置、检查并保存。',
-  'I confirm the screen is securely fixed, the tool has elastic compliance, and the workspace is clear for sampling and automatic boundary verification.':
-    '我已确认屏幕固定、触控笔尖有弹性缓冲且工作区净空，可以开始采样和自动边界验证。',
+  'I confirm the screen is horizontal and securely fixed, the tool has elastic compliance, and the workspace is clear for sampling and automatic boundary verification.':
+    '我已确认屏幕水平固定、触控笔尖有弹性缓冲且工作区净空，可以开始采样和自动边界验证。',
   'The screen is horizontal and securely fixed.': '屏幕已水平放置并固定。',
   'I confirm the setup and clear workspace for sampling and automatic boundary verification.':
     '我已确认配置及工作区净空，允许采样与自动边界验证。',

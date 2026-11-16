@@ -65,7 +65,7 @@ it('offers automatic collection before recording the safe position', () => {
   expect(
     radios.filter((input) => input.includes('type="checkbox"')),
   ).toHaveLength(1);
-  expect(html).toContain('屏幕固定、触控笔尖有弹性缓冲且工作区净空');
+  expect(html).toContain('屏幕水平固定、触控笔尖有弹性缓冲且工作区净空');
   expect(html).toContain('自动执行悬停与接触边界验证');
   expect(html).not.toContain('Record Safe Position');
   expect(html).not.toContain('15 点');

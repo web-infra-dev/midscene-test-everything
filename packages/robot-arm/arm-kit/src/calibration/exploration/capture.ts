@@ -415,9 +415,9 @@ export class AutomaticCapture {
       },
       {
         startPose: home,
-        mode: this.mode === 'standard' ? 'standard' : 'fast-plane',
+        mode: this.mode === 'standard' ? 'standard' : 'fast-horizontal',
         collection: this.mode === 'slide' ? 'slide' : 'tap',
-        compliantSetupConfirmed: this.mode !== 'standard',
+        horizontalConfirmed: this.mode !== 'standard',
       },
     );
     this.captured = true;

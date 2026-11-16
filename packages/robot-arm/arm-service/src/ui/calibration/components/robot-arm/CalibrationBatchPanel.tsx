@@ -663,7 +663,7 @@ export const CalibrationBatchPanel = forwardRef<
           >
             {t(
               samplingMode === 'slide'
-                ? 'All screens are securely fixed and the tool has elastic compliance.'
+                ? 'All screens are fixed horizontally and the tool has elastic compliance.'
                 : 'All screens are secured; the measured plane allows limited tilt. The tool has elastic compliance.',
             )}
           </Checkbox>

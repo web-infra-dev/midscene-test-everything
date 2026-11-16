@@ -1,6 +1,5 @@
 /** Narrow host boundary for the pinned upstream sampling algorithm. */
 import type {
-  AutoCalibrationEvidence,
   CartesianPose,
   MotionAcceleration,
   MotionOptions,
@@ -94,10 +93,9 @@ export interface CalibrationSession {
     fastAdaptation?: { searchSteps: number; maxSearchSteps: number };
     mode?: string;
     collection?: string;
-    compliantSetupConfirmed?: boolean;
+    horizontalConfirmed?: boolean;
     screenSessionId?: string;
     collectedSamples?: CollectedSample[];
-    independentHeightCheck?: AutoCalibrationEvidence['independentHeightCheck'];
   };
 }
 export interface ApplicationContext {
@@ -111,9 +109,9 @@ export interface ApplicationContext {
 export interface AutoExplorationOptions {
   startPose: CartesianPose;
   page?: ScreenCalibSessionSummary;
-  mode?: 'standard' | 'fast-plane';
+  mode?: 'standard' | 'fast-horizontal';
   collection?: 'tap' | 'slide';
-  compliantSetupConfirmed?: boolean;
+  horizontalConfirmed?: boolean;
 }
 export interface AutoExplorationHost {
   currentPose(): Promise<CartesianPose>;

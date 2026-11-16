@@ -617,7 +617,7 @@ export function WebCalibrationWorkspace({
                     {t(
                       mode === 'standard'
                         ? 'I confirm the setup and clear workspace for sampling and automatic boundary verification.'
-                        : 'I confirm the screen is securely fixed, the tool has elastic compliance, and the workspace is clear for sampling and automatic boundary verification.',
+                        : 'I confirm the screen is horizontal and securely fixed, the tool has elastic compliance, and the workspace is clear for sampling and automatic boundary verification.',
                     )}
                   </Checkbox>
                 </>

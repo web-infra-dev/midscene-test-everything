@@ -110,25 +110,6 @@ function pca(points: Vector3[], weights: number[]) {
   });
   return { center, ...eigenSymmetric(covariance) };
 }
-/** A provisional fit can use as few as three non-collinear contacts. */
-export function fitSamplePlane(
-  points: Vector3[],
-  preferred: Vector3,
-): CalibrationProfile['plane'] {
-  const { center, values, vectors } = pca(
-    points,
-    points.map(() => 1),
-  );
-  if (!(values[1] > 1e-8))
-    throw new RobotArmError(
-      'CALIBRATION_QUALITY',
-      'Plane probes must span two directions',
-      409,
-    );
-  const normal =
-    dot(vectors[0], preferred) < 0 ? scale(vectors[0], -1) : vectors[0];
-  return { normal, offset: dot(normal, center) };
-}
 /** Deterministic bounded RANSAC, followed by Huber-weighted PCA. */
 export function fitContactPlane(
   points: Vector3[],

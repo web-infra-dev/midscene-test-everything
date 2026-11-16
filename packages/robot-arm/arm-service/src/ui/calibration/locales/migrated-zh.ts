@@ -31,8 +31,8 @@ const teachingBoundaryZh: Record<string, string> = {
   'Waiting for calibration acceptance': '等待标定验收',
   'All screens are fixed horizontally, the tool has elastic compliance, and the camera-near side is the bottom of the original image.':
     '所有屏幕均已水平固定，触控工具具有弹性缓冲，相机近侧对应原始画面下方。',
-  'All screens are securely fixed and the tool has elastic compliance.':
-    '所有屏幕均已固定，触控工具具有弹性缓冲。',
+  'All screens are fixed horizontally and the tool has elastic compliance.':
+    '所有屏幕均已水平固定，触控工具具有弹性缓冲。',
   'Sampling mode': '采样模式',
   'Reconfirming the tool payload…': '正在重新确认工具负载…',
   'Waiting for the controller to reconfirm the tool payload.':

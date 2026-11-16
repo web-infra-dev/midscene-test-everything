@@ -3,16 +3,9 @@
 // Phone transport, persistence and motion ownership
 // are supplied by the Arm Kit bridge; boundary verification remains in its workflow.
 import { randomUUID } from 'node:crypto';
-import {
-  CALIBRATION_PHONE_POLICY,
-  CALIBRATION_RELATIVE_SLACK,
-} from '../../assisted-contracts.js';
-import {
-  type CalibrationProfile,
-  type CartesianPose,
-  RobotArmError,
-} from '../../contracts.js';
-import { contactPoint, dot, flangePose, rotate, unit } from '../../domain.js';
+import { CALIBRATION_PHONE_POLICY } from '../../assisted-contracts.js';
+import { type CartesianPose, RobotArmError } from '../../contracts.js';
+import { contactPoint, flangePose } from '../../domain.js';
 import {
   scaleAcceleration,
   scaleSpeed,
@@ -23,7 +16,6 @@ import {
   fitAffine,
   screenFrame,
 } from './geometry.js';
-import { fitContactPlane, fitSamplePlane } from './plane.js';
 import {
   type ApplicationContext,
   type AutoCalibrationProgress,
@@ -39,20 +31,12 @@ const SEARCH_STEP_MM = 1;
 const FAST_SEARCH_STEP_MM = 2;
 const SEARCH_WAIT_MS = 100;
 const FAST_SEARCH_WAIT_MS = 30;
-const MAX_FAST_TILT_DEGREES = 5;
-const MAX_FAST_HEIGHT_RANGE_MM = 6;
-const MAX_FAST_PLANE_RMSE_MM = 0.5;
-const MAX_FAST_HOLDOUT_MM = 1.5;
-const MAX_PLANE_PROBE_DEPTH_MM = 8;
-const PLANE_PROBE_APPROACH_MM = 2;
-const PLANE_PROBE_MIN_DEPTH_MM = 4;
-const PLANE_PROBE_MARGIN_MM = 1;
-const PLANE_CORNER_RETRY_INSET_MM = 3;
-const FAST_INSET_RETRIES = 3;
-const PLANE_CORNER_MAX_BELOW_PREDICTED_MM = 2;
-const PLANE_CORNER_NEAR_STEP_MM = 0.25;
-const PLANE_CORNER_REPRESS_STEP_MM = 0.25;
-const PLANE_CORNER_REPRESS_DRIFT_RATIO = 0.0075;
+// Fast runs have a fixed recovery budget, never a hidden full-grid slow pass.
+const FAST_LOCAL_STEP_MM = 0.25;
+// Allow up to 1.5 mm of local recovery within the shared floor.
+const FAST_LOCAL_STEPS = 6;
+const FIRST_GRID_RETRY_INSET_MM = 3;
+const FAST_RUN_RECOVERY_STEPS = 12;
 // Keep commands off the hard floor. Corner audit readbacks differed from
 // commands by up to 0.000026 mm; this buffer is not an allowed overshoot.
 const FAST_FLOOR_COMMAND_MARGIN_MM = 0.01;
@@ -70,12 +54,11 @@ const TOUCH_SAFETY_MARGIN_MM = 2;
 const TOUCH_RETRY_ATTEMPTS = 1;
 const SEARCH_PITCH_MM = 10;
 const PROBE_MM = 10;
-const FAST_PLANE_PROBE_MM = 15;
 const APPROACH_LIFT_MM = 5;
 const TRAVERSE_CLEARANCE_MM = 10;
 // Exploration only needs a light press to keep page contact; pressing deeper
 // deforms the screen and the stand and biases later validation samples.
-const PRESS_MM = 0.5;
+const STANDARD_PRESS_MM = 0.5;
 const DWELL_MS = 250;
 const ACK_POLL_MS = 25;
 const STANDARD_MOTION_FACTOR = 0.1;
@@ -83,6 +66,7 @@ const FAST_MOTION_FACTOR = 0.25;
 const STANDARD_PRESS_FACTOR = 0.25;
 const STEP_TIMEOUT_MS = 10000;
 interface TouchPoint {
+  recovered?: boolean;
   pressedZ: number;
   heightIntervalMm?: [number, number];
   contact: { x: number; y: number; z: number };
@@ -90,10 +74,14 @@ interface TouchPoint {
   /** Reduced when the point needed a retry or hit the safety floor. */
   weight?: number;
 }
+interface SampledTouch extends TouchPoint {
+  /** Command that produced the confirmed press. Readback stays in pressedZ. */
+  pressCommandZ: number;
+}
 interface GridTouch extends TouchPoint {
   target: ScreenCalibTarget;
 }
-/** Four distributed fit corners in diagonal order, then two held-out edge points. */
+/** Four distributed fit corners and two held-out edge points, in serpentine order. */
 export function fastExplorationTargets(
   targets: ScreenCalibTarget[],
 ): ScreenCalibTarget[] {
@@ -128,8 +116,14 @@ export function fastExplorationTargets(
       'Fast exploration requires four fit corners and two validation targets',
       409,
     );
-  fit.sort((a, b) => a.css.y - b.css.y || a.css.x - b.css.x);
-  return [fit[0], fit[3], fit[1], fit[2], ...validation];
+  const rows = [
+    ...new Set([...fit, ...validation].map((target) => target.css.y)),
+  ].sort((a, b) => a - b);
+  return [...fit, ...validation].sort(
+    (a, b) =>
+      a.css.y - b.css.y ||
+      (rows.indexOf(a.css.y) % 2 ? b.css.x - a.css.x : a.css.x - b.css.x),
+  );
 }
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -160,21 +154,26 @@ export async function runAutoExploration(
   ctx: ApplicationContext,
   options: AutoExplorationOptions,
 ) {
-  const fast = options.mode === 'fast-plane';
+  const fast = options.mode === 'fast-horizontal';
+  let recoverySteps = 0;
+  if (fast && session.auto)
+    session.auto.fastAdaptation = {
+      searchSteps: 0,
+      maxSearchSteps: FAST_RUN_RECOVERY_STEPS,
+    };
   if (
-    (fast && options.compliantSetupConfirmed !== true) ||
+    (fast && options.horizontalConfirmed !== true) ||
     (options.collection === 'slide' && !fast)
   )
     throw new RobotArmError(
       'INVALID_ARGUMENT',
-      'Fast exploration requires confirmation that the screen is secured and the tool has elastic compliance',
+      'Fast exploration requires confirmation that the screen is horizontal and secured and the tool has elastic compliance',
       400,
     );
   if (session.auto) {
-    session.auto.mode = fast ? 'fast-plane' : 'standard';
+    session.auto.mode = fast ? 'fast-horizontal' : 'standard';
     session.auto.collection = options.collection ?? 'tap';
-    session.auto.compliantSetupConfirmed =
-      options.compliantSetupConfirmed === true;
+    session.auto.horizontalConfirmed = options.horizontalConfirmed === true;
   }
   const start = options.startPose;
   const dwellMs = fast ? 100 : DWELL_MS;
@@ -262,7 +261,6 @@ export async function runAutoExploration(
       'Page mapping pixel size does not match the selected Screen Profile',
       409,
     );
-  const shortEdgePx = Math.min(page.config.pixelWidth, page.config.pixelHeight);
   if (!page.mapping)
     throw new RobotArmError(
       'SCREEN_PAGE_REQUIRED',
@@ -283,7 +281,7 @@ export async function runAutoExploration(
   const recordSample = async (
     point: TouchPoint,
     role: 'probe' | 'fit' | 'validation',
-    method: 'stepped' | 'slide',
+    method: 'stepped' | 'direct' | 'slide',
   ) => {
     if (session.auto) {
       session.auto.collectedSamples ??= [];
@@ -376,8 +374,8 @@ export async function runAutoExploration(
     descentLimitMm = TOUCH_DESCENT_MM,
     skipApproach = false,
     safetyFloorZ?: number,
-    cornerNearZ?: number,
-  ): Promise<TouchPoint> => {
+    prediction?: { pressZ: number; surfaceZ: number },
+  ): Promise<SampledTouch> => {
     const floor = Math.max(
       zHigh - descentLimitMm,
       safetyFloorZ ?? Number.NEGATIVE_INFINITY,
@@ -445,6 +443,17 @@ export async function runAutoExploration(
           { label, clearZ, touchedZ },
         );
     };
+    // The interval midpoint estimates the surface to within half its width.
+    // Allow that uncertainty below the shallowest known touch to sustain a slide.
+    const fastPressZ = (
+      touchCommandZ: number,
+      clearZ: number,
+      touchZ: number,
+    ) =>
+      Math.max(
+        commandFloor,
+        touchCommandZ - Math.min(clearZ - touchZ, CONTACT_BRACKET_MM) / 2,
+      );
     await assertPage();
     let approach = { x, y, z: zHigh };
     if (!skipApproach) {
@@ -461,10 +470,80 @@ export async function runAutoExploration(
       }
       // After a lost sliding endpoint, XY is already correct but the tip is
       // still down. Establish release before reacquiring this same point.
-      await preflight({ x, y, z: zHigh }, `${label} approach`);
-      approach = await moveTo({ x, y, z: zHigh });
+      if (
+        !prediction ||
+        (Math.hypot(current.x - x, current.y - y) <= 0.2 && current.z < zHigh)
+      ) {
+        await preflight({ x, y, z: zHigh }, `${label} approach`);
+        approach = await moveTo({ x, y, z: zHigh });
+      }
     } else if (fast) {
       approach = contactPoint(await host.currentPose(), tool.offsetMm);
+    }
+    if (prediction) {
+      checkDepth(prediction.pressZ, label);
+      if ((await observe('release')).screen)
+        throw new RobotArmError(
+          'TOUCH_NOT_RELEASED',
+          'The touch did not release at the approach height',
+          409,
+        );
+      let lastClear = approach;
+      for (let step = 0; step <= FAST_LOCAL_STEPS; step++) {
+        const z = prediction.pressZ - step * FAST_LOCAL_STEP_MM;
+        if (step > 0) {
+          if (z < commandFloor - 1e-6) break;
+          if (recoverySteps >= FAST_RUN_RECOVERY_STEPS)
+            throw new RobotArmError(
+              'FAST_ADAPTATION_LIMIT',
+              'Fast calibration exhausted its local height-search budget; check the installation before retrying',
+              409,
+            );
+          recoverySteps++;
+          if (session.auto?.fastAdaptation)
+            session.auto.fastAdaptation.searchSteps = recoverySteps;
+        }
+        const measured = await probeAt(z, `${label} search`);
+        const touched = await observe('press', dwellMs);
+        if (!touched.screen) {
+          lastClear = measured;
+          continue;
+        }
+        if (step === 0)
+          return {
+            contact: { x: measured.x, y: measured.y, z: prediction.surfaceZ },
+            pressCommandZ: z,
+            pressedZ: measured.z,
+            screen: touched.screen,
+            weight: 0.5,
+          };
+        assertInterval(lastClear.z, measured.z);
+        const contact = contactBetween(lastClear, measured);
+        const pressZ = fastPressZ(z, lastClear.z, measured.z);
+        await releaseAtApproach();
+        const pressed = await probeAt(pressZ, `${label} adaptive press`);
+        const confirmed = await observe('press', dwellMs);
+        if (!confirmed.screen)
+          throw new RobotArmError(
+            'TOUCH_CONTACT_LOST',
+            'Adaptive light press did not confirm touch',
+            409,
+          );
+        return {
+          contact,
+          pressCommandZ: pressZ,
+          pressedZ: pressed.z,
+          screen: confirmed.screen,
+          recovered: true,
+          heightIntervalMm: [measured.z, lastClear.z],
+          weight: 0.7,
+        };
+      }
+      throw new RobotArmError(
+        'TOUCH_NOT_FOUND',
+        'No page touch within the fast local height-search budget; check the screen placement before retrying',
+        409,
+      );
     }
     let lastProbeZMm: number | undefined;
     for (let attempt = 0; attempt <= TOUCH_RETRY_ATTEMPTS; attempt++) {
@@ -477,27 +556,13 @@ export async function runAutoExploration(
           409,
         );
       const heights: number[] = [];
-      let coarseSteps = 0;
-      if (attempt > 0 && cornerNearZ !== undefined) {
-        // Retry from the confirmed release height in one move to the same limit.
-        if (commandFloor < zHigh - 1e-6) heights.push(commandFloor);
-      } else {
-        const nearZ = Math.max(
-          commandFloor,
-          Math.min(cornerNearZ ?? commandFloor, zHigh),
-        );
-        for (let z = zHigh - searchStepMm; z > nearZ + 1e-6; z -= searchStepMm)
-          heights.push(z);
-        coarseSteps = heights.length;
-        if (nearZ < zHigh - 1e-6) heights.push(nearZ);
-        for (
-          let z = nearZ - PLANE_CORNER_NEAR_STEP_MM;
-          z > commandFloor + 1e-6;
-          z -= PLANE_CORNER_NEAR_STEP_MM
-        )
-          heights.push(z);
-        if (nearZ > commandFloor + 1e-6) heights.push(commandFloor);
-      }
+      for (
+        let z = zHigh - searchStepMm;
+        z > commandFloor + 1e-6;
+        z -= searchStepMm
+      )
+        heights.push(z);
+      if (commandFloor < zHigh - 1e-6) heights.push(commandFloor);
       let lastClear = approach;
       const reportProbe = (
         kind: 'search' | 'release' | 'refine' | 'press',
@@ -514,37 +579,14 @@ export async function runAutoExploration(
           message: `${label}${kind === 'search' ? '' : ` · ${kind}`}${attempt ? ' · retry' : ''}`,
         });
       for (const [index, z] of heights.entries()) {
-        let measured = await probeAt(z, `${label} search`);
+        const measured = await probeAt(z, `${label} search`);
         const purpose =
           index === heights.length - 1
             ? 'search-limit'
-            : fast && index < coarseSteps
+            : fast
               ? 'coarse-search'
               : 'search';
-        let touched: Awaited<ReturnType<typeof observe>> | undefined;
-        try {
-          touched = await observe(purpose, searchWaitMs);
-        } catch (error) {
-          if (cornerNearZ === undefined || !isIntermittentContact(error))
-            throw error;
-
-          await delay(CALIBRATION_PHONE_POLICY.heartbeatMs);
-          try {
-            touched = await observe(purpose);
-          } catch (recheckError) {
-            if (!isIntermittentContact(recheckError)) throw recheckError;
-          }
-          if (!touched?.screen) {
-            lastClear = await releaseAtApproach();
-            measured = await probeAt(z, `${label} same-height retry`);
-            touched = await observe(
-              purpose,
-              CALIBRATION_PHONE_POLICY.heartbeatMs,
-            );
-            // Absence after an intermittent contact cannot justify going deeper.
-            if (!touched.screen) throw error;
-          }
-        }
+        const touched = await observe(purpose, searchWaitMs);
         reportProbe('search', measured.z, touched);
         lastProbeZMm = measured.z;
         if (!touched.screen) {
@@ -577,7 +619,7 @@ export async function runAutoExploration(
           );
         };
         let touchingPoint = measured;
-        let touchingScreen = touched.screen;
+        let touchingCommandZ = z;
         let upperPoint = lastClear;
         if (fast) assertInterval(upperPoint.z, touchingPoint.z);
         let pointerHeld = true;
@@ -630,54 +672,31 @@ export async function runAutoExploration(
           unchangedSteps = 0;
           if (snapshot?.screen) {
             touchingPoint = midpoint;
-            touchingScreen = snapshot.screen;
+            touchingCommandZ = midZ;
           } else upperPoint = midpoint;
         }
         // Even a short bracket needs one confirmed release; a coarse hit is
         // never accepted on the strength of a pointer that stayed held.
         if (pointerHeld) await release(heldZ);
         const contact = contactBetween(upperPoint, touchingPoint);
-        let pressedZ =
-          cornerNearZ === undefined
-            ? contact.z - PRESS_MM
-            : Math.max(commandFloor, touchingPoint.z);
-        checkDepth(pressedZ, `${label} press`);
+        const pressedZ = fast
+          ? fastPressZ(touchingCommandZ, upperPoint.z, touchingPoint.z)
+          : contact.z - STANDARD_PRESS_MM;
         let pressed: Awaited<ReturnType<typeof observe>> | undefined;
         let measuredPressedZ = pressedZ;
         let pressRetried = false;
-        let intermittentPress: RobotArmError | undefined;
         for (
           let pressAttempt = 0;
           pressAttempt <= TOUCH_RETRY_ATTEMPTS;
           pressAttempt++
         ) {
           if (pressAttempt) {
-            if (cornerNearZ !== undefined) {
-              const retryZ = Math.max(
-                commandFloor,
-                pressedZ - PLANE_CORNER_REPRESS_STEP_MM,
-              );
-              if (retryZ >= pressedZ - 1e-6) break;
-              await releaseAtApproach();
-              pressedZ = retryZ;
-            } else await release(measuredPressedZ);
+            await release(measuredPressedZ);
             pressRetried = true;
           }
           const press = await probeAt(pressedZ, `${label} press`, pressOptions);
           measuredPressedZ = press.z;
-          pressed = undefined;
-          try {
-            pressed = await observe(
-              'press',
-              dwellMs,
-              cornerNearZ !== undefined,
-            );
-          } catch (error) {
-            if (cornerNearZ === undefined || !isIntermittentContact(error))
-              throw error;
-            intermittentPress = error;
-            continue;
-          }
+          pressed = await observe('press', dwellMs);
           reportProbe('press', measuredPressedZ, pressed);
           if (pressed.screen) break;
         }
@@ -686,35 +705,10 @@ export async function runAutoExploration(
             'TOUCH_CONTACT_LOST',
             `The refined press at Z ${pressedZ.toFixed(2)} mm did not produce a confirmed touch within the available press depth`,
             409,
-            cornerNearZ === undefined
-              ? undefined
-              : {
-                  ...intermittentPress?.details,
-                  cornerPressUnconfirmed: true,
-                  confirmedNoTouch: pressed !== undefined,
-                  lastProbeZMm: measuredPressedZ,
-                  commandFloorZMm: commandFloor,
-                  pressRetried,
-                },
           );
-        if (cornerNearZ !== undefined && pressRetried) {
-          const driftPx = Math.hypot(
-            pressed.screen.x - touchingScreen.x,
-            pressed.screen.y - touchingScreen.y,
-          );
-          const maxDriftPx =
-            Math.max(1, shortEdgePx * PLANE_CORNER_REPRESS_DRIFT_RATIO) *
-            (1 + CALIBRATION_RELATIVE_SLACK);
-          if (driftPx > maxDriftPx)
-            throw new RobotArmError(
-              'CALIBRATION_QUALITY',
-              'The recovered corner touch shifted from its refined position',
-              409,
-              { label, driftPx, maxDriftPx, pressedZMm: measuredPressedZ },
-            );
-        }
         return {
           contact,
+          pressCommandZ: pressedZ,
           pressedZ: measuredPressedZ,
           heightIntervalMm: fast ? [touchingPoint.z, upperPoint.z] : undefined,
           screen: pressed.screen,
@@ -749,7 +743,7 @@ export async function runAutoExploration(
   // Require the current phone protocol before submitting the first motion.
   await observe('preflight', 0);
   const startContact = contactPoint(start, tool.offsetMm);
-  let first: TouchPoint | undefined;
+  let first: SampledTouch | undefined;
   try {
     first = await touchAt(
       startContact.x,
@@ -789,6 +783,26 @@ export async function runAutoExploration(
       'No screen touch was found within the search area; place the stylus closer to the centre and retry',
       409,
     );
+  const heightAnchors = [first];
+  // Use only measured activation heights. Successful predicted presses and
+  // held-out validation points must not train the height predictor.
+  const predictHeights = (x: number, y: number) => {
+    const base = heightAnchors[0];
+    let total = 0;
+    let pressDelta = 0;
+    let surfaceDelta = 0;
+    for (const anchor of heightAnchors) {
+      const weight =
+        1 / (100 + (x - anchor.contact.x) ** 2 + (y - anchor.contact.y) ** 2);
+      total += weight;
+      pressDelta += weight * (anchor.pressCommandZ - base.pressCommandZ);
+      surfaceDelta += weight * (anchor.contact.z - base.contact.z);
+    }
+    return {
+      pressZ: base.pressCommandZ + pressDelta / total,
+      surfaceZ: base.contact.z + surfaceDelta / total,
+    };
+  };
   // Bound later probes relative to the confirmed light press, and apply the
   // same floor to both search and final press targets.
   const safetyFloorZ = first.pressedZ - TOUCH_SAFETY_MARGIN_MM;
@@ -803,10 +817,9 @@ export async function runAutoExploration(
   const probeZ = first.contact.z + APPROACH_LIFT_MM;
   const probes: TouchPoint[] = [first];
   await recordSample(first, 'probe', 'stepped');
-  const probeDistance = fast ? FAST_PLANE_PROBE_MM : PROBE_MM;
   for (const [dx, dy, label] of [
-    [probeDistance, 0, 'Probe +X'],
-    [0, probeDistance, 'Probe +Y'],
+    [PROBE_MM, 0, 'Probe +X'],
+    [0, PROBE_MM, 'Probe +Y'],
   ] as const) {
     const probe = await touchAt(
       first.contact.x + dx,
@@ -816,9 +829,17 @@ export async function runAutoExploration(
       TOUCH_DESCENT_MM,
       false,
       safetyFloorZ,
+      fast
+        ? predictHeights(first.contact.x + dx, first.contact.y + dy)
+        : undefined,
     );
     probes.push(probe);
-    await recordSample(probe, 'probe', 'stepped');
+    if (probe.recovered) heightAnchors.push(probe);
+    await recordSample(
+      probe,
+      'probe',
+      fast && !probe.recovered ? 'direct' : 'stepped',
+    );
   }
   const initialAffine = fitAffine(
     probes.map((probe) => ({ x: probe.contact.x, y: probe.contact.y })),
@@ -833,328 +854,118 @@ export async function runAutoExploration(
       409,
     );
 
-  const grid: GridTouch[] = [];
-  if (fast) {
-    const preferred = unit(rotate(start.orientation, tool.contactDirection));
-    const targetsInOrder = fastExplorationTargets(targets.targets);
-    const corners = targetsInOrder.slice(0, 4);
-    const validationTargets = targetsInOrder.slice(4);
-    // The same three contacts establish the XY map and the initial plane.
-    const measured = probes.map((probe) => probe.contact);
-    const heightAt = (
-      plane: CalibrationProfile['plane'],
-      x: number,
-      y: number,
-    ) => {
-      if (Math.abs(plane.normal.z) < 1e-6)
-        throw new RobotArmError(
-          'CALIBRATION_QUALITY',
-          'Screen plane must support vertical probing',
-          409,
-        );
-      return (
-        (plane.offset - plane.normal.x * x - plane.normal.y * y) /
-        plane.normal.z
-      );
-    };
-    const probeWithInsetRetries = async (
-      { x, y }: ScreenPoint2,
-      probe: (point: ScreenPoint2, inset: boolean) => Promise<TouchPoint>,
-      accepts: (touch: TouchPoint) => boolean,
-    ) => {
-      const dx = first.contact.x - x;
-      const dy = first.contact.y - y;
-      const distance = Math.hypot(dx, dy);
-      const retries = Math.min(
-        FAST_INSET_RETRIES,
-        Math.max(0, Math.ceil(distance / PLANE_CORNER_RETRY_INSET_MM) - 1),
-      );
-      for (let attempt = 0; ; attempt++) {
-        const fraction =
-          attempt === 0
-            ? 0
-            : (attempt * PLANE_CORNER_RETRY_INSET_MM) / distance;
-        try {
-          const touch = await probe(
-            { x: x + dx * fraction, y: y + dy * fraction },
-            attempt > 0,
-          );
-          if (accepts(touch) || attempt === retries) return touch;
-        } catch (error) {
-          if (
-            attempt === retries ||
-            !(error instanceof RobotArmError) ||
-            error.details?.confirmedNoTouch !== true
-          )
-            throw error;
-        }
-      }
-    };
-    let holdoutHeightMm = 0;
-    for (const [index, target] of corners.entries()) {
-      setPhase(host, session, {
-        phase: 'grid',
-        operation: 'travel',
-        index: index + 1,
-        total: targetsInOrder.length,
-        message: 'Measuring the screen plane',
-      });
-      const plane = fitSamplePlane(measured, preferred);
-      const { x, y } = affinePoint(initialFrame.inverse, target.screen);
-      const predicted = heightAt(plane, x, y);
-      const nearest = Math.min(
-        ...measured.map((point) => Math.hypot(point.x - x, point.y - y)),
-      );
-      const depth = Math.min(
-        MAX_PLANE_PROBE_DEPTH_MM,
-        Math.max(
-          PLANE_PROBE_MIN_DEPTH_MM,
-          Math.tan((MAX_FAST_TILT_DEGREES * Math.PI) / 180) * nearest +
-            PLANE_PROBE_MARGIN_MM,
-        ),
-      );
-      const highest = Math.max(...measured.map((point) => point.z));
-      const lowest = Math.min(...measured.map((point) => point.z));
-      // Keep the start and floor inside the envelope established by real contacts.
-      const approach =
-        lowest + MAX_FAST_HEIGHT_RANGE_MM + PLANE_PROBE_APPROACH_MM;
-      const envelopeFloor =
-        highest - MAX_FAST_HEIGHT_RANGE_MM - PLANE_PROBE_MARGIN_MM;
-      const depthFloor = predicted - depth;
-      const misses: Record<string, unknown>[] = [];
-      const probeCorner = async (point: ScreenPoint2, inset: boolean) => {
-        const pointPredicted = heightAt(plane, point.x, point.y);
-        const localFloor = pointPredicted - PLANE_CORNER_MAX_BELOW_PREDICTED_MM;
-        const probeFloor = Math.max(envelopeFloor, depthFloor, localFloor);
-        const label = `Plane ${target.id}${inset ? ' inset retry' : ''}`;
-        try {
-          return await touchAt(
-            point.x,
-            point.y,
-            approach,
-            label,
-            approach - probeFloor,
-            false,
-            probeFloor,
-            Math.max(
-              pointPredicted + PLANE_PROBE_APPROACH_MM,
-              highest + PLANE_PROBE_MARGIN_MM,
-            ),
-          );
-        } catch (error) {
-          if (
-            !(error instanceof RobotArmError) ||
-            (error.details?.confirmedNoTouch !== true &&
-              error.details?.cornerPressUnconfirmed !== true)
-          )
-            throw error;
-          misses.push({
-            ...error.details,
-            point,
-            inset,
-            predictedZMm: pointPredicted,
-            envelopeFloorZMm: envelopeFloor,
-            depthFloorZMm: depthFloor,
-            localFloorZMm: localFloor,
-            probeFloorZMm: probeFloor,
-          });
-          throw new RobotArmError(
-            error.code,
-            error.details?.cornerPressUnconfirmed === true
-              ? `Fast calibration point ${index + 1} did not sustain touch within the safe depth`
-              : `No touch detected at fast calibration point ${index + 1} within the safe depth`,
-            error.status,
-            { ...error.details, target: target.css, cornerProbes: [...misses] },
-          );
-        }
-      };
-      const touch = await probeWithInsetRetries(
-        { x, y },
-        probeCorner,
-        ({ contact }) => {
-          if (index !== corners.length - 1) return true;
-          holdoutHeightMm = Math.abs(
-            heightAt(plane, contact.x, contact.y) - contact.z,
-          );
-          return holdoutHeightMm <= MAX_FAST_HOLDOUT_MM;
-        },
-      );
-      measured.push(touch.contact);
-      grid.push({ ...touch, target });
-      await recordSample(touch, 'fit', 'stepped');
-      await save(host, session);
-    }
-    const fitted = fitContactPlane(measured, preferred, {});
-    const tiltDeg =
-      (Math.acos(
-        Math.min(1, Math.max(-1, dot(fitted.plane.normal, preferred))),
-      ) *
-        180) /
-      Math.PI;
-    const heights = targetsInOrder.map((target) => {
-      const { x, y } = affinePoint(initialFrame.inverse, target.screen);
-      return heightAt(fitted.plane, x, y);
-    });
-    const heightRangeMm = Math.max(...heights) - Math.min(...heights);
-    if (tiltDeg > MAX_FAST_TILT_DEGREES)
+  const gridTargets = fast
+    ? fastExplorationTargets(targets.targets)
+    : targets.targets;
+  const slideTo = async (
+    x: number,
+    y: number,
+  ): Promise<SampledTouch | undefined> => {
+    await assertPage();
+    const { pressZ, surfaceZ } = predictHeights(x, y);
+    const contact = { x, y, z: pressZ };
+    await preflight(contact, 'Sliding grid endpoint');
+    if (contact.z < safetyFloorZ + FAST_FLOOR_COMMAND_MARGIN_MM)
       throw new RobotArmError(
-        'SCREEN_TILT_UNSUPPORTED',
-        `Fast calibration measured ${tiltDeg.toFixed(2)} degrees (limit ${MAX_FAST_TILT_DEGREES})`,
-        422,
-        { tiltDeg },
-      );
-    if (
-      heightRangeMm > MAX_FAST_HEIGHT_RANGE_MM ||
-      fitted.quality.rmseMm > MAX_FAST_PLANE_RMSE_MM ||
-      holdoutHeightMm > MAX_FAST_HOLDOUT_MM
-    )
-      throw new RobotArmError(
-        'CALIBRATION_QUALITY',
-        `Fast plane: height range ${heightRangeMm.toFixed(2)}/${MAX_FAST_HEIGHT_RANGE_MM} mm, RMSE ${fitted.quality.rmseMm.toFixed(2)}/${MAX_FAST_PLANE_RMSE_MM} mm, holdout error ${holdoutHeightMm.toFixed(2)}/${MAX_FAST_HOLDOUT_MM} mm`,
+        'TOUCH_SAFETY_LIMIT',
+        'Sliding endpoint exceeds the safety floor',
         409,
-        { heightRangeMm, holdoutHeightMm },
       );
-
-    const slide = options.collection === 'slide';
-    const measuredValidation: TouchPoint[] = [];
-    for (const [index, target] of validationTargets.entries()) {
-      const slideToTarget = slide && index > 0;
-      const started = performance.now();
-      setPhase(host, session, {
-        phase: 'grid',
-        operation: slideToTarget ? 'slide' : 'travel',
-        index: corners.length + index + 1,
-        total: targetsInOrder.length,
-        message: 'Sampling the validation points',
-      });
-      const { x, y } = affinePoint(initialFrame.inverse, target.screen);
-      const predicted = heightAt(fitted.plane, x, y);
-      const pressedZ = predicted - PRESS_MM;
-      let touch: TouchPoint | undefined;
-      if (slideToTarget) {
-        await assertPage();
-        await preflight({ x, y, z: pressedZ }, 'Plane sliding endpoint');
-        const measured = await moveTo({ x, y, z: pressedZ });
-        // Snapshot the active pointer only after the arm stops at the endpoint.
-        const { screen: touched } = await observe('slide', dwellMs);
-        if (touched)
-          touch = {
-            contact: {
-              x: measured.x,
-              y: measured.y,
-              z: heightAt(fitted.plane, measured.x, measured.y),
-            },
-            pressedZ: measured.z,
-            screen: touched,
-            weight: 0.5,
-          };
-      }
-      const method = touch ? 'slide' : 'stepped';
-      if (!touch) {
-        const probeValidation = async (point: ScreenPoint2, inset = false) => {
-          const pointZ = heightAt(fitted.plane, point.x, point.y);
-          const approach = pointZ + APPROACH_LIFT_MM;
-          const floor = Math.max(
-            pressedZ - TOUCH_SAFETY_MARGIN_MM,
-            pointZ - PRESS_MM - TOUCH_SAFETY_MARGIN_MM,
-          );
-          return touchAt(
-            point.x,
-            point.y,
-            approach,
-            `Grid ${target.id}${inset ? ' inset retry' : ''}`,
-            approach - floor,
-            false,
-            floor,
-          );
-        };
-        const measureHeight = ({ contact }: TouchPoint) => {
-          const predictedZMm = heightAt(fitted.plane, contact.x, contact.y);
-          return {
-            predictedZMm,
-            heightErrorMm: Math.abs(contact.z - predictedZMm),
-          };
-        };
-        touch = await probeWithInsetRetries(
-          { x, y },
-          probeValidation,
-          (sample) =>
-            measureHeight(sample).heightErrorMm <= MAX_FAST_HOLDOUT_MM,
-        );
-        const { predictedZMm, heightErrorMm } = measureHeight(touch);
-        if (index === 0 && touch.heightIntervalMm && session.auto) {
-          const [lower, upper] = touch.heightIntervalMm;
-          session.auto.independentHeightCheck = {
-            predictedZMm,
-            heightIntervalMm: touch.heightIntervalMm,
-            errorMm: heightErrorMm,
-            predictionInInterval:
-              lower <= predictedZMm && predictedZMm <= upper,
-            elapsedMs: Math.round(performance.now() - started),
-          };
-        }
-        if (heightErrorMm > MAX_FAST_HOLDOUT_MM)
-          throw new RobotArmError(
-            'CALIBRATION_QUALITY',
-            `Fast validation touch differs from the plane by ${heightErrorMm.toFixed(2)} mm (limit ${MAX_FAST_HOLDOUT_MM} mm)`,
-            409,
-            {
-              heightErrorMm,
-              independentHeightCheck: session.auto?.independentHeightCheck,
-            },
-          );
-        measuredValidation.push(touch);
-      }
-      grid.push({ ...touch, target });
-      await recordSample(touch, 'validation', method);
-      await save(host, session);
-    }
+    const measured = await moveTo(contact);
+    if (measured.z < safetyFloorZ - 1e-6)
+      throw new RobotArmError(
+        'TOUCH_SAFETY_LIMIT',
+        'Measured sliding endpoint exceeds the safety floor',
+        409,
+      );
+    // Change the sample ID only after stopping. The page snapshots the active
+    // pointer under this new ID, so no moving coordinate is paired with an endpoint.
+    const { screen: touched } = await observe('slide', dwellMs);
+    if (!touched) return undefined;
     return {
-      probes,
-      grid,
-      start,
-      screen,
-      fastPlane: {
-        ...fitted,
-        tiltDeg,
-        heightRangeMm,
-        holdoutHeightMm,
-        independentHeightCheck: session.auto?.independentHeightCheck,
-        measuredValidation,
-      },
+      contact: { x: measured.x, y: measured.y, z: surfaceZ },
+      pressCommandZ: pressZ,
+      pressedZ: measured.z,
+      screen: touched,
+      weight: 0.5,
     };
-  }
-
+  };
+  setPhase(host, session, {
+    phase: 'grid',
+    index: 0,
+    total: gridTargets.length,
+    message: 'Sampling the screen',
+  });
   const gridZ =
     Math.max(...probes.map((probe) => probe.contact.z)) + APPROACH_LIFT_MM;
-  for (const [index, target] of targets.targets.entries()) {
+  const grid: GridTouch[] = [];
+  for (let index = 0; index < gridTargets.length; index++) {
+    const target = gridTargets[index];
+    const slide = fast && options.collection === 'slide' && grid.length > 0;
     setPhase(host, session, {
       phase: 'grid',
-      operation: 'travel',
+      operation: slide ? 'slide' : 'travel',
       index: index + 1,
-      total: targets.targets.length,
-      message: 'Sampling the screen',
+      total: gridTargets.length,
+      message: `Sampling ${index + 1}/${gridTargets.length}`,
     });
-    const { x, y } = affinePoint(initialFrame.inverse, target.screen);
+    const robot = affinePoint(initialFrame.inverse, target.screen);
     try {
-      const touch = await touchAt(
-        x,
-        y,
-        gridZ,
-        `Grid ${target.id}`,
-        TOUCH_DESCENT_MM,
-        false,
-        safetyFloorZ,
-      );
+      // Reacquire only a confirmed missed endpoint. Motion and phone errors propagate.
+      const slideTouch = slide ? await slideTo(robot.x, robot.y) : undefined;
+      let touch = slideTouch;
+      if (!touch) {
+        const probeGrid = (point: ScreenPoint2, label: string) =>
+          touchAt(
+            point.x,
+            point.y,
+            gridZ,
+            label,
+            TOUCH_DESCENT_MM,
+            false,
+            safetyFloorZ,
+            fast ? predictHeights(point.x, point.y) : undefined,
+          );
+        try {
+          touch = await probeGrid(robot, `Grid ${target.id}`);
+        } catch (error) {
+          if (
+            !fast ||
+            index !== 0 ||
+            !(error instanceof RobotArmError) ||
+            error.code !== 'TOUCH_NOT_FOUND'
+          )
+            throw error;
+          // Three nearby touches estimate the remote corner. Correct a small
+          // lateral miss without increasing the measured descent budget.
+          const dx = first.contact.x - robot.x;
+          const dy = first.contact.y - robot.y;
+          const distance = Math.hypot(dx, dy);
+          if (distance <= FIRST_GRID_RETRY_INSET_MM) throw error;
+          const fraction = FIRST_GRID_RETRY_INSET_MM / distance;
+          touch = await probeGrid(
+            { x: robot.x + dx * fraction, y: robot.y + dy * fraction },
+            `Grid ${target.id} inset retry`,
+          );
+        }
+      }
+      if (touch.recovered && target.role === 'fit') heightAnchors.push(touch);
       grid.push({ ...touch, target });
-      await recordSample(touch, target.role, 'stepped');
+      await recordSample(
+        touch,
+        target.role,
+        slideTouch ? 'slide' : fast && !touch.recovered ? 'direct' : 'stepped',
+      );
     } catch (error) {
       if (
+        fast ||
         !(error instanceof RobotArmError) ||
-        error.code !== 'TOUCH_NOT_FOUND' ||
-        target.role !== 'validation'
+        error.code !== 'TOUCH_NOT_FOUND'
       )
         throw error;
+      // A page that does not cover the full display can reject an edge target.
+      if (target.role === 'validation') continue;
+      throw error;
     }
     await save(host, session);
   }

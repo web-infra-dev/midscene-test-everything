@@ -24,9 +24,7 @@ describe('first-time automatic exploration', () => {
   it.each([
     'standard',
     'standard-tilt',
-    'fast-tilt-slide',
-    'fast-corner-inset-slide',
-    'fast-height-limit-slide',
+    'fast-local-recovery',
     'fast-tap',
     'fast-slide',
     'fast-refine-stalled',
@@ -95,15 +93,8 @@ describe('first-time automatic exploration', () => {
       let refining = false;
       let lowestZ = Number.POSITIVE_INFINITY;
       const isFast = !mode.startsWith('standard') && mode !== 'safety-floor';
-      const slopeX =
-        mode === 'fast-height-limit-slide'
-          ? 0.038
-          : mode === 'fast-tilt-slide'
-            ? 0.031
-            : mode === 'standard-tilt'
-              ? 0.015
-              : 0;
-      const tilted = slopeX !== 0;
+      const tilted = mode === 'standard-tilt';
+      const slopeX = tilted ? 0.015 : 0;
       const pagePixel = () =>
         contact && touching
           ? {
@@ -135,9 +126,6 @@ describe('first-time automatic exploration', () => {
           screen: { x, y },
         };
       });
-      const cornerTargets = targets.filter(
-        (target) => target.css.x !== 200 && target.css.y !== 125,
-      );
       const screenCalib = {
         findMappedSession: async () => ({ ...page }),
         session: async () => {
@@ -166,13 +154,12 @@ describe('first-time automatic exploration', () => {
           if (
             mode === 'press-recovers' &&
             !missedPress &&
-            contact &&
-            Math.abs(contact.z - 29.625) < 1e-6
+            purpose === 'press'
           ) {
             missedPress = true;
             screen = null;
           }
-          if (mode === 'fast-delayed' && contact && !delayedOnce) {
+          if (mode === 'fast-delayed' && purpose === 'press' && !delayedOnce) {
             delayedOnce = true;
             delayedUntil = Date.now() + 350;
             delayedMoveCount = motions.length;
@@ -302,17 +289,8 @@ describe('first-time automatic exploration', () => {
             touching = true;
           if (mode === 'repress-missing' && repressing) touching = false;
           if (mode === 'fast-no-touch' && point.x < 50) touching = false;
-          if (
-            mode === 'fast-corner-inset-slide' &&
-            cornerTargets.some(
-              ({ screen }) =>
-                Math.hypot(
-                  point.x - (screen.x / 999) * 200,
-                  point.y + (screen.y / 499) * 100,
-                ) < 1,
-            )
-          )
-            touching = false;
+          if (mode === 'fast-local-recovery' && point.x < 50)
+            touching = inside && point.z <= activationZ - 0.75;
           // A remote point that only touches at the floor would need a final
           // press below that floor. It must be rejected before submission.
           if (mode === 'safety-floor' && point.x > 105)
@@ -338,8 +316,8 @@ describe('first-time automatic exploration', () => {
         startPose: pose(100, -50, startZ),
         ...(isFast
           ? {
-              mode: 'fast-plane' as const,
-              compliantSetupConfirmed: true,
+              mode: 'fast-horizontal' as const,
+              horizontalConfirmed: true,
               collection: mode.endsWith('slide')
                 ? ('slide' as const)
                 : ('tap' as const),
@@ -353,8 +331,7 @@ describe('first-time automatic exploration', () => {
           'snapshot-missing': 'Phone step acknowledgement timed out',
           'snapshot-stale': 'Phone step acknowledgement timed out',
           'safety-floor': 'safety floor',
-          'fast-no-touch': 'No touch detected at fast calibration point',
-          'fast-height-limit-slide': 'height range',
+          'fast-no-touch': 'fast local height-search budget',
           'fast-refine-stalled': 'could not narrow the contact interval',
         };
         if (expected[mode]) {
@@ -365,20 +342,10 @@ describe('first-time automatic exploration', () => {
           if (mode === 'safety-floor')
             expect(lowestZ).toBeGreaterThanOrEqual(27.625);
           if (mode === 'fast-no-touch') {
-            expect(lowestZ).toBeGreaterThanOrEqual(23);
+            expect(lowestZ).toBeGreaterThanOrEqual(27.625);
             expect(session.auto?.collectedSamples).toHaveLength(3);
-            await expect(job).rejects.toMatchObject({
-              details: {
-                confirmedNoTouch: true,
-                safetyFloorZMm: expect.any(Number),
-                commandFloorZMm: expect.any(Number),
-              },
-            });
+            expect(session.auto?.fastAdaptation?.searchSteps).toBe(12);
           }
-          if (mode === 'fast-height-limit-slide')
-            expect(
-              session.auto?.collectedSamples?.some((p) => p.method === 'slide'),
-            ).toBe(false);
           return;
         }
         const collection = await job;
@@ -386,13 +353,19 @@ describe('first-time automatic exploration', () => {
         expect(collection.grid).toHaveLength(isFast ? 6 : 9);
         if (mode === 'standard') expect(finalPressCount).toBe(12);
         const fit = () =>
-          fitExploration(collection, f.tool, f.runtime.capabilities, {
-            id: 'candidate',
-            ...f.binding,
-            robotGeometryRevision: 1,
-            toolGeometryRevision: 1,
-            screenGeometryRevision: 1,
-          });
+          fitExploration(
+            collection,
+            f.tool,
+            f.runtime.capabilities,
+            {
+              id: 'candidate',
+              ...f.binding,
+              robotGeometryRevision: 1,
+              toolGeometryRevision: 1,
+              screenGeometryRevision: 1,
+            },
+            isFast,
+          );
         if (mode === 'bad-validation') {
           const result = fit();
           expect(result.evidence.validationMaxPx).toBeCloseTo(20);
@@ -403,6 +376,18 @@ describe('first-time automatic exploration', () => {
           return;
         }
         const result = fit();
+        if (mode === 'fast-local-recovery') {
+          const recovered = collection.grid[0];
+          expect(recovered.recovered).toBe(true);
+          const [touchZ, clearZ] = recovered.heightIntervalMm!;
+          expect(recovered.pressedZ).toBeCloseTo(
+            touchZ - (clearZ - touchZ) / 2,
+            6,
+          );
+          expect(collection.grid[1].recovered).toBeUndefined();
+          expect(result.evidence.planeSource).toBe('assumed-horizontal');
+          return;
+        }
         if (tilted) {
           const { normal } = result.candidate.plane;
           expect(-normal.x / normal.z).toBeCloseTo(slopeX, 2);
@@ -419,68 +404,44 @@ describe('first-time automatic exploration', () => {
           tilted ? Math.hypot(100, 0.5) : 100,
           sizePrecision,
         );
-        if (mode === 'fast-corner-inset-slide') {
-          const first = collection.probes[0].contact;
-          for (const point of collection.grid.filter(
-            (p) => p.target.role === 'fit',
-          )) {
-            const targetX = (point.target.screen.x / 999) * 200;
-            const targetY = (-point.target.screen.y / 499) * 100;
-            const dx = first.x - targetX;
-            const dy = first.y - targetY;
-            const fraction = 3 / Math.hypot(dx, dy);
-            expect(point.contact.x).toBeCloseTo(targetX + dx * fraction);
-            expect(point.contact.y).toBeCloseTo(targetY + dy * fraction);
-          }
-        } else {
-          expect(result.coverage).toBeGreaterThan(0.6);
-        }
+        expect(result.coverage).toBeGreaterThan(0.6);
         expect(result.gridRmsMm).toBeLessThan(0.75);
         expect(result.evidence.validationMaxMm).toBeLessThan(1);
-        if (isFast) {
-          expect(result.evidence.planeSource).toBe('measured');
-          expect(
-            session.auto?.collectedSamples
-              ?.filter((p) => p.role === 'fit')
-              .map((p) => p.method),
-          ).toEqual(['stepped', 'stepped', 'stepped', 'stepped']);
+        expect(result.evidence.planeSource).toBe(
+          isFast ? 'assumed-horizontal' : 'measured',
+        );
+        const methods = session.auto?.collectedSamples?.map((p) => p.method);
+        if (mode === 'fast-slide' || mode === 'fast-tap') {
+          expect(result.evidence.validationHeightMaxMm).toBeUndefined();
+          expect(methods).toEqual([
+            'stepped',
+            'direct',
+            'direct',
+            'direct',
+            ...Array(5).fill(mode === 'fast-slide' ? 'slide' : 'direct'),
+          ]);
+          expect(finalPressCount).toBe(1);
         }
-        if (mode === 'fast-tilt-slide') {
-          expect(result.evidence.heightRangeMm).toBeGreaterThan(4);
-          expect(result.evidence.heightRangeMm).toBeLessThanOrEqual(6);
-        }
-        if (mode === 'fast-slide' || mode === 'fast-tilt-slide')
-          expect(
-            session.auto?.collectedSamples
-              ?.filter((p) => p.role === 'validation')
-              .map((p) => p.method),
-          ).toEqual(['stepped', 'slide']);
         if (mode === 'fast-slide') {
           const first = collection.probes[0];
           expect(first.heightIntervalMm?.[0]).toBeLessThanOrEqual(activationZ);
           expect(first.heightIntervalMm?.[1]).toBeGreaterThan(activationZ);
-          expect(first.pressedZ).toBeCloseTo(first.contact.z - 0.5 + 0.04);
-          expect(result.evidence.independentHeightCheck).toMatchObject({
-            heightIntervalMm: [expect.any(Number), expect.any(Number)],
-            elapsedMs: expect.any(Number),
-          });
-        }
-        if (mode === 'fast-tap') {
-          for (const point of collection.grid.filter(
-            (p) => p.target.role === 'fit',
-          )) {
-            const [touchZ, clearZ] = point.heightIntervalMm!;
-            expect(clearZ - touchZ).toBeLessThanOrEqual(0.250001);
-            expect(point.pressedZ).toBeCloseTo(touchZ, 6);
+          const [touchZ, clearZ] = first.heightIntervalMm!;
+          expect(first.pressedZ).toBeCloseTo(touchZ - (clearZ - touchZ) / 2, 6);
+          for (const point of [...collection.probes, ...collection.grid]) {
+            expect(point.pressedZ).toBeCloseTo(first.pressedZ, 6);
+            expect(point.contact.z).toBeCloseTo(first.contact.z, 6);
           }
         }
         if (mode === 'fast-adaptive-slide') {
           expect(missedSlide).toBe(true);
-          expect(
-            session.auto?.collectedSamples
-              ?.filter((p) => p.role === 'validation')
-              .map((p) => p.method),
-          ).toEqual(['stepped', 'stepped']);
+          expect(methods?.slice(4)).toEqual([
+            'direct',
+            'slide',
+            'slide',
+            'slide',
+            'slide',
+          ]);
         }
         if (mode === 'press-recovers') expect(missedPress).toBe(true);
         expect(f.store.getScreen(f.screen.id)).toEqual(f.screen);

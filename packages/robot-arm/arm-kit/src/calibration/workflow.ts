@@ -2031,6 +2031,7 @@ export class CalibrationWorkflow {
     };
     const toTouch = (p: (typeof measurements.points)[number]) => ({
       contact: p.positionMm,
+      heightIntervalMm: p.probeStep?.heightIntervalMm,
       screen: project(s.mapping!.webToImage, p.point),
       weight: p.weight,
       pressedZ: p.probeStep
@@ -2055,15 +2056,21 @@ export class CalibrationWorkflow {
       screen,
     };
     const robot = this.runtime.profileStore.getRobot(input.robotProfileId);
-    const result = fitExploration(collection, tool, this.runtime.capabilities, {
-      id: randomUUID(),
-      robotProfileId: robot.id,
-      toolProfileId: tool.id,
-      screenProfileId: s.id,
-      robotGeometryRevision: robot.geometryRevision,
-      toolGeometryRevision: tool.geometryRevision,
-      screenGeometryRevision: 1,
-    });
+    const result = fitExploration(
+      collection,
+      tool,
+      this.runtime.capabilities,
+      {
+        id: randomUUID(),
+        robotProfileId: robot.id,
+        toolProfileId: tool.id,
+        screenProfileId: s.id,
+        robotGeometryRevision: robot.geometryRevision,
+        toolGeometryRevision: tool.geometryRevision,
+        screenGeometryRevision: 1,
+      },
+      s.explorationMode === 'slide' || s.explorationMode === 'fast',
+    );
     const candidate = result.candidate;
     const fit: Fit = {
       kind: candidate.kind,
@@ -2413,7 +2420,12 @@ export class CalibrationWorkflow {
       quality.inliers > quality.total ||
       !Array.isArray(evidence.samples) ||
       evidence.samples.length < 7 ||
-      evidence.planeSource !== 'measured' ||
+      (evidence.planeSource !== 'measured' &&
+        !(
+          (state?.explorationMode === 'slide' ||
+            state?.explorationMode === 'fast') &&
+          evidence.planeSource === 'assumed-horizontal'
+        )) ||
       !Number.isFinite(evidence.surfaceMaxMm ?? 0) ||
       (evidence.surfaceMaxMm ?? 0) > SAMPLED_SURFACE_LIMIT_MM
     )

@@ -27,8 +27,9 @@ export function fitExploration(
     | 'toolGeometryRevision'
     | 'screenGeometryRevision'
   >,
+  fast: boolean,
 ) {
-  const { probes, grid, start, screen, fastPlane } = collection;
+  const { probes, grid, start, screen } = collection;
   const validationGrid = grid.filter(
     (point) => point.target.role === 'validation',
   );
@@ -49,10 +50,6 @@ export function fitExploration(
   const result = autoCalibrationGeometry({
     startPose: start,
     samples,
-    measuredPlane: fastPlane,
-    measuredSurfaceSamples: fastPlane
-      ? [samples[0], ...samples.slice(probes.length)]
-      : undefined,
     screen,
     tool,
     capabilities: capabilities,
@@ -73,17 +70,16 @@ export function fitExploration(
       mm: screenResidualMm(result.frame, offset),
     };
   });
-  // Holdouts measure the independently fitted surface and never train it.
-  const measuredValidation = fastPlane?.measuredValidation ?? validationGrid;
-  const validationHeightMaxMm = Math.max(
-    fastPlane?.holdoutHeightMm ?? 0,
-    measuredValidation.length
-      ? maxSurfaceResidualMm(
-          result.candidate,
-          measuredValidation.map((point) => point.contact),
-        )
-      : 0,
+  // A predicted press or slide verifies XY only. Local recovery also measures Z.
+  const measuredHeights = validationGrid.filter(
+    (point) => !fast || point.heightIntervalMm !== undefined,
   );
+  const validationHeightMaxMm = measuredHeights.length
+    ? maxSurfaceResidualMm(
+        result.candidate,
+        measuredHeights.map((point) => point.contact),
+      )
+    : undefined;
 
   // Validation targets were excluded from both plane and XY fitting above.
   const gridRmsPx = result.gridRmsPx;
@@ -99,7 +95,7 @@ export function fitExploration(
       result.coverage,
       validationMaxMm,
       validationRmsPx,
-      validationHeightMaxMm,
+      validationHeightMaxMm ?? 0,
     ].every(Number.isFinite)
   )
     throw new RobotArmError(
@@ -108,13 +104,7 @@ export function fitExploration(
       409,
     );
   const evidence = {
-    planeSource: 'measured',
-    ...(fastPlane && {
-      tiltDeg: fastPlane.tiltDeg,
-      heightRangeMm: fastPlane.heightRangeMm,
-      holdoutHeightMm: fastPlane.holdoutHeightMm,
-      independentHeightCheck: fastPlane.independentHeightCheck,
-    }),
+    planeSource: fast ? 'assumed-horizontal' : 'measured',
     planeRmseMm: result.quality.rmseMm,
     gridRmsPx,
     gridRmsMm: result.gridRmsMm,
