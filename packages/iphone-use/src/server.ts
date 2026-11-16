@@ -6,7 +6,7 @@ import { runConnectivityTest } from '@midscene/core';
 import {
   ControlError,
   createDeviceHandler,
-} from '@midscene/open-device/server';
+} from '@midscene/universal-device/server';
 import { ModelConfigManager } from '@midscene/shared/env';
 import express, { type Request } from 'express';
 import type { DeviceConfig } from './hardware/types.js';

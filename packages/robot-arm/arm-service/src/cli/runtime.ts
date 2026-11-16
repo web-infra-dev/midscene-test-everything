@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import * as cli from '@clack/prompts';
-import { ensureDeviceToken } from '@midscene/open-device/server';
+import { ensureDeviceToken } from '@midscene/universal-device/server';
 
 export function playgroundPort() {
   const port = Number(process.env.ARM_PLAYGROUND_PORT ?? 5173);

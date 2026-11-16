@@ -21,7 +21,7 @@
     "prepare": "husky",
     "commitlint": "commitlint",
     "lint:staged": "lint-staged",
-    "dev:playground": "pnpm --filter @midscene/open-device-playground start",
+    "dev:playground": "pnpm --filter @midscene/universal-device-playground start",
     "iphone-use:release": "node packages/iphone-use/scripts/package-release.mjs",
     "iphone-use": "pnpm --filter @midscene/iphone-use start"
   },

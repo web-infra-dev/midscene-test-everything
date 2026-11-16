@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "tsx open-device.ts"
+    "start": "tsx universal-device.ts"
   },
   "dependencies": {
-    "@midscene/open-device": "workspace:*"
+    "@midscene/universal-device": "workspace:*"
   }
 }

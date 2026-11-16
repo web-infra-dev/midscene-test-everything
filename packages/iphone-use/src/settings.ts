@@ -4,7 +4,7 @@ import { styleText } from 'node:util';
 import {
   ensureDeviceToken,
   readDeviceToken,
-} from '@midscene/open-device/server';
+} from '@midscene/universal-device/server';
 
 export const defaultPort = 5801;
 export const label = 'com.midscene.iphone-use';

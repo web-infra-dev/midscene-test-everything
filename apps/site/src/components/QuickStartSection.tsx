@@ -3,7 +3,7 @@ import { useI18n } from '../i18n/translations';
 
 type CodeTab = 'server' | 'sdk';
 
-const SERVER_RAW = `import { createDeviceHandler, type ControlledDevice } from '@midscene/open-device/server';
+const SERVER_RAW = `import { createDeviceHandler, type ControlledDevice } from '@midscene/universal-device/server';
 
 const myDevice: ControlledDevice = {
   signal: new AbortController().signal,
@@ -17,16 +17,16 @@ const myDevice: ControlledDevice = {
 };
 
 export const handler = createDeviceHandler({
-  token: process.env.OPEN_DEVICE_TOKEN,
+  token: process.env.MIDSCENE_UNIVERSAL_DEVICE_SERVICE_TOKEN,
   listDevices: () => [{ id: 'my-device-1', name: 'Custom Rig', platform: 'hardware', status: 'available' }],
   readyDevice: async () => myDevice,
 });`;
 
-const SDK_RAW = `import { agentFromOpenDevice } from '@midscene/open-device';
+const SDK_RAW = `import { agentFromUniversalDevice } from '@midscene/universal-device';
 
-const agent = await agentFromOpenDevice({
-  host: process.env.OPEN_DEVICE_SERVICE_URL || 'http://localhost:5801',
-  deviceId: process.env.OPEN_DEVICE_ID,
+const agent = await agentFromUniversalDevice({
+  host: process.env.MIDSCENE_UNIVERSAL_DEVICE_SERVICE_URL || 'http://localhost:5801',
+  deviceId: process.env.MIDSCENE_UNIVERSAL_DEVICE_ID,
 });
 
 await agent.aiTap('Tap the Allow button');
@@ -40,7 +40,7 @@ function ServerCodeHtml() {
       <span className="k">import</span> {'{ '}createDeviceHandler,{' '}
       <span className="k">type</span> ControlledDevice{' } '}
       <span className="k">from</span>{' '}
-      <span className="s">'@midscene/open-device/server'</span>;{'\n\n'}
+      <span className="s">'@midscene/universal-device/server'</span>;{'\n\n'}
       <span className="k">const</span> myDevice: ControlledDevice = {'{\n'}
       {'  '}signal: <span className="k">new</span>{' '}
       <span className="f">AbortController</span>().signal,{'\n'}
@@ -66,7 +66,7 @@ function ServerCodeHtml() {
       {'};\n\n'}
       <span className="k">export const</span> handler ={' '}
       <span className="f">createDeviceHandler</span>({'{\n'}
-      {'  '}token: process.env.OPEN_DEVICE_TOKEN,{'\n'}
+      {'  '}token: process.env.MIDSCENE_UNIVERSAL_DEVICE_SERVICE_TOKEN,{'\n'}
       {'  '}listDevices: () =&gt; [{'{ '}id:{' '}
       <span className="s">'my-device-1'</span>, name:{' '}
       <span className="s">'Custom Rig'</span>, platform:{' '}
@@ -83,14 +83,14 @@ function ServerCodeHtml() {
 function SdkCodeHtml() {
   return (
     <>
-      <span className="k">import</span> {'{ '}agentFromOpenDevice{' } '}
+      <span className="k">import</span> {'{ '}agentFromUniversalDevice{' } '}
       <span className="k">from</span>{' '}
-      <span className="s">'@midscene/open-device'</span>;{'\n\n'}
+      <span className="s">'@midscene/universal-device'</span>;{'\n\n'}
       <span className="k">const</span> agent = <span className="k">await</span>{' '}
-      <span className="f">agentFromOpenDevice</span>({'{\n'}
-      {'  '}host: process.env.OPEN_DEVICE_SERVICE_URL ||{' '}
+      <span className="f">agentFromUniversalDevice</span>({'{\n'}
+      {'  '}host: process.env.MIDSCENE_UNIVERSAL_DEVICE_SERVICE_URL ||{' '}
       <span className="s">'http://localhost:5801'</span>,{'\n'}
-      {'  '}deviceId: process.env.OPEN_DEVICE_ID,{'\n'}
+      {'  '}deviceId: process.env.MIDSCENE_UNIVERSAL_DEVICE_ID,{'\n'}
       {'});\n\n'}
       <span className="k">await</span> agent.<span className="f">aiTap</span>(
       <span className="s">'Tap the Allow button'</span>);{'\n'}

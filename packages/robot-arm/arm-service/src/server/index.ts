@@ -23,8 +23,8 @@ import {
   robotAuditDirectory,
   robotDataRoot,
 } from '@midscene/arm-kit/internal/storage/layout';
-import type { InputAction } from '@midscene/open-device/protocol';
-import { createDeviceHandler } from '@midscene/open-device/server';
+import type { InputAction } from '@midscene/universal-device/protocol';
+import { createDeviceHandler } from '@midscene/universal-device/server';
 import { SCREEN_DRIFT_DETECTION_ENABLED } from '@midscene/robotics-shared/contracts';
 import { PlaygroundArmControls } from './arm-controls.js';
 import {
@@ -167,7 +167,7 @@ export async function startPlaygroundHost({
   const armResource = 'arm-controller';
   let armLifetime = new AbortController();
   let managerWrites = 0;
-  const openDeviceActions = () =>
+  const universalDeviceActions = () =>
     (arm?.describeCapabilities().screenActions ?? []).filter(
       (action): action is 'tap' | 'swipe' | 'longPress' | 'dragAndDrop' =>
         action === 'tap' ||
@@ -201,7 +201,7 @@ export async function startPlaygroundHost({
                 ready() && screens?.get(screen.id)?.ready
                   ? 'available'
                   : 'offline',
-              actions: openDeviceActions(),
+              actions: universalDeviceActions(),
               preview: 'mjpeg',
               resourceId: armResource,
             }));
@@ -221,7 +221,7 @@ export async function startPlaygroundHost({
           return {
             resourceId: armResource,
             signal,
-            actions: openDeviceActions(),
+            actions: universalDeviceActions(),
             async screenshot() {
               signal.throwIfAborted();
               const { width, height } = await entry.device.size();
@@ -565,7 +565,7 @@ export async function startPlaygroundHost({
       )
         return send(403, { error: 'Open the arm manager on this computer' });
       if (!deviceAccessToken)
-        return send(404, { error: 'Open Device is unavailable' });
+        return send(404, { error: 'Universal Device is unavailable' });
       return send(200, {
         url: managerOrigins[0],
         token: deviceAccessToken,
@@ -580,7 +580,7 @@ export async function startPlaygroundHost({
     )
       return send(409, {
         error:
-          'Disconnect the Open Device session before changing the arm configuration',
+          'Disconnect the Universal Device session before changing the arm configuration',
       });
     if (write) managerWrites++;
     try {
@@ -637,7 +637,7 @@ export async function startPlaygroundHost({
           !['pause', 'emergencyStop'].includes(input.action)
         )
           return send(409, {
-            error: 'The arm is reserved by an Open Device session',
+            error: 'The arm is reserved by a Universal Device session',
           });
         await statusPanel.command(input);
         return send(200, { ok: true });

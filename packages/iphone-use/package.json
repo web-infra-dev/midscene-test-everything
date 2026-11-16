@@ -14,7 +14,7 @@
     "start": "node dist/commands.js"
   },
   "dependencies": {
-    "@midscene/open-device": "workspace:*",
+    "@midscene/universal-device": "workspace:*",
     "@midscene/robotics-vision": "workspace:*",
     "antd": "^5.21.6",
     "react": "18.3.1",

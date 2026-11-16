@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { ControlledDevice } from '@midscene/open-device/server';
+import type { ControlledDevice } from '@midscene/universal-device/server';
 import type { ConnectionManager } from './hardware/runtime/connections.js';
 import { LocalDevice } from './hardware/runtime/local-device.js';
 import type {

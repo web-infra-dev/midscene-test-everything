@@ -69,24 +69,24 @@ importers:
 
   examples:
     dependencies:
-      '@midscene/open-device':
+      '@midscene/universal-device':
         specifier: workspace:*
-        version: link:../packages/open-device
+        version: link:../packages/universal-device
 
   packages/iphone-use:
     dependencies:
       '@midscene/core':
         specifier: 1.17.5
         version: 1.17.5(ws@8.22.1)
-      '@midscene/open-device':
-        specifier: workspace:*
-        version: link:../open-device
       '@midscene/robotics-vision':
         specifier: workspace:*
         version: link:../shared/vision
       '@midscene/shared':
         specifier: 1.17.5
         version: 1.17.5
+      '@midscene/universal-device':
+        specifier: workspace:*
+        version: link:../universal-device
       '@techstark/opencv-js':
         specifier: 5.0.0-release.1
         version: 5.0.0-release.1
@@ -154,89 +154,6 @@ importers:
       less:
         specifier: ^4.2.0
         version: 4.9.1
-      typescript:
-        specifier: ^5.8.3
-        version: 5.9.3
-
-  packages/open-device:
-    dependencies:
-      '@midscene/core':
-        specifier: 1.17.5
-        version: 1.17.5(ws@8.22.1)
-      '@midscene/shared':
-        specifier: 1.17.5
-        version: 1.17.5
-      swagger-ui-dist:
-        specifier: ^5.32.0
-        version: 5.34.1
-      zod:
-        specifier: 3.25.76
-        version: 3.25.76
-    devDependencies:
-      '@rslib/core':
-        specifier: ^0.18.3
-        version: 0.18.6(typescript@5.9.3)
-      '@rstest/core':
-        specifier: 0.12.0
-        version: 0.12.0(core-js@3.47.0)
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.20.5
-      typescript:
-        specifier: ^5.8.3
-        version: 5.9.3
-
-  packages/open-device-playground:
-    dependencies:
-      '@midscene/open-device':
-        specifier: workspace:*
-        version: link:../open-device
-      '@midscene/playground':
-        specifier: 1.17.5
-        version: 1.17.5
-      '@midscene/preview-controls':
-        specifier: workspace:*
-        version: link:../shared/preview-controls
-      express:
-        specifier: 4.22.3
-        version: 4.22.3
-    devDependencies:
-      '@ant-design/icons':
-        specifier: ^5.6.1
-        version: 5.6.1(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
-      '@rsbuild/core':
-        specifier: ^1.6.15
-        version: 1.7.6
-      '@rsbuild/plugin-react':
-        specifier: ^1.4.1
-        version: 1.4.6(@rsbuild/core@1.7.6)
-      '@rslib/core':
-        specifier: ^0.18.3
-        version: 0.18.6(typescript@5.9.3)
-      '@rstest/core':
-        specifier: 0.12.0
-        version: 0.12.0(core-js@3.47.0)
-      '@types/express':
-        specifier: ^4.17.0
-        version: 4.17.25
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.20.5
-      '@types/react':
-        specifier: ^18.3.1
-        version: 18.3.31
-      '@types/react-dom':
-        specifier: ^18.3.1
-        version: 18.3.7(@types/react@18.3.31)
-      antd:
-        specifier: ^5.21.6
-        version: 5.29.3(date-fns@2.30.0)(moment@2.31.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
-      react:
-        specifier: 18.3.1
-        version: 18.3.1
-      react-dom:
-        specifier: 18.3.1
-        version: 18.3.1(react@18.3.1)
       typescript:
         specifier: ^5.8.3
         version: 5.9.3
@@ -314,9 +231,6 @@ importers:
       '@midscene/arm-kit':
         specifier: workspace:*
         version: link:../arm-kit
-      '@midscene/open-device':
-        specifier: workspace:*
-        version: link:../../open-device
       '@midscene/preview-controls':
         specifier: workspace:*
         version: link:../../shared/preview-controls
@@ -329,6 +243,9 @@ importers:
       '@midscene/shared':
         specifier: 1.17.5
         version: 1.17.5
+      '@midscene/universal-device':
+        specifier: workspace:*
+        version: link:../../universal-device
       antd:
         specifier: ^5.21.6
         version: 5.29.3(date-fns@2.30.0)(moment@2.31.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -451,6 +368,89 @@ importers:
       '@types/ws':
         specifier: 8.18.2
         version: 8.18.2
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+
+  packages/universal-device:
+    dependencies:
+      '@midscene/core':
+        specifier: 1.17.5
+        version: 1.17.5(ws@8.22.1)
+      '@midscene/shared':
+        specifier: 1.17.5
+        version: 1.17.5
+      swagger-ui-dist:
+        specifier: ^5.32.0
+        version: 5.34.1
+      zod:
+        specifier: 3.25.76
+        version: 3.25.76
+    devDependencies:
+      '@rslib/core':
+        specifier: ^0.18.3
+        version: 0.18.6(typescript@5.9.3)
+      '@rstest/core':
+        specifier: 0.12.0
+        version: 0.12.0(core-js@3.47.0)
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.5
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+
+  packages/universal-device-playground:
+    dependencies:
+      '@midscene/playground':
+        specifier: 1.17.5
+        version: 1.17.5(ws@8.22.1)
+      '@midscene/preview-controls':
+        specifier: workspace:*
+        version: link:../shared/preview-controls
+      '@midscene/universal-device':
+        specifier: workspace:*
+        version: link:../universal-device
+      express:
+        specifier: 4.22.3
+        version: 4.22.3
+    devDependencies:
+      '@ant-design/icons':
+        specifier: ^5.6.1
+        version: 5.6.1(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      '@rsbuild/core':
+        specifier: ^1.6.15
+        version: 1.7.6
+      '@rsbuild/plugin-react':
+        specifier: ^1.4.1
+        version: 1.4.6(@rsbuild/core@1.7.6)
+      '@rslib/core':
+        specifier: ^0.18.3
+        version: 0.18.6(typescript@5.9.3)
+      '@rstest/core':
+        specifier: 0.12.0
+        version: 0.12.0(core-js@3.47.0)
+      '@types/express':
+        specifier: ^4.17.0
+        version: 4.17.25
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.5
+      '@types/react':
+        specifier: ^18.3.1
+        version: 18.3.31
+      '@types/react-dom':
+        specifier: ^18.3.1
+        version: 18.3.7(@types/react@18.3.31)
+      antd:
+        specifier: ^5.21.6
+        version: 5.29.3(date-fns@2.30.0)(moment@2.31.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      react:
+        specifier: 18.3.1
+        version: 18.3.1
+      react-dom:
+        specifier: 18.3.1
+        version: 18.3.1(react@18.3.1)
       typescript:
         specifier: ^5.8.3
         version: 5.9.3

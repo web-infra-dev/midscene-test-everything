@@ -1,5 +1,5 @@
-import type { PreviewReader } from '@midscene/open-device/protocol';
-export type { PreviewReader } from '@midscene/open-device/protocol';
+import type { PreviewReader } from '@midscene/universal-device/protocol';
+export type { PreviewReader } from '@midscene/universal-device/protocol';
 import type { AirPlaySetupInfo, ScreenFrame } from '../types.js';
 export interface ScreenSession {
   openPreview?(signal: AbortSignal): PreviewReader;

@@ -49,7 +49,7 @@ import { TwinPanel, type TwinViewPreset } from './TwinPanel';
 import { ActionAudit } from './robot-arm/ActionAudit';
 import { ControllerMotionSettings } from './robot-arm/ControllerMotionSettings';
 import { DeviceSettings } from './robot-arm/DeviceSettings';
-import { OpenDeviceSettings } from './robot-arm/OpenDeviceSettings';
+import { UniversalDeviceSettings } from './robot-arm/UniversalDeviceSettings';
 import { RobotStatusBar } from './robot-arm/RobotStatusBar';
 import './CameraStage.less';
 
@@ -356,8 +356,8 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
                     : 'Enable the robot and confirm its tool payload first'
                   : control?.remoteBusy
                     ? language === 'zh'
-                      ? '机械臂正在由 Open Device 控制'
-                      : 'An Open Device session is controlling the arm'
+                      ? '机械臂正在由 Universal Device 控制'
+                      : 'A Universal Device session is controlling the arm'
                     : robotState?.moving || robotState?.dragMode
                       ? language === 'zh'
                         ? '机械臂正在运动，暂不可控制'
@@ -443,11 +443,11 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
                   {ready &&
                     !perspectiveBlocked &&
                     (language === 'zh'
-                      ? '设备已就绪，可在 Open Device Playground 中连接。'
-                      : 'Device ready to connect from Open Device Playground. ')}
+                      ? '设备已就绪，可在 Universal Device Playground 中连接。'
+                      : 'Device ready to connect from Universal Device Playground. ')}
                   {language === 'zh'
-                    ? '在「机械臂配置 → Open Device」查看服务地址和 Token。'
-                    : 'Find the service URL and token under Robot settings → Open Device.'}
+                    ? '在「机械臂配置 → Universal Device」查看服务地址和 Token。'
+                    : 'Find the service URL and token under Robot settings → Universal Device.'}
                 </>
               }
             />
@@ -934,7 +934,7 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
                 )}
               </section>
             )}
-            {settingsOpen && <OpenDeviceSettings language={language} />}
+            {settingsOpen && <UniversalDeviceSettings language={language} />}
             <section className="robot-settings-group">
               <Typography.Text type="secondary">
                 {language === 'zh' ? '运动与记录' : 'Motion & history'}

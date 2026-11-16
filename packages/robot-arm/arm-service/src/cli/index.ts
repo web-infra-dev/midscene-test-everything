@@ -24,7 +24,7 @@ async function main() {
     closing ??= playground.close();
     return closing;
   });
-  cli.log.info(`Open Device API docs: ${playground.url}/api/docs/`);
+  cli.log.info(`Universal Device API docs: ${playground.url}/api/docs/`);
   cli.outro(`打开 ${playground.url} 查看机械臂管理台。`);
 }
 
