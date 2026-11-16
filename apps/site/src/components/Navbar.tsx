@@ -1,11 +1,32 @@
+import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useI18n } from '../i18n/translations';
 
 export function Navbar() {
   const { t, toggleLocale } = useI18n();
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const goToSection = (sectionId: string) => {
+    const scroll = () => {
+      document
+        .getElementById(sectionId)
+        ?.scrollIntoView({ behavior: 'smooth' });
+    };
+    if (location.pathname === '/') {
+      scroll();
+      return;
+    }
+    navigate('/');
+    window.setTimeout(scroll, 60);
+  };
 
   return (
     <header className="site-head">
-      <a className="brand" href="#top">
+      <Link
+        className="brand"
+        to="/"
+        onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+      >
         <img
           src="./assets/midscene-logo.png"
           alt="Midscene"
@@ -13,12 +34,27 @@ export function Navbar() {
         />
         <span>Midscene</span>
         <small>{t.nav.brandSub}</small>
-      </a>
+      </Link>
 
       <nav className="head-nav" aria-label="Main navigation">
-        <a href="#stage">{t.nav.demo}</a>
-        <a href="#architecture">{t.nav.protocol}</a>
-        <a href="#quickstart">{t.nav.quickStart}</a>
+        <button type="button" onClick={() => goToSection('stage')}>
+          {t.nav.demo}
+        </button>
+        <button type="button" onClick={() => goToSection('quickstart')}>
+          {t.nav.quickStart}
+        </button>
+        <NavLink
+          to="/api"
+          className={({ isActive }) => (isActive ? 'active' : undefined)}
+        >
+          {t.nav.api}
+        </NavLink>
+        <NavLink
+          to="/custom-arm"
+          className={({ isActive }) => (isActive ? 'active' : undefined)}
+        >
+          {t.nav.customArm}
+        </NavLink>
       </nav>
 
       <div className="head-actions">
@@ -47,9 +83,13 @@ export function Navbar() {
           </svg>
           <span>GitHub</span>
         </a>
-        <a className="btn btn-primary btn-sm" href="#quickstart">
+        <button
+          type="button"
+          className="btn btn-primary btn-sm"
+          onClick={() => goToSection('quickstart')}
+        >
           {t.nav.getStarted}
-        </a>
+        </button>
       </div>
     </header>
   );

@@ -5,10 +5,7 @@ export function Footer() {
 
   return (
     <footer className="site-foot">
-      <div>
-        <strong>{t.footer.title}</strong>
-        <p>{t.footer.subtitle}</p>
-      </div>
+      <strong>{t.footer.title}</strong>
       <span className="mono">{t.footer.right}</span>
     </footer>
   );

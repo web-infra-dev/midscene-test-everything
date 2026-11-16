@@ -30,4 +30,4 @@ pnpm exec tsx examples/universal-device.ts
 
 The example uses `agentFromUniversalDevice()` to read the current screen. Both services serve Swagger UI at `/api/docs/` and the OpenAPI schema at `/api/openapi.json`.
 
-[Protocol draft](./packages/universal-device/rfc/index.html) · [MIT license](./LICENSE)
+[MIT license](./LICENSE)

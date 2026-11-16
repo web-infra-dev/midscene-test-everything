@@ -491,34 +491,87 @@ export async function mountArmWorkbenchStage(
   };
 
   const solveIK = (targetWorld: THREE.Vector3): Pose => {
-    const p: Pose = { j1: 0, j2: 0.45, j3: 0.65, j4: 0 };
+    const p: Pose = { j1: 0, j2: 0.55, j3: 0.85, j4: 0 };
     const tip = new THREE.Vector3();
-    const bounds: Record<string, [number, number]> = {
-      j1: [-2.2, 2.2],
-      j2: [-0.14, 1.39],
-      j3: [0.0, 1.39],
-    };
-    const keys = ['j1', 'j2', 'j3'];
-    const eps = 0.0015;
+    const tipPlus = new THREE.Vector3();
+    const bounds: [number, number][] = [
+      [-2.2, 2.2],
+      [-0.2, 1.55],
+      [-0.2, 1.75],
+    ];
+    const keys = ['j1', 'j2', 'j3'] as const;
+    const eps = 1e-3;
+    const lambda = 1e-4;
 
-    for (let iter = 0; iter < 42; iter += 1) {
+    for (let iter = 0; iter < 28; iter += 1) {
       applyPose(p);
       pen.nib.getWorldPosition(tip);
-      const err = tip.distanceToSquared(targetWorld);
-      if (err < 1e-8) break;
+      const ex = targetWorld.x - tip.x;
+      const ey = targetWorld.y - tip.y;
+      const ez = targetWorld.z - tip.z;
+      if (ex * ex + ey * ey + ez * ez < 1e-9) break;
 
-      for (const k of keys) {
+      // 3x3 Jacobian columns via finite difference
+      const cols: [number, number, number][] = [];
+      for (let i = 0; i < 3; i += 1) {
+        const k = keys[i];
         const orig = p[k];
         p[k] = orig + eps;
         applyPose(p);
-        pen.nib.getWorldPosition(tip);
-        const errPlus = tip.distanceToSquared(targetWorld);
-        const grad = (errPlus - err) / eps;
-        p[k] = THREE.MathUtils.clamp(
-          orig - grad * 1.4,
-          bounds[k][0],
-          bounds[k][1],
-        );
+        pen.nib.getWorldPosition(tipPlus);
+        p[k] = orig;
+        cols.push([
+          (tipPlus.x - tip.x) / eps,
+          (tipPlus.y - tip.y) / eps,
+          (tipPlus.z - tip.z) / eps,
+        ]);
+      }
+
+      // Build A = J^T J + lambda * I and b = J^T e
+      const A = [
+        [0, 0, 0],
+        [0, 0, 0],
+        [0, 0, 0],
+      ];
+      const b = [0, 0, 0];
+      for (let i = 0; i < 3; i += 1) {
+        b[i] = cols[i][0] * ex + cols[i][1] * ey + cols[i][2] * ez;
+        for (let j = 0; j < 3; j += 1) {
+          A[i][j] =
+            cols[i][0] * cols[j][0] +
+            cols[i][1] * cols[j][1] +
+            cols[i][2] * cols[j][2] +
+            (i === j ? lambda : 0);
+        }
+      }
+
+      // Solve 3x3 system via Gaussian elimination
+      for (let i = 0; i < 3; i += 1) {
+        let maxRow = i;
+        for (let r = i + 1; r < 3; r += 1) {
+          if (Math.abs(A[r][i]) > Math.abs(A[maxRow][i])) maxRow = r;
+        }
+        [A[i], A[maxRow]] = [A[maxRow], A[i]];
+        [b[i], b[maxRow]] = [b[maxRow], b[i]];
+        const piv = A[i][i];
+        if (Math.abs(piv) < 1e-12) continue;
+        for (let r = i + 1; r < 3; r += 1) {
+          const factor = A[r][i] / piv;
+          for (let c = i; c < 3; c += 1) A[r][c] -= factor * A[i][c];
+          b[r] -= factor * b[i];
+        }
+      }
+      const dq = [0, 0, 0];
+      for (let i = 2; i >= 0; i -= 1) {
+        let sum = b[i];
+        for (let c = i + 1; c < 3; c += 1) sum -= A[i][c] * dq[c];
+        dq[i] = Math.abs(A[i][i]) > 1e-12 ? sum / A[i][i] : 0;
+      }
+
+      for (let i = 0; i < 3; i += 1) {
+        const k = keys[i];
+        const step = THREE.MathUtils.clamp(dq[i], -0.35, 0.35);
+        p[k] = THREE.MathUtils.clamp(p[k] + step, bounds[i][0], bounds[i][1]);
       }
       p.j4 = -p.j1;
     }
@@ -540,12 +593,15 @@ export async function mountArmWorkbenchStage(
       const worldContact = localPt
         .clone()
         .applyMatrix4(phone.group.matrixWorld);
-      const worldHover = worldContact
+      const worldTipContact = worldContact
         .clone()
-        .add(new THREE.Vector3(0, 0.028, 0));
+        .add(new THREE.Vector3(0, 0.0022, 0));
+      const worldHover = worldTipContact
+        .clone()
+        .add(new THREE.Vector3(0, 0.024, 0));
       cached = {
         hover: solveIK(worldHover),
-        contact: solveIK(worldContact),
+        contact: solveIK(worldTipContact),
         worldContact,
       };
       poseCache.set(key, cached);
@@ -644,10 +700,11 @@ export async function mountArmWorkbenchStage(
       }
     }
 
-    pose.j1 = THREE.MathUtils.lerp(pose.j1, desired.j1, 0.26);
-    pose.j2 = THREE.MathUtils.lerp(pose.j2, desired.j2, 0.26);
-    pose.j3 = THREE.MathUtils.lerp(pose.j3, desired.j3, 0.26);
-    pose.j4 = THREE.MathUtils.lerp(pose.j4, desired.j4, 0.26);
+    const follow = phase === 0 ? 0.18 : 0.72;
+    pose.j1 = THREE.MathUtils.lerp(pose.j1, desired.j1, follow);
+    pose.j2 = THREE.MathUtils.lerp(pose.j2, desired.j2, follow);
+    pose.j3 = THREE.MathUtils.lerp(pose.j3, desired.j3, follow);
+    pose.j4 = THREE.MathUtils.lerp(pose.j4, desired.j4, follow);
     applyPose(pose);
 
     controls.update();

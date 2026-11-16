@@ -8,6 +8,8 @@ export interface TranslationDict {
     demo: string;
     protocol: string;
     quickStart: string;
+    api: string;
+    customArm: string;
     getStarted: string;
     langToggle: string;
   };
@@ -19,11 +21,15 @@ export interface TranslationDict {
     lede: string;
     ctaPrimary: string;
     ctaGithub: string;
-    tags: [string, string, string];
+    tags: string[];
   };
   stage: {
     tabArm: string;
     tabBle: string;
+    tabSoon: string;
+    soonBadge: string;
+    soonDesc: string;
+    soonCta: string;
     statusReady: string;
     hudArmTitle: string;
     hudTarget: string;
@@ -48,24 +54,23 @@ export interface TranslationDict {
     eyebrow: string;
     heading: string;
     lede: string;
-    endpoints: {
-      idx: string;
-      path: string;
-      desc: string;
-    }[];
-    flowNodes: string[];
-    adapters: {
-      badge: string;
-      title: string;
-      desc: string;
-    }[];
-    note: string;
+    diagram: {
+      hubTitle: string;
+      hubSub: string;
+      consumers: string[];
+      adapters: string[];
+    };
   };
   quickStart: {
     eyebrow: string;
     heading: string;
     lede: string;
-    tabs: [string, string, string];
+    tabs: string[];
+    items: {
+      num: string;
+      title: string;
+      subtitle: string;
+    }[];
     panels: {
       steps: {
         num: string;
@@ -77,13 +82,21 @@ export interface TranslationDict {
     codeTabs: {
       server: string;
       sdk: string;
+      codex: string;
+      claude: string;
+      cursor: string;
+    };
+    moreLinks: {
+      apiTitle: string;
+      apiDesc: string;
+      armTitle: string;
+      armDesc: string;
     };
     copy: string;
     copied: string;
   };
   footer: {
     title: string;
-    subtitle: string;
     right: string;
   };
 }
@@ -91,9 +104,11 @@ export interface TranslationDict {
 const en: TranslationDict = {
   nav: {
     brandSub: 'Universal Device',
-    demo: 'Demo',
+    demo: 'Showcase',
     protocol: 'Protocol',
     quickStart: 'Quick Start',
+    api: 'API',
+    customArm: 'Custom Arm',
     getStarted: 'Get Started',
     langToggle: '中文',
   },
@@ -111,11 +126,16 @@ const en: TranslationDict = {
     lede: "Bring Midscene's AI-powered E2E testing to any device. Powered by Universal Device, an open protocol for observing and interacting with devices of all kinds.",
     ctaPrimary: 'Get Started →',
     ctaGithub: 'GitHub',
-    tags: ['Universal Device', 'E2E Testing', 'Open Protocol'],
+    tags: ['Universal Device', 'E2E Testing', 'MCP & Skills', 'Open Protocol'],
   },
   stage: {
     tabArm: 'DOBOT MG400',
-    tabBle: 'iPhone · BLE HID',
+    tabBle: 'iOS AirLink',
+    tabSoon: 'More Devices',
+    soonBadge: 'SOON',
+    soonDesc:
+      'More official device implementations are on the way — or build your own today.',
+    soonCta: 'Go to Quick Start →',
     statusReady: 'UNIVERSAL-DEVICE READY',
     hudArmTitle: 'MG400 STYLUS',
     hudTarget: 'TARGET',
@@ -141,50 +161,50 @@ const en: TranslationDict = {
   },
   protocol: {
     eyebrow: 'UNIVERSAL DEVICE PROTOCOL',
-    heading: 'See a screen, send an action, plug right in.',
-    lede: 'Whether it is an iPhone over Bluetooth HID, a robotic arm holding a stylus, or your own hardware rig, every device speaks the same three HTTP endpoints to Midscene.',
-    endpoints: [
-      {
-        idx: '01 · DISCOVER',
-        path: 'GET /api/v1/devices',
-        desc: 'List connected devices, screen dimensions, supported actions, and device capabilities.',
-      },
-      {
-        idx: '02 · OBSERVE',
-        path: 'GET /api/v1/sessions/{id}/screenshot',
-        desc: 'Return the latest JPEG/PNG frame from an overhead camera, capture card, or screen mirror.',
-      },
-      {
-        idx: '03 · ACT',
-        path: 'POST /api/v1/sessions/{id}/actions',
-        desc: 'Execute tap, swipe, press, or type actions on the device and report completion.',
-      },
-    ],
-    flowNodes: [
-      'Midscene Agent',
-      'Universal Device HTTP',
-      'Your Device Adapter',
-      'Physical Screen',
-    ],
-    adapters: [
-      {
-        badge: 'ADAPTER 01',
-        title: 'iPhone · BLE HID',
-        desc: 'Mac pairs over Bluetooth LE HID directly. Zero jailbreak, zero on-device agent.',
-      },
-      {
-        badge: 'ADAPTER 02',
-        title: 'DOBOT MG400 · Stylus',
-        desc: 'Overhead camera + physical stylus for automotive cockpits and sealed terminals.',
-      },
-    ],
-    note: 'Token auth, SSE preview streaming, and session leases are built into createDeviceHandler() from @midscene/universal-device/server.',
+    heading: 'One protocol. Any agent, any screen.',
+    lede: 'Exclusive leases, screen capture, and input actions over HTTP or MCP.',
+    diagram: {
+      hubTitle: 'Universal Device',
+      hubSub: 'HTTP · MCP',
+      consumers: [
+        'Codex · Claude Code · Cursor',
+        'Midscene SDK',
+        'Web Playground',
+      ],
+      adapters: ['iOS AirLink', 'Robot Arm', 'Custom Hardware'],
+    },
   },
   quickStart: {
     eyebrow: 'QUICK START',
-    heading: 'Run a built-in hand, or build your own.',
-    lede: 'Start with the reference MG400 or iPhone BLE HID services, or wrap any custom hardware in 20 lines of TypeScript.',
-    tabs: ['DOBOT MG400', 'iPhone · BLE HID', 'Custom Device'],
+    heading: 'Get started in minutes.',
+    lede: '',
+    tabs: ['DOBOT MG400', 'iOS AirLink', 'Custom Device', 'MCP & Skills'],
+    items: [
+      {
+        num: '01',
+        title: 'DOBOT MG400',
+        subtitle:
+          'Run the built-in 4-axis arm and overhead camera calibration straight from this repo.',
+      },
+      {
+        num: '02',
+        title: 'iOS AirLink',
+        subtitle:
+          'Zero-jailbreak iPhone automation over macOS Bluetooth HID and screen mirroring.',
+      },
+      {
+        num: '03',
+        title: 'MCP & Skills',
+        subtitle:
+          'Drive any connected device directly from Codex, Claude Code, Cursor, or CLI agents.',
+      },
+      {
+        num: '04',
+        title: 'Custom Device',
+        subtitle:
+          'Wrap any camera or actuator with createDeviceHandler(), then drive it via Midscene SDK.',
+      },
+    ],
     panels: [
       {
         steps: [
@@ -249,27 +269,58 @@ const en: TranslationDict = {
           },
         ],
       },
+      {
+        steps: [
+          {
+            num: '01',
+            title: 'Start a device service',
+            desc: 'Run iOS AirLink or the arm service and copy its service URL and Bearer token.',
+          },
+          {
+            num: '02',
+            title: 'Connect via MCP',
+            cmd: 'npx -y @midscene/universal-device mcp',
+            desc: 'Add to Codex, Claude Code, or Cursor for automatic leases, heartbeats, and screenshots.',
+          },
+          {
+            num: '03',
+            title: 'Or use CLI + Skill',
+            cmd: 'npx -y @midscene/universal-device devices',
+            desc: 'Load skills/universal-device/SKILL.md for shell agents using status, acquire, screenshot, action, and release.',
+          },
+        ],
+      },
     ],
     codeTabs: {
-      server: 'Device Server',
-      sdk: 'Drive with SDK',
+      server: 'Server',
+      sdk: 'SDK',
+      codex: 'Codex',
+      claude: 'Claude',
+      cursor: 'Cursor',
+    },
+    moreLinks: {
+      apiTitle: 'Universal Device API',
+      apiDesc: 'Endpoints, InputAction payloads, leases, and error codes.',
+      armTitle: 'Custom Robot Arm',
+      armDesc: 'Implement RobotArmAdapter with @midscene/arm-kit.',
     },
     copy: 'Copy',
     copied: 'Copied',
   },
   footer: {
     title: 'Midscene · Universal Device',
-    subtitle: 'DOBOT MG400 · iPhone BLE HID · MIT License',
-    right: 'Connect Everything. Test Anything.',
+    right: 'MIT License',
   },
 };
 
 const zh: TranslationDict = {
   nav: {
     brandSub: 'Universal Device',
-    demo: '交互演示',
+    demo: '设备演示',
     protocol: '开放协议',
     quickStart: '快速开始',
+    api: 'API 文档',
+    customArm: '自定义机械臂',
     getStarted: '立即开始',
     langToggle: 'EN',
   },
@@ -287,11 +338,15 @@ const zh: TranslationDict = {
     lede: '将 Midscene 的 AI 端到端测试能力带到任意设备。基于 Universal Device——一套用于观测屏幕与执行交互的开放设备协议。',
     ctaPrimary: '快速开始 →',
     ctaGithub: 'GitHub',
-    tags: ['Universal Device', 'E2E Testing', 'Open Protocol'],
+    tags: ['Universal Device', 'E2E Testing', 'MCP & Skills', 'Open Protocol'],
   },
   stage: {
     tabArm: 'DOBOT MG400',
-    tabBle: 'iPhone · BLE HID',
+    tabBle: 'iOS AirLink',
+    tabSoon: '更多设备',
+    soonBadge: 'SOON',
+    soonDesc: '更多官方设备实现正在路上，现在也可以直接自定义接入你的硬件。',
+    soonCta: '前往快速开始 →',
     statusReady: 'UNIVERSAL-DEVICE READY',
     hudArmTitle: 'MG400 机械臂',
     hudTarget: '目标',
@@ -317,50 +372,50 @@ const zh: TranslationDict = {
   },
   protocol: {
     eyebrow: 'UNIVERSAL DEVICE PROTOCOL',
-    heading: '看得到画面，执行得了动作，就能接进来。',
-    lede: '无论是通过蓝牙 HID 直连的 iPhone、手持电容笔的机械臂，还是你自己的工业硬件终端，所有设备都通过同一套三个 HTTP 接口接入 Midscene。',
-    endpoints: [
-      {
-        idx: '01 · 设备发现',
-        path: 'GET /api/v1/devices',
-        desc: '列出已连接设备、屏幕分辨率、支持的动作类型与设备能力描述。',
-      },
-      {
-        idx: '02 · 屏幕观测',
-        path: 'GET /api/v1/sessions/{id}/screenshot',
-        desc: '返回来自俯拍摄像头、采集卡或屏幕镜像的最新 JPEG/PNG 画面。',
-      },
-      {
-        idx: '03 · 执行交互',
-        path: 'POST /api/v1/sessions/{id}/actions',
-        desc: '在设备上执行点击、滑动、按键或输入文本，并返回执行结果。',
-      },
-    ],
-    flowNodes: [
-      'Midscene Agent',
-      'Universal Device HTTP',
-      '你的设备适配器',
-      '物理屏幕',
-    ],
-    adapters: [
-      {
-        badge: 'ADAPTER 01',
-        title: 'iPhone · BLE HID',
-        desc: 'Mac 通过蓝牙 LE HID 直连真机，无需越狱，无需在手机端安装插件。',
-      },
-      {
-        badge: 'ADAPTER 02',
-        title: 'DOBOT MG400 · 电容笔',
-        desc: '俯拍相机 + 物理电容笔，覆盖无调试接口的车机、工控与封闭终端。',
-      },
-    ],
-    note: 'Token 鉴权、SSE 实时预览流与会话租约已内置于 @midscene/universal-device/server 的 createDeviceHandler() 中。',
+    heading: '一套协议，连接任意 Agent 与任意屏幕。',
+    lede: '通过统一的 HTTP 或 MCP 接口完成设备独占、画面读取与交互控制。',
+    diagram: {
+      hubTitle: 'Universal Device',
+      hubSub: 'HTTP · MCP',
+      consumers: [
+        'Codex · Claude Code · Cursor',
+        'Midscene SDK',
+        'Web Playground',
+      ],
+      adapters: ['iOS AirLink', '机械臂', '自定义硬件'],
+    },
   },
   quickStart: {
     eyebrow: 'QUICK START',
-    heading: '开箱即用的内置方案，或接入你的专属设备。',
-    lede: '直接启动内置的 MG400 机械臂或 iPhone 蓝牙 HID 服务，或用 20 行 TypeScript 封装任意自定义硬件。',
-    tabs: ['DOBOT MG400', 'iPhone · BLE HID', '自定义接入'],
+    heading: '几分钟内跑起来。',
+    lede: '',
+    tabs: ['DOBOT MG400', 'iOS AirLink', '自定义设备', 'MCP & Skills'],
+    items: [
+      {
+        num: '01',
+        title: 'DOBOT MG400',
+        subtitle:
+          '直接运行仓库内置的四轴机械臂与俯拍相机标定服务，零配置体验物理触控。',
+      },
+      {
+        num: '02',
+        title: 'iOS AirLink',
+        subtitle:
+          '基于 macOS 蓝牙 HID 与屏幕镜像，无需越狱即可自动化操控真机 iPhone。',
+      },
+      {
+        num: '03',
+        title: 'MCP & Skills',
+        subtitle:
+          '一键接入 Codex、Claude Code、Cursor 或命令行 Agent，自动管理租约与截图。',
+      },
+      {
+        num: '04',
+        title: '自定义设备',
+        subtitle:
+          '用 createDeviceHandler() 封装任意硬件，再通过 Midscene SDK 统一驱动。',
+      },
+    ],
     panels: [
       {
         steps: [
@@ -425,18 +480,47 @@ const zh: TranslationDict = {
           },
         ],
       },
+      {
+        steps: [
+          {
+            num: '01',
+            title: '启动设备服务',
+            desc: '运行 iOS AirLink 或机械臂服务，拿到服务地址与 Bearer Token。',
+          },
+          {
+            num: '02',
+            title: '通过 MCP 接入',
+            cmd: 'npx -y @midscene/universal-device mcp',
+            desc: '配入 Codex、Claude Code 或 Cursor，自动管理设备租约、5 秒心跳与截图回传。',
+          },
+          {
+            num: '03',
+            title: '或使用 CLI + Skill',
+            cmd: 'npx -y @midscene/universal-device devices',
+            desc: '加载 skills/universal-device/SKILL.md，让支持 Bash 的 Agent 通过 status / acquire / screenshot / action / release 控设备。',
+          },
+        ],
+      },
     ],
     codeTabs: {
-      server: '设备端 Server',
-      sdk: 'SDK 驱动示例',
+      server: 'Server',
+      sdk: 'SDK',
+      codex: 'Codex',
+      claude: 'Claude',
+      cursor: 'Cursor',
+    },
+    moreLinks: {
+      apiTitle: 'Universal Device API',
+      apiDesc: '查看完整 HTTP 接口、InputAction 动作定义与错误码。',
+      armTitle: '自定义机械臂',
+      armDesc: '基于 @midscene/arm-kit 实现新的 RobotArmAdapter。',
     },
     copy: '复制',
     copied: '已复制',
   },
   footer: {
     title: 'Midscene · Universal Device',
-    subtitle: 'DOBOT MG400 · iPhone BLE HID · MIT License',
-    right: 'Connect Everything. Test Anything.',
+    right: 'MIT License',
   },
 };
 

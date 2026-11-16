@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useI18n } from '../i18n/translations';
+import { ProtocolDiagram } from './ProtocolSection';
 
 export function Hero() {
   const { t } = useI18n();
@@ -67,9 +68,17 @@ export function Hero() {
       </h1>
       <p className="lede">{t.hero.lede}</p>
       <div className="hero-cta">
-        <a className="btn btn-primary" href="#quickstart">
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() =>
+            document
+              .getElementById('quickstart')
+              ?.scrollIntoView({ behavior: 'smooth' })
+          }
+        >
           {t.hero.ctaPrimary}
-        </a>
+        </button>
         <a
           className="btn btn-ghost"
           href="https://github.com/web-infra-dev/midscene"
@@ -80,10 +89,11 @@ export function Hero() {
         </a>
       </div>
       <div className="hero-tags mono">
-        <span>{t.hero.tags[0]}</span>
-        <span>{t.hero.tags[1]}</span>
-        <span>{t.hero.tags[2]}</span>
+        {t.hero.tags.map((tag) => (
+          <span key={tag}>{tag}</span>
+        ))}
       </div>
+      <ProtocolDiagram />
     </section>
   );
 }

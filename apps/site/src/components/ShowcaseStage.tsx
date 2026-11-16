@@ -14,7 +14,7 @@ import { IOSScreenEngine } from '../engine/ios-screen';
 import { useI18n } from '../i18n/translations';
 import { type HidBar, MacBookSvg, type TermLine } from './MacBookSvg';
 
-type StageTab = 'arm' | 'ble';
+type StageTab = 'arm' | 'ble' | 'soon';
 
 interface TaskAction {
   type: 'tap' | 'swipe';
@@ -327,7 +327,7 @@ export function ShowcaseStage() {
 
   // Auto-play loop
   useEffect(() => {
-    if (!autoPlay) return;
+    if (!autoPlay || activeTab === 'soon') return;
     const ac = new AbortController();
     runAbortRef.current = ac;
 
@@ -359,7 +359,7 @@ export function ShowcaseStage() {
     return () => {
       ac.abort();
     };
-  }, [autoPlay, executeAction, iosScreen]);
+  }, [activeTab, autoPlay, executeAction, iosScreen]);
 
   const handleStepClick = (idx: number) => {
     setAutoPlay(false);
@@ -391,7 +391,7 @@ export function ShowcaseStage() {
 
   return (
     <section
-      className="instrument ticks"
+      className="section-block stage-section-block ticks"
       id="stage"
       aria-label="Interactive showcase"
     >
@@ -400,187 +400,209 @@ export function ShowcaseStage() {
       <span className="tick bl" aria-hidden="true" />
       <span className="tick br" aria-hidden="true" />
 
-      <div className="instrument-bar">
-        <div className="tab-group" role="tablist">
-          <button
-            className={`tab-btn${activeTab === 'arm' ? ' active' : ''}`}
-            type="button"
-            role="tab"
-            aria-selected={activeTab === 'arm'}
-            onClick={() => setActiveTab('arm')}
-          >
-            <span className="tab-idx">01</span>
-            <span>{t.stage.tabArm}</span>
-          </button>
-          <button
-            className={`tab-btn${activeTab === 'ble' ? ' active' : ''}`}
-            type="button"
-            role="tab"
-            aria-selected={activeTab === 'ble'}
-            onClick={() => setActiveTab('ble')}
-          >
-            <span className="tab-idx">02</span>
-            <span>{t.stage.tabBle}</span>
-          </button>
-        </div>
+      <p className="eyebrow">
+        <i />
+        SHOWCASE
+      </p>
 
-        <div className="bar-status mono">
-          <span className="status-dot" />
-          <span>{t.stage.statusReady}</span>
-        </div>
-      </div>
-
-      <div className="instrument-body">
-        <div className="viewport-col">
-          {/* Tab 01: 3D DOBOT MG400 */}
-          <div
-            ref={stageElRef}
-            className="viewport-stage"
-            hidden={activeTab !== 'arm'}
-          >
-            <canvas ref={armCanvasRef} className="arm-canvas" />
-            <p className="stage-fallback">Loading MG400 3D model…</p>
-
-            <div className="hud-top-left">
-              <div className="hud-title">{t.stage.hudArmTitle}</div>
-              <div className="hud-grid">
-                <span>
-                  {t.stage.hudTarget}
-                  <b>iPhone 16 Pro</b>
-                </span>
-                <span>
-                  {t.stage.hudCamera}
-                  <b>1080p</b>
-                </span>
-                <span>
-                  {t.stage.hudState}
-                  <b>
-                    {activeStep >= 0
-                      ? t.stage.hudStateRunning
-                      : t.stage.hudStateIdle}
-                  </b>
-                </span>
-              </div>
-            </div>
-
-            <div className="pip-phone-wrap">
-              <div className="phone-frame phone-frame-sm">
-                <canvas
-                  ref={pipCanvasRef}
-                  className="mirror-canvas"
-                  width={780}
-                  height={1688}
-                  onClick={handleMirrorClick}
-                />
-              </div>
-            </div>
-
-            <div className="hud-bottom">
-              <span className="hud-hint">{t.stage.hudHint3d}</span>
-              <button
-                className="hud-reset"
-                type="button"
-                onClick={() => armCtrlRef.current?.resetView()}
-              >
-                {t.stage.hudResetView}
-              </button>
-            </div>
-          </div>
-
-          {/* Tab 02: MacBook Pro -> BLE HID -> iPhone */}
-          <div
-            className="viewport-stage ble-2d-stage"
-            hidden={activeTab !== 'ble'}
-          >
-            <div className="ble-desk">
-              <MacBookSvg
-                sending={bleSending}
-                lines={termLines}
-                bars={hidBars}
-                latencyMs={latencyMs}
-                pktLabel={pktLabel}
-              />
-
-              <div
-                className={`ble-link${bleSending ? ' is-sending' : ''}`}
-                aria-hidden="true"
-              >
-                <svg viewBox="0 0 120 40" className="ble-link-svg">
-                  <title>BLE HID link</title>
-                  <line x1="2" y1="20" x2="118" y2="20" className="ble-track" />
-                  <line x1="2" y1="20" x2="118" y2="20" className="ble-flow" />
-                  <circle className="ble-pkt" r="2.2" cy="20" cx="2" />
-                  <rect
-                    x="49"
-                    y="9"
-                    width="22"
-                    height="22"
-                    rx="4"
-                    className="ble-chip"
-                  />
-                  <path
-                    transform="translate(53.5 13.5) scale(0.54)"
-                    d="m7 7 10 10-5 5V2l5 5L7 17"
-                    className="ble-glyph-path"
-                  />
-                </svg>
-                <span className="ble-cap mono">BLE · HID</span>
-              </div>
-
-              <div className="phone-frame phone-frame-md">
-                <canvas
-                  ref={bleCanvasRef}
-                  className="mirror-canvas"
-                  width={780}
-                  height={1688}
-                  onClick={handleMirrorClick}
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Right: Tasks Stepper */}
-        <aside className="task-col">
-          <div className="panel-head">
-            <p className="eyebrow">
-              <i />
-              {t.stage.panelTitle}
-            </p>
+      <div className="instrument">
+        <div className="instrument-bar">
+          <div className="tab-group" role="tablist">
             <button
-              className={`auto-btn${autoPlay ? ' active' : ''}`}
+              className={`tab-btn${activeTab === 'arm' ? ' active' : ''}`}
               type="button"
-              onClick={() => setAutoPlay((v) => !v)}
+              role="tab"
+              aria-selected={activeTab === 'arm'}
+              onClick={() => setActiveTab('arm')}
             >
-              <span className="dot" />
-              {t.stage.autoPlay}
+              <span className="tab-idx">01</span>
+              <span>{t.stage.tabArm}</span>
+            </button>
+            <button
+              className={`tab-btn${activeTab === 'ble' ? ' active' : ''}`}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'ble'}
+              onClick={() => setActiveTab('ble')}
+            >
+              <span className="tab-idx">02</span>
+              <span>{t.stage.tabBle}</span>
+            </button>
+            <button
+              className={`tab-btn tab-btn-soon${activeTab === 'soon' ? ' active' : ''}`}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'soon'}
+              onClick={() => setActiveTab('soon')}
+            >
+              <span className="tab-idx">03</span>
+              <span>{t.stage.tabSoon}</span>
+              <span className="tab-soon-badge">{t.stage.soonBadge}</span>
             </button>
           </div>
 
-          <div className="prompt-box mono">
-            <span className="prompt-caret">›</span>
-            <span>{t.stage.promptText}</span>
+          <div className="bar-status mono">
+            <span className="status-dot" />
+            <span>{t.stage.statusReady}</span>
+          </div>
+        </div>
+
+        <div
+          className={`instrument-body${activeTab === 'soon' ? ' is-soon' : ''}`}
+        >
+          <div className="viewport-col">
+            {/* Tab 01: 3D DOBOT MG400 */}
+            <div
+              ref={stageElRef}
+              className="viewport-stage"
+              hidden={activeTab !== 'arm'}
+            >
+              <canvas ref={armCanvasRef} className="arm-canvas" />
+              <div className="stage-fallback" aria-label="Loading 3D model">
+                <span className="stage-spinner" />
+              </div>
+
+              <div className="pip-phone-wrap">
+                <div className="phone-frame phone-frame-sm">
+                  <canvas
+                    ref={pipCanvasRef}
+                    className="mirror-canvas"
+                    width={780}
+                    height={1688}
+                    onClick={handleMirrorClick}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Tab 02: MacBook Pro -> BLE HID -> iPhone */}
+            <div
+              className="viewport-stage ble-2d-stage"
+              hidden={activeTab !== 'ble'}
+            >
+              <div className="ble-desk">
+                <MacBookSvg
+                  sending={bleSending}
+                  lines={termLines}
+                  bars={hidBars}
+                  latencyMs={latencyMs}
+                  pktLabel={pktLabel}
+                />
+
+                <div
+                  className={`ble-link${bleSending ? ' is-sending' : ''}`}
+                  aria-hidden="true"
+                >
+                  <svg viewBox="0 0 120 40" className="ble-link-svg">
+                    <title>BLE HID link</title>
+                    <line
+                      x1="2"
+                      y1="20"
+                      x2="118"
+                      y2="20"
+                      className="ble-track"
+                    />
+                    <line
+                      x1="2"
+                      y1="20"
+                      x2="118"
+                      y2="20"
+                      className="ble-flow"
+                    />
+                    <circle className="ble-pkt" r="2.2" cy="20" cx="2" />
+                    <rect
+                      x="49"
+                      y="9"
+                      width="22"
+                      height="22"
+                      rx="4"
+                      className="ble-chip"
+                    />
+                    <path
+                      transform="translate(53.5 13.5) scale(0.54)"
+                      d="m7 7 10 10-5 5V2l5 5L7 17"
+                      className="ble-glyph-path"
+                    />
+                  </svg>
+                  <span className="ble-cap mono">BLE · HID</span>
+                </div>
+
+                <div className="phone-frame phone-frame-md">
+                  <canvas
+                    ref={bleCanvasRef}
+                    className="mirror-canvas"
+                    width={780}
+                    height={1688}
+                    onClick={handleMirrorClick}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Tab 03: More Devices Coming Soon */}
+            <div
+              className="viewport-stage soon-stage"
+              hidden={activeTab !== 'soon'}
+            >
+              <div className="soon-card">
+                <p>{t.stage.soonDesc}</p>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={() =>
+                    document
+                      .getElementById('quickstart')
+                      ?.scrollIntoView({ behavior: 'smooth' })
+                  }
+                >
+                  {t.stage.soonCta}
+                </button>
+              </div>
+            </div>
           </div>
 
-          <div className="stepper">
-            {t.stage.steps.map((step, idx) => {
-              const isRunning = activeStep === idx;
-              const isDone = !isRunning && doneSteps.has(idx);
-              return (
-                <button
-                  key={step.label}
-                  className={`step-row${isRunning ? ' is-running' : ''}${isDone ? ' is-done' : ''}`}
-                  type="button"
-                  onClick={() => handleStepClick(idx)}
-                >
-                  <span className="step-dot" />
-                  <span className="step-label">{step.label}</span>
-                  <span className="step-meta mono">{step.meta}</span>
-                </button>
-              );
-            })}
-          </div>
-        </aside>
+          {/* Right: Tasks Stepper */}
+          <aside className="task-col">
+            <div className="panel-head">
+              <p className="eyebrow">
+                <i />
+                {t.stage.panelTitle}
+              </p>
+              <button
+                className={`auto-btn${autoPlay ? ' active' : ''}`}
+                type="button"
+                onClick={() => setAutoPlay((v) => !v)}
+              >
+                <span className="dot" />
+                {t.stage.autoPlay}
+              </button>
+            </div>
+
+            <div className="prompt-box mono">
+              <span className="prompt-caret">›</span>
+              <span>{t.stage.promptText}</span>
+            </div>
+
+            <div className="stepper">
+              {t.stage.steps.map((step, idx) => {
+                const isRunning = activeStep === idx;
+                const isDone = !isRunning && doneSteps.has(idx);
+                return (
+                  <button
+                    key={step.label}
+                    className={`step-row${isRunning ? ' is-running' : ''}${isDone ? ' is-done' : ''}`}
+                    type="button"
+                    onClick={() => handleStepClick(idx)}
+                  >
+                    <span className="step-dot" />
+                    <span className="step-label">{step.label}</span>
+                    <span className="step-meta mono">{step.meta}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </aside>
+        </div>
       </div>
     </section>
   );

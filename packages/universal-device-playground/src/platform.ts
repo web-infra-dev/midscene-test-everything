@@ -34,7 +34,7 @@ export class RemoteSessionManager implements PlaygroundSessionManager {
   async getSetupSchema() {
     return {
       title: 'Connect Device',
-      description: 'Select a configured device from the device service.',
+      description: 'Select a device to connect.',
       autoSubmitWhenReady: false,
       fields: [],
     };

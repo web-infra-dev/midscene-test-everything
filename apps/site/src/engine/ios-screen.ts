@@ -908,7 +908,7 @@ export class IOSScreenEngine {
     H: number,
   ): void {
     if (!this.overlay) return;
-    const { mode, nx, ny, nx2, ny2, progress, label } = this.overlay;
+    const { mode, nx, ny, nx2, ny2, progress } = this.overlay;
     const cx = nx * W;
     const cy = ny * H;
 
@@ -920,16 +920,6 @@ export class IOSScreenEngine {
       roundPath(ctx, cx - 72, cy - 48, 144, 96, 18);
       ctx.stroke();
       ctx.setLineDash([]);
-
-      if (label) {
-        ctx.fillStyle = '#f4f4f5';
-        roundPath(ctx, cx - 72, cy - 90, 170, 34, 8);
-        ctx.fill();
-        ctx.fillStyle = '#111113';
-        ctx.font = '600 20px JetBrains Mono, PingFang SC, sans-serif';
-        ctx.textAlign = 'left';
-        ctx.fillText(label, cx - 60, cy - 66);
-      }
     } else if (mode === 'tap') {
       const r = 18 + progress * 92;
       const alpha = Math.max(0, 1 - progress);
