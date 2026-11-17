@@ -38,6 +38,11 @@ Midscene Test Everything 通过 Universal Device 开放协议，将 Midscene 的
 
 本地开发环境和检查命令见[贡献指南](./CONTRIBUTING.md)。
 
+## 🙏 致谢
+
+- 感谢[来自阿维塔的贡献者](https://github.com/avatr-robot)贡献机械臂自动化方案，并提供 DOBOT MG400 的具体实现。
+- iOS AirLink 的部分蓝牙 HID 描述符改编自 [iphone-use](https://github.com/xhoantran/iphone-use)。
+
 ## 📖 许可证
 
 Midscene Test Everything 项目基于 [MIT 协议](./LICENSE)，请自由地享受和参与开源。

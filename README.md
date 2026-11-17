@@ -38,6 +38,11 @@ Midscene Test Everything brings Midscene's AI-powered end-to-end testing to any 
 
 See the [contributing guide](./CONTRIBUTING.md) for local setup and development checks.
 
+## 🙏 Credits
+
+- Thanks to the [contributors from AVATR](https://github.com/avatr-robot) for contributing the robot arm automation approach and its implementation for the DOBOT MG400.
+- [iphone-use](https://github.com/xhoantran/iphone-use) is the source of parts of the Bluetooth HID descriptors used in iOS AirLink.
+
 ## 📖 License
 
 Midscene Test Everything is licensed under the [MIT License](./LICENSE). You are welcome to use it and contribute.
