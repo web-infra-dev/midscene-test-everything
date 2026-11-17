@@ -1,33 +1,45 @@
-# Midscene Robotics
+# Midscene Test Everything
 
-[English](./README.md)
+[![CI](https://img.shields.io/github/actions/workflow/status/web-infra-dev/midscene-test-everything/ci.yml?branch=main&label=CI&style=flat-square&colorA=564341&colorB=EDED91)](https://github.com/web-infra-dev/midscene-test-everything/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/Docs-Universal%20Device-blue?style=flat-square&colorA=564341&colorB=EDED91)][universal-device]
+[![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square&colorA=564341&colorB=EDED91)](./LICENSE)
+[![Supported Node.js versions](https://img.shields.io/badge/Node.js-%5E20.19.0%20%7C%7C%20%5E22.12.0%20%7C%7C%20%3E%3D24.0.0-blue?style=flat-square&colorA=564341&colorB=EDED91)](./package.json)
 
-用 Midscene 通过蓝牙操作 iPhone，或通过机械臂操作触屏。两种设备共用 Universal Device Playground 和 SDK。
+[English](./README.md) | 简体中文
 
-## 快速开始
+Midscene Test Everything 通过 Universal Device 开放协议，将 Midscene 的 AI 端到端测试能力带到任意设备。
 
-在仓库根目录运行：
+## 🔥 特性
 
-```sh
-pnpm install
-pnpm build
-```
+- **开放协议，支持自定义设备**：通过 HTTP 提供设备发现、截图和输入接口，将自有硬件接入 Midscene。
+- **AI 端到端测试**：用自然语言写测试，让 [Midscene GUI Agent](https://midscenejs.com/) 在任意已接入的设备上执行。
+- **MCP 与 Skills**：通过 MCP 或 Skills，将指定设备接入 Codex、Claude Code、Cursor 等 Agent。
 
-| 设备 | 启动命令 | 管理台 | 获取 Token |
-| --- | --- | --- | --- |
-| 机械臂（DOBOT MG400） | `pnpm --filter @midscene/arm-service start` | [localhost:5173](http://localhost:5173/) | **机械臂配置 → Universal Device** |
-| iPhone（在连接手机的 Mac 上运行） | `pnpm ios-airlink install` | [localhost:5801](http://localhost:5801/) | `pnpm ios-airlink token` |
+## 🎬 案例展示
 
-在管理台添加设备并完成配置。然后运行 `pnpm dev:playground`，打开 [localhost:5800](http://localhost:5800/)，填入服务地址和 Token，再选择设备。
+- **[DOBOT MG400 机械臂](./packages/robot-arm/arm-service/README.md)**：通过物理触控测试车机屏幕和嵌入式界面，无需改动设备软件。
+- **[iOS AirLink](./packages/ios-airlink/README.md)**：通过蓝牙 HID 在 iPhone 真机上运行自动化测试，无需越狱或开启开发者模式。
 
-## 脚本与接口
+## 📚 文档
 
-将 [.env.example](./.env.example) 复制为 `.env`，填入服务和模型配置，然后运行：
+- [Universal Device 文档][universal-device]
 
-```sh
-pnpm exec tsx examples/universal-device.ts
-```
+## 📦 主要组件
 
-示例通过 `agentFromUniversalDevice()` 读取当前屏幕。两个服务都可以在 `/api/docs/` 打开 Swagger UI，在 `/api/openapi.json` 查看接口定义。
+| 组件 | 用途 |
+| --- | --- |
+| [`universal-device`](./packages/universal-device/README.md) | 提供统一设备接口、TypeScript SDK 和 HTTP API |
+| [`arm-kit`](./packages/robot-arm/arm-kit/README.md) | 提供机械臂适配器接口，可用于接入自定义机械臂 |
+| [`arm-service`](./packages/robot-arm/arm-service) | 实现 DOBOT MG400 的设备服务，提供配置、校准和触屏操作 |
+| [`ios-airlink`](./packages/ios-airlink) | 在 macOS 上连接和控制 iPhone 真机 |
+| [`universal-device-playground`](./packages/universal-device-playground/README.md) | 在浏览器里预览设备画面并调试操作 |
 
-[MIT 许可证](./LICENSE)
+## 🤝 参与贡献
+
+本地开发环境和检查命令见[贡献指南](./CONTRIBUTING.md)。
+
+## 📖 许可证
+
+Midscene Test Everything 项目基于 [MIT 协议](./LICENSE)，请自由地享受和参与开源。
+
+[universal-device]: https://midscenejs.com/zh/universal-device/
