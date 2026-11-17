@@ -119,6 +119,7 @@ export function useAssistedCalibration(
     run(() => api.prepareAssistedCalibration(input));
   const map = (output?: AssistedMappingInput) =>
     run(() => api.mapAssistedCalibration(output));
+  const releaseImaging = () => run(() => api.releaseCalibrationImaging());
   const create = () => run(() => api.createAssistedCalibration());
   const command = (
     action: AssistedCalibrationAction,
@@ -178,6 +179,7 @@ export function useAssistedCalibration(
     connectionError,
     prepare,
     map,
+    releaseImaging,
     create,
     command,
     safety,

@@ -14,10 +14,42 @@ export interface CameraDevice {
   id: string;
   name: string;
   backend: CameraBackendName;
+  /** DirectShow enumeration index, used by the Windows hardware-control bridge. */
+  controlIndex?: number;
   /** Live AVFoundation device type; absent when the backend cannot report it. */
   deviceType?: string;
   /** Discovered macOS capture mode, preferring resolutions up to 1080p. */
   defaultCaptureSettings?: { width: number; height: number; fps: number };
+}
+
+export type CameraControlProperty =
+  | 'exposure'
+  | 'focus'
+  | 'gain'
+  | 'brightness';
+export type CameraControlMode = 'auto' | 'manual';
+
+export interface CameraControlValue {
+  property: CameraControlProperty;
+  value: number;
+  mode: CameraControlMode;
+  min: number;
+  max: number;
+  step: number;
+  default: number;
+  supportsAuto: boolean;
+  supportsManual: boolean;
+}
+
+export interface CameraHardwareControl {
+  readonly deviceId: string;
+  read(): Promise<Partial<Record<CameraControlProperty, CameraControlValue>>>;
+  set(
+    property: CameraControlProperty,
+    value: number,
+    mode: CameraControlMode,
+  ): Promise<void>;
+  close(): Promise<void>;
 }
 
 export interface CameraStreamOptions {
@@ -57,6 +89,10 @@ export interface CameraBackend {
     options: ResolvedCameraStreamOptions,
     signal?: AbortSignal,
   ): Promise<CameraSource>;
+  /** Optional platform bridge for focus and exposure controls. */
+  openHardwareControl?(
+    deviceId: string,
+  ): Promise<CameraHardwareControl | undefined>;
 }
 
 export type CameraStreamState = 'starting' | 'running' | 'failed' | 'stopped';

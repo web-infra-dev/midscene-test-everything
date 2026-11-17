@@ -7,6 +7,7 @@ import { Alert, Button, Card, Modal, Space, Tag, Typography } from 'antd';
 import { Check, Crosshair, ScanLine } from 'lucide-react';
 import { useEffect } from 'react';
 import { t } from '../i18n';
+import { hasMultipleCalibrationTargets } from '../multi-screen-review';
 import { speakCalibration } from '../voice/calibration';
 
 export function MultiScreenCalibrationReviewDialog({
@@ -40,14 +41,15 @@ export function MultiScreenCalibrationReviewDialog({
     (target) => target.state === 'succeeded' && target.result,
   );
   const hasResult = Boolean(succeeded?.length);
+  const visible = open && hasMultipleCalibrationTargets(session);
   useEffect(() => {
-    if (open && session)
+    if (visible && session)
       speakCalibration(hasResult ? 'markerReview' : 'markerFailed');
-  }, [open, session?.id, hasResult]);
+  }, [visible, session?.id, hasResult]);
   return (
     <Modal
       centered
-      open={open}
+      open={visible}
       title={t('Multi-screen calibration results')}
       width="min(820px, calc(100vw - 32px))"
       closable={!applying}

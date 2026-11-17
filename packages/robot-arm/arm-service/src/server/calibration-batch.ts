@@ -811,6 +811,9 @@ export class CalibrationBatch {
             }
             if (this.choice) throw new Error('Batch screen changed');
             if (!host.service.setup().mapping) await host.alignForBatch(signal);
+            const imaging = host.service.setup().imaging;
+            if (!imaging || !['ready', 'unsupported'].includes(imaging.state))
+              await this.devices.calibrateCameraImaging(state.cameraId!);
             this.check(signal);
             let session = await host.service.create({ batch: true });
             attemptId = session.id;

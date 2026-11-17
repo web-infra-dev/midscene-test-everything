@@ -423,6 +423,7 @@ export function mountCalibrationPhonePage(
       waiting: 'waiting',
       'touch-preview': 'position',
       markers: 'waiting',
+      'camera-tuning': 'waiting',
       positioning: 'position',
       collect: 'collect',
       'capture-failed': 'retry',

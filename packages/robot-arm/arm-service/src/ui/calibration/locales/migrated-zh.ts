@@ -2411,6 +2411,8 @@ export const migratedZh: Record<string, string> = {
   'Clear Perspective Correction': '清除透视校正',
   'Clear Calibration Data': '清除标定数据',
   'Replace screens': '更换屏幕',
+  'Clear every applied perspective correction for this camera?':
+    '清除该相机下所有屏幕已应用的透视校正吗？',
   'Clear the applied perspective correction for {0}?':
     '清除 {0} 已应用的透视校正？',
   'Saved screens are kept for recalibration.':

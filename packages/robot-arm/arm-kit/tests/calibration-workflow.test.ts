@@ -73,6 +73,9 @@ async function setup(
     height: options.height,
   });
   const assertPerspectiveCurrent = rstest.fn(async () => {});
+  const imagingStatus = rstest.fn(() => ({ state: 'ready' as const }));
+  const releaseImaging = rstest.fn(async () => {});
+  const calibrateImaging = rstest.fn(async () => ({ state: 'ready' as const }));
   const forScreen = (owner: string) =>
     new CalibrationWorkflow(f.runtime, {
       deviceId: owner,
@@ -86,6 +89,9 @@ async function setup(
           binding: await binding(options),
         }),
         detectMarkers: async () => detectMarkers().json(),
+        calibrateImaging,
+        imagingStatus,
+        releaseImaging,
       },
     });
   const service = forScreen(deviceId);
@@ -145,6 +151,9 @@ async function setup(
     state,
     beforeTask,
     detectMarkers,
+    calibrateImaging,
+    imagingStatus,
+    releaseImaging,
     recordSafe: async () => {
       await service.command(state.id, 'position-safe', true);
       await rstest.waitFor(async () =>
@@ -859,11 +868,13 @@ describe('phone-assisted calibration coordinator', () => {
     const f = await setup();
     try {
       const first = await f.service.mapSetup();
+      f.releaseImaging.mockClear();
       const before = f.detectMarkers.mock.calls.length;
       const reused = await f.service.mapSetup();
       expect(reused.mapping).toEqual(first.mapping);
       expect(f.detectMarkers).toHaveBeenCalledTimes(1);
       expect(f.detectMarkers).toHaveBeenCalledTimes(before);
+      expect(f.releaseImaging).not.toHaveBeenCalled();
       f.changeCamera();
       f.detectMarkers.mockImplementationOnce(() => {
         throw new RobotVisionError(
@@ -874,6 +885,49 @@ describe('phone-assisted calibration coordinator', () => {
       const updated = await f.service.mapSetup();
       expect(updated.mapping?.vision.fingerprint).toBe('changed');
       expect(f.detectMarkers).toHaveBeenCalledTimes(before + 2);
+      expect(f.releaseImaging).toHaveBeenCalledTimes(1);
+    } finally {
+      await f.dispose();
+    }
+  });
+  it('keeps restored focus and exposure when an existing mapping is reused', async () => {
+    const f = await setup();
+    try {
+      f.releaseImaging.mockClear();
+      f.calibrateImaging.mockClear();
+
+      await f.service.mapSetup();
+
+      expect(f.releaseImaging).not.toHaveBeenCalled();
+      expect(f.calibrateImaging).not.toHaveBeenCalled();
+      expect(f.service.setup().imaging?.state).toBe('ready');
+    } finally {
+      await f.dispose();
+    }
+  });
+  it('reuses focus and exposure after restart while loading the saved mapping', async () => {
+    const f = await setup();
+    try {
+      const service = f.forScreen('cam');
+      await service.prepare({
+        ...f.beforeTask.setup.selection!,
+        motion: f.screen,
+      });
+      service.receivePhone({
+        pageId: service.openPhonePage(),
+        sequence: 1,
+        platform: 'android',
+        displayMode: 'fullscreen',
+        visible: true,
+        layout,
+      });
+      f.releaseImaging.mockClear();
+      f.calibrateImaging.mockClear();
+
+      await service.mapSetup();
+
+      expect(f.releaseImaging).not.toHaveBeenCalled();
+      expect(f.calibrateImaging).not.toHaveBeenCalled();
     } finally {
       await f.dispose();
     }

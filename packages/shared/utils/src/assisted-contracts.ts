@@ -234,7 +234,9 @@ export interface CalibrationPageUpdate {
   view?: CalibrationPageReply['view'];
   markersPainted?: boolean;
   markerRequest?: string;
+  imagingPatternSupported?: true;
   visibilityProbeAck?: string;
+  imagingPatternAck?: string;
   /** Painted height in CSS pixels when iOS sizes the first row around system overlays. */
   visibilityFirstRowHeight?: number;
   touchDiagnosticsVersion?: 2;
@@ -282,12 +284,14 @@ export interface CalibrationPageReply {
   pairingToken?: string;
   insetMarkers?: boolean;
   markerRequest?: string;
+  imagingRequest?: string;
   boundaryGuide?: { group: 'hover' | 'contact'; corners: WebPoint[] };
   /** Distinguishes a pending or failed check on the phone's review screen. */
   reviewStage?: 'boundary-review' | 'verification-failed';
   imageTrial?: boolean;
   view:
     | 'markers'
+    | 'camera-tuning'
     | 'waiting'
     | 'touch-preview'
     | 'collect'
@@ -350,6 +354,23 @@ export interface AssistedCalibrationSetup {
   phoneConnected: boolean;
   layout?: CalibrationPageLayout;
   mapping?: WebCalibrationMapping;
+  imaging?: CalibrationImagingStatus;
+}
+
+export interface CalibrationImagingStatus {
+  state:
+    | 'idle'
+    | 'released'
+    | 'exposure'
+    | 'focus'
+    | 'ready'
+    | 'error'
+    | 'unsupported';
+  message?: string;
+  focus?: number;
+  /** DirectShow exposure value in the camera's reported hardware range. */
+  exposure?: number;
+  updatedAt?: number;
 }
 export interface WebCalibrationSample {
   point: WebPoint;

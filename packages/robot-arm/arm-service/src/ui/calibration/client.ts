@@ -109,6 +109,13 @@ export class CalibrationClient {
       }>('/assisted-calibration/setup/mapping', output ?? {})
     ).setup;
   }
+  async releaseCalibrationImaging(): Promise<AssistedCalibrationSetup> {
+    return (
+      await this.request<{
+        setup: AssistedCalibrationSetup;
+      }>('/assisted-calibration/setup/imaging/release', {})
+    ).setup;
+  }
   async createAssistedCalibration(): Promise<AssistedCalibrationState> {
     return (
       await this.request<{

@@ -245,6 +245,92 @@ it('binds each phone once, gives it distinct markers and applies all passing per
   );
   expect(f.adapter.movements).toHaveLength(0);
 });
+it('clears every perspective and mapping for one camera', async () => {
+  const f = await fixture();
+  const phones = [await f.connect(), await f.connect()];
+  await f.render();
+  const command = {
+    cameraId: 'cam',
+    id: f.session.id,
+    token: f.session.token,
+  };
+  await f.service.markerAction({ ...command, action: 'detect' });
+  await f.service.markerAction({ ...command, action: 'apply' });
+
+  await f.service.pageAction({
+    action: 'clear-perspectives',
+    cameraId: 'cam',
+  });
+
+  for (const phone of phones) {
+    expect(
+      f.devices.entries.get(phone.targetId)?.camera.getCorrection(),
+    ).toBeUndefined();
+    expect(phone.targetHost.service.setup().mapping).toBeUndefined();
+  }
+});
+it('deletes a connected screen page with its perspective', async () => {
+  const f = await fixture();
+  const [first, second] = [await f.connect(), await f.connect()];
+  await f.render();
+  const command = {
+    cameraId: 'cam',
+    id: f.session.id,
+    token: f.session.token,
+  };
+  await f.service.markerAction({ ...command, action: 'detect' });
+  await f.service.markerAction({ ...command, action: 'apply' });
+
+  await f.service.pageAction({
+    action: 'delete-screen-page',
+    cameraId: 'cam',
+    id: first.page.saved.id,
+  });
+
+  expect(
+    f.devices.screens().some((screen) => screen.id === first.targetId),
+  ).toBe(false);
+  expect(
+    f.devices.entries.get(first.targetId)?.camera.getCorrection(),
+  ).toBeUndefined();
+  expect(
+    (await f.service.pageAction({ action: 'list', cameraId: 'cam' })).devices,
+  ).toEqual([expect.objectContaining({ id: second.page.saved.id })]);
+});
+it('applies passing multi-screen results after marker display ends', async () => {
+  const f = await fixture();
+  const phones = [await f.connect(), await f.connect()];
+  await f.render();
+  const command = {
+    cameraId: 'cam',
+    id: f.session.id,
+    token: f.session.token,
+  };
+  await f.service.markerAction({ ...command, action: 'detect' });
+  for (const phone of phones) {
+    const request = phone.targetHost.service.phoneView().markerRequest;
+    if (request) phone.targetHost.service.finishMarkerDisplay(request, false);
+    expect(phone.targetHost.service.phoneObservation()).toBeDefined();
+  }
+
+  const firstImagingCalibration = rstest
+    .spyOn(phones[0]!.targetHost.service, 'startImagingCalibration')
+    .mockResolvedValue();
+  const secondImagingCalibration = rstest
+    .spyOn(phones[1]!.targetHost.service, 'startImagingCalibration')
+    .mockResolvedValue();
+  await expect(
+    f.service.markerAction({ ...command, action: 'apply' }),
+  ).resolves.toBeDefined();
+  expect(firstImagingCalibration).toHaveBeenCalledTimes(1);
+  expect(secondImagingCalibration).not.toHaveBeenCalled();
+  expect(
+    f.devices.entries.get(phones[0]!.targetId)?.camera.getCorrection(),
+  ).toBeDefined();
+  expect(
+    f.devices.entries.get(phones[1]!.targetId)?.camera.getCorrection(),
+  ).toBeDefined();
+}, 20_000);
 it('waits for the iPhone origin before projecting its full display from the markers', async () => {
   const f = await fixture();
   const { page, targetHost, targetId } = await f.connect();

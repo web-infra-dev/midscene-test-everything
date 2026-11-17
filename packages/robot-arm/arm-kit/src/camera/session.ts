@@ -20,6 +20,11 @@ import {
   DEFAULT_STOP_TIMEOUT_MS,
 } from './camera-stream.js';
 import type { CameraStream } from './camera-stream.js';
+import {
+  CameraImagingController,
+  type CameraImagingStatus,
+  cameraImagingFile,
+} from './imaging.js';
 import { cameraBackend } from './index.js';
 import { jpegSize } from './jpeg-size.js';
 import {
@@ -146,6 +151,7 @@ export class CameraSession implements CalibrationVision {
     readonly stream: CameraStream,
     private readonly directory: string,
     private readonly screenId?: string,
+    private readonly imaging?: CameraImagingController,
   ) {}
   private get correctionFile() {
     return cameraPerspectiveFile(this.directory, this.camera.id, this.screenId);
@@ -169,8 +175,11 @@ export class CameraSession implements CalibrationVision {
       this.stream,
       this.directory,
       screenId,
+      this.imaging,
     );
     await scoped.load();
+    this.imaging?.registerScreen(screenId, () => scoped.getCorrection());
+    await this.imaging?.reopenAfterRestart();
     return scoped;
   }
   /**
@@ -194,6 +203,7 @@ export class CameraSession implements CalibrationVision {
           'Clear the applied perspective before deleting it.',
           409,
         );
+      await this.imaging?.clearPerspectiveBinding();
       await rm(this.correctionFile, { force: true });
       this.savedPerspective = false;
     });
@@ -206,9 +216,10 @@ export class CameraSession implements CalibrationVision {
   getPerspectiveTarget(): PerspectiveTarget | undefined {
     return this.target && structuredClone(this.target);
   }
-  setCorrection(input: CameraCorrection): Promise<void> {
+  async setCorrection(input: CameraCorrection): Promise<void> {
     validateCameraCorrection(input);
     const correction = structuredClone(input);
+    await this.imaging?.clearPerspectiveBinding();
     return this.writePerspective(correction, this.target);
   }
   /**
@@ -217,6 +228,7 @@ export class CameraSession implements CalibrationVision {
    * only the framing the camera was applying is dropped.
    */
   async clearCorrection(): Promise<void> {
+    await this.imaging?.clearPerspectiveBinding();
     const operation = this.writeChain.then(async () => {
       if (!this.correction) return;
       await this.persistPerspective(this.correction, this.target, false);
@@ -227,12 +239,13 @@ export class CameraSession implements CalibrationVision {
     this.writeChain = operation.catch(() => undefined);
     return operation;
   }
-  setPerspective(
+  async setPerspective(
     input: CameraCorrection,
     target: PerspectiveTarget,
   ): Promise<void> {
     validateCameraCorrection(input);
     validatePerspectiveTarget(target);
+    await this.imaging?.clearPerspectiveBinding();
     return this.writePerspective(
       structuredClone(input),
       structuredClone(target),
@@ -273,7 +286,8 @@ export class CameraSession implements CalibrationVision {
   }
 
   /** Delete the correction and evidence without waiting for the camera stream. */
-  clearPerspective(): Promise<void> {
+  async clearPerspective(): Promise<void> {
+    await this.imaging?.clearPerspectiveBinding();
     const operation = this.writeChain.then(async () => {
       await rm(this.correctionFile, { force: true });
       this.savedPerspective = false;
@@ -292,6 +306,14 @@ export class CameraSession implements CalibrationVision {
         info.error ?? 'Camera is not running',
       );
     return (await this.stream.getFrame({ fresh: true, timeoutMs: 5000 })).jpeg;
+  }
+
+  /**
+   * Explicit capture-button entry point for the retained auto-exposure routine.
+   * Live preview and marker polling intentionally do not call this.
+   */
+  async prepareCaptureExposure(): Promise<void> {
+    await this.imaging?.beforeCapture();
   }
   async binding(options: CalibrationVisionOptions): Promise<VisionBinding> {
     if (options.cameraId !== this.camera.id)
@@ -504,6 +526,24 @@ export class CameraSession implements CalibrationVision {
     };
   }
   detectMarkers: CalibrationVision['detectMarkers'] = detectCalibrationMarkers;
+
+  async calibrateImaging(): Promise<CameraImagingStatus> {
+    if (!this.imaging)
+      throw new RobotArmError(
+        'VISION_UNAVAILABLE',
+        'Camera imaging controller is unavailable',
+        409,
+      );
+    return this.imaging.calibrate();
+  }
+
+  imagingStatus(): CameraImagingStatus {
+    return this.imaging?.status() ?? { state: 'unsupported' };
+  }
+
+  async releaseImaging(): Promise<void> {
+    await this.imaging?.clearPerspectiveBinding();
+  }
 }
 
 /** Reference-counted camera leases: releasing one Device never closes another's camera. */
@@ -511,6 +551,7 @@ export class CameraSessionManager {
   private readonly streams: CameraStreamManager;
   private readonly sessions = new Map<string, CameraSession>();
   private readonly screenSessions = new Map<string, CameraSession>();
+  private readonly imaging = new Map<string, CameraImagingController>();
   private readonly operations = new Map<string, Promise<unknown>>();
   private closing?: Promise<void>;
   private readonly owners = new Map<string, Set<string>>();
@@ -581,6 +622,7 @@ export class CameraSessionManager {
     return Promise.all([
       rm(file, { force: true }),
       rm(`${file}.validity.json`, { force: true }),
+      rm(cameraImagingFile(this.directory, cameraId), { force: true }),
     ]).then(() => undefined);
   }
   acquire(
@@ -599,6 +641,11 @@ export class CameraSessionManager {
         // A previous release may have timed out while the capture process was
         // still shutting down. Never hand that dead session to a new viewer.
         if (state === 'stopped' || state === 'failed') {
+          await this.imaging
+            .get(cameraId)
+            ?.close()
+            .catch(() => undefined);
+          this.imaging.delete(cameraId);
           await this.streams.delete(session.stream.id).catch(() => undefined);
           this.sessions.delete(cameraId);
           for (const key of this.screenSessions.keys())
@@ -648,8 +695,31 @@ export class CameraSessionManager {
       ...camera.defaultCaptureSettings,
     });
     try {
-      const session = new CameraSession(camera, stream, this.directory);
+      let control;
+      try {
+        control = await this.backend.openHardwareControl?.(id);
+      } catch {
+        control = undefined;
+      }
+      const imaging = new CameraImagingController(
+        camera,
+        stream,
+        this.directory,
+        control,
+        () =>
+          this.backend.openHardwareControl?.(id) ?? Promise.resolve(undefined),
+      );
+      await imaging.load();
+      const session = new CameraSession(
+        camera,
+        stream,
+        this.directory,
+        undefined,
+        imaging,
+      );
       await session.load();
+      imaging.registerScreen(camera.id, () => session.getCorrection());
+      this.imaging.set(id, imaging);
       return session;
     } catch (error) {
       await this.streams.delete(stream.id);
@@ -662,8 +732,14 @@ export class CameraSessionManager {
       if (!owners?.delete(ownerId) || owners.size) return;
       const session = this.sessions.get(cameraId);
       try {
-        if (session)
+        if (session) {
+          await this.imaging
+            .get(cameraId)
+            ?.close()
+            .catch(() => undefined);
+          this.imaging.delete(cameraId);
           await this.streams.delete(session.stream.id).catch(() => undefined);
+        }
       } finally {
         // Clear the ownership records even when the capture process refused to
         // exit, so the next acquire can open a fresh stream.
@@ -679,6 +755,10 @@ export class CameraSessionManager {
     this.closing ??= (async () => {
       await Promise.allSettled(this.operations.values());
       await this.streams.close();
+      await Promise.allSettled(
+        [...this.imaging.values()].map((controller) => controller.close()),
+      );
+      this.imaging.clear();
       this.sessions.clear();
       this.screenSessions.clear();
       this.owners.clear();

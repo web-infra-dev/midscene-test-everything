@@ -159,6 +159,71 @@ export class PlaygroundDevices {
     const slot = this.markerSlot(id);
     return [10, 11, 12, 13, 14, 15].map((code) => code + slot * 10);
   }
+  async setCameraImagingPattern(cameraId: string, request?: string) {
+    const hosts = [...this.entries.values()]
+      .filter((entry) => entry.cameraId === cameraId && entry.host)
+      .map((entry) => entry.host!);
+    if (!request) {
+      for (const host of hosts) host.service.clearImagingPattern();
+      return;
+    }
+    const connected = hosts.filter(
+      (host) => host.service.phoneStatus().state === 'connected',
+    );
+    if (!connected.length)
+      throw new RobotArmError(
+        'PHONE_UNAVAILABLE',
+        'Reconnect the phone calibration page before measuring focus and exposure.',
+        409,
+      );
+    const richPatternHosts = connected.filter((host) =>
+      host.service.supportsImagingPattern(),
+    );
+    if (richPatternHosts.length !== connected.length)
+      throw new RobotArmError(
+        'PHONE_PAGE_OUTDATED',
+        'Reload every phone calibration page before measuring focus and exposure.',
+        409,
+      );
+    for (const host of richPatternHosts)
+      host.service.showImagingPattern(request);
+    const deadline = Date.now() + 2_200;
+    while (
+      richPatternHosts.some(
+        (host) => !host.service.imagingPatternObservation(request),
+      ) &&
+      Date.now() < deadline
+    )
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    if (
+      richPatternHosts.some(
+        (host) => !host.service.imagingPatternObservation(request),
+      )
+    )
+      throw new RobotArmError(
+        'PHONE_PAGE_OUTDATED',
+        'The phone did not display the focus and exposure pattern. Reload the calibration page and retry.',
+        409,
+      );
+  }
+  async calibrateCameraImaging(cameraId: string) {
+    const request = randomUUID();
+    await this.setCameraImagingPattern(cameraId, request);
+    try {
+      const entry = [...this.entries.values()].find(
+        (item) => item.cameraId === cameraId && item.host,
+      );
+      if (!entry)
+        throw new RobotArmError(
+          'VISION_UNAVAILABLE',
+          'No calibration host is active for this camera',
+          409,
+        );
+      return await entry.camera.calibrateImaging();
+    } finally {
+      await this.setCameraImagingPattern(cameraId);
+    }
+  }
   async ensureHost(id: string, runningOnly = false) {
     const entry = runningOnly ? this.entries.get(id) : await this.open(id);
     if (!entry || this.closed || this.stopping.has(id))
@@ -179,6 +244,8 @@ export class PlaygroundDevices {
         camera: entry.camera,
         deviceId: id,
         markerCodes: this.markerCodes(id),
+        onImagingPattern: (request) =>
+          this.setCameraImagingPattern(entry.cameraId, request),
         basePath: `/api/devices/${encodeURIComponent(id)}/calibration`,
         phoneLinks: () => this.phoneLinks(token),
       });

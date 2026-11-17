@@ -87,6 +87,8 @@ export interface AssistedCalibrationOptions {
   phoneLinks?: () => { name: string; url: string }[];
   referencePosition?: () => CartesianPose | undefined;
   markerCodes?: readonly number[];
+  /** Shows or clears the test pattern on every screen owned by this camera. */
+  onImagingPattern?: (request?: string) => Promise<void>;
 }
 
 /** Coordinates an explicit calibration task; setup and phone requests have independent lifetimes. */
@@ -620,6 +622,10 @@ export class CalibrationWorkflow {
     this.changed();
   }
   private phoneHome = false;
+  private imagingRequest?: string;
+  private imagingStatus?: AssistedCalibrationSetup['imaging'];
+  private imagingRun?: Promise<void>;
+  private imagingGeneration = 0;
   restorePhoneHome() {
     this.phoneHome = true;
     this.changed();
@@ -673,6 +679,12 @@ export class CalibrationWorkflow {
   }
   private normalPhoneView(): CalibrationPageReply {
     if (this.phoneHome) return { view: 'waiting', anchors: [] };
+    if (this.imagingRequest)
+      return {
+        view: 'camera-tuning',
+        imagingRequest: this.imagingRequest,
+        anchors: [],
+      };
     const s = this.state;
     if (
       !s ||
@@ -734,6 +746,86 @@ export class CalibrationWorkflow {
       anchors: measurements?.anchors ?? [],
       target: s.target,
     };
+  }
+  imagingPatternObservation(request: string) {
+    const update = this.phone.update;
+    return this.imagingRequest === request &&
+      this.phone.connected() &&
+      update?.visible &&
+      update.imagingPatternAck === request
+      ? update
+      : undefined;
+  }
+  supportsImagingPattern() {
+    return this.phone.update?.imagingPatternSupported === true;
+  }
+  private async calibrateImaging(generation: number) {
+    if (!this.options.vision.calibrateImaging) return;
+    const request = randomUUID();
+    const patternStartedAt = Date.now();
+    if (this.supportsImagingPattern()) this.imagingRequest = request;
+    this.imagingStatus = {
+      state: 'exposure',
+      message: 'Waiting for the phone focus and exposure pattern',
+      updatedAt: Date.now(),
+    };
+    this.changed();
+    try {
+      if (!this.supportsImagingPattern())
+        throw new RobotArmError(
+          'PHONE_PAGE_OUTDATED',
+          'Reload the phone calibration page before measuring focus and exposure.',
+          409,
+        );
+      await this.options.onImagingPattern?.(request);
+      if (generation !== this.imagingGeneration) return;
+      this.imagingStatus = await this.options.vision.calibrateImaging();
+    } catch (error) {
+      this.imagingStatus = {
+        state: 'error',
+        message: error instanceof Error ? error.message : String(error),
+        updatedAt: Date.now(),
+      };
+    } finally {
+      if (this.imagingRequest === request) {
+        const remaining = Math.max(0, 1_000 - (Date.now() - patternStartedAt));
+        if (remaining) await delay(remaining);
+      }
+      if (this.imagingRequest === request) this.imagingRequest = undefined;
+      await this.options.onImagingPattern?.(undefined).catch(() => undefined);
+      this.changed();
+    }
+  }
+  startImagingCalibration(): Promise<void> {
+    if (this.imagingRun) return this.imagingRun;
+    const current = this.options.vision.imagingStatus?.() ?? this.imagingStatus;
+    if (current?.state === 'ready') return Promise.resolve();
+    const generation = ++this.imagingGeneration;
+    const run = this.calibrateImaging(generation);
+    this.imagingRun = run;
+    void run.finally(() => {
+      if (this.imagingRun === run) this.imagingRun = undefined;
+    });
+    return run;
+  }
+  showImagingPattern(request: string) {
+    this.imagingRequest = request;
+    this.changed();
+  }
+  clearImagingPattern(request?: string) {
+    if (!request || this.imagingRequest === request)
+      this.imagingRequest = undefined;
+    this.changed();
+  }
+  async releaseImaging() {
+    this.imagingGeneration++;
+    this.imagingRun = undefined;
+    await this.options.vision.releaseImaging?.();
+    this.imagingStatus = this.options.vision.imagingStatus?.() ?? {
+      state: 'released',
+      updatedAt: Date.now(),
+    };
+    this.changed();
   }
   private ownsOperation(): boolean {
     const current = this.runtime.current();
@@ -918,6 +1010,7 @@ export class CalibrationWorkflow {
       ...this.configuration.status(),
       markerCapture: this.markerCapture,
       mappingCheck: this.mappingCheck,
+      imaging: this.options.vision.imagingStatus?.() ?? this.imagingStatus,
     };
   }
   async prepare(input: AssistedCalibrationInput) {
@@ -926,10 +1019,22 @@ export class CalibrationWorkflow {
       return this.configuration.prepare(input);
     });
   }
-  async mapSetup(output?: AssistedMappingInput) {
+  async mapSetup(
+    output?: AssistedMappingInput,
+    options: {
+      reuseVisibleMarkers?: boolean;
+      deferImagingCalibration?: boolean;
+    } = {},
+  ) {
     return this.configureSetup(async () => {
       let request: string | undefined;
       let mapped = false;
+      const previousMapping =
+        this.configuration.status()?.mapping ??
+        (this.options.deviceId
+          ? this.runtime.profileStore.calibrationMapping(this.options.deviceId)
+              ?.mapping
+          : undefined);
       this.mappingCheck = 'checking';
       this.changed();
       try {
@@ -937,9 +1042,15 @@ export class CalibrationWorkflow {
           // An unchanged mapping can be confirmed while the touch preview is open.
           // A fresh optical check needs the phone to paint the codes again.
           const view = this.phoneView().view;
+          const page = this.phone.update;
+          if (
+            options.reuseVisibleMarkers &&
+            view === 'markers' &&
+            page?.markersPainted
+          )
+            return;
           let expected = this.markerRequest;
           if (!expected) {
-            const page = this.phone.update;
             if (
               view !== 'touch-preview' &&
               !(
@@ -965,6 +1076,16 @@ export class CalibrationWorkflow {
           }
         });
         mapped = Boolean(result.mapping);
+        const mappingChanged =
+          mapped &&
+          (!previousMapping ||
+            previousMapping.vision.fingerprint !==
+              result.mapping!.vision.fingerprint);
+        if (mappingChanged) {
+          await this.releaseImaging();
+          if (!options.deferImagingCalibration)
+            void this.startImagingCalibration();
+        }
         if (!this.markerRequest && this.phone.update?.markersPainted && mapped)
           this.aligned = true;
         return result;
@@ -976,7 +1097,16 @@ export class CalibrationWorkflow {
   }
   /** The camera correction was cleared, so the page mapping no longer holds. */
   async clearMapping() {
-    return this.configureSetup(() => {
+    return this.configureSetup(async () => {
+      this.imagingGeneration++;
+      this.imagingRun = undefined;
+      await this.options.vision.releaseImaging?.();
+      this.imagingStatus = this.options.vision.imagingStatus?.() ?? {
+        state: 'released',
+        message:
+          'Focus and exposure are released until the new mapping is ready',
+        updatedAt: Date.now(),
+      };
       this.mappingCheck = undefined;
       return this.configuration.clearMapping();
     });

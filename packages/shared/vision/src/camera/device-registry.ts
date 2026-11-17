@@ -1,6 +1,7 @@
 import type {
   CameraBackend,
   CameraDevice,
+  CameraHardwareControl,
   CameraSource,
   ResolvedCameraStreamOptions,
 } from './types.js';
@@ -95,6 +96,14 @@ export class DeviceRegistry implements CameraBackend {
 
   openStream(options: ResolvedCameraStreamOptions): Promise<CameraSource> {
     return this.backend.openStream(options);
+  }
+
+  openHardwareControl(
+    deviceId: string,
+  ): Promise<CameraHardwareControl | undefined> {
+    return (
+      this.backend.openHardwareControl?.(deviceId) ?? Promise.resolve(undefined)
+    );
   }
 
   invalidate(): void {

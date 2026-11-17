@@ -8,9 +8,11 @@ import type {
   CameraBackend,
   CameraBackendName,
   CameraDevice,
+  CameraHardwareControl,
   ResolvedCameraStreamOptions,
 } from './types.js';
 import { filterPhysicalCameras } from './virtual-camera-filter.js';
+import { WindowsDshowHardwareControl } from './windows-dshow-control.js';
 
 type SpawnProcess = typeof spawn;
 
@@ -39,7 +41,13 @@ const toCameraDevice = ({
   id,
   name,
   backend,
-}: DeviceDescriptor): CameraDevice => ({ id, name, backend });
+  controlIndex,
+}: DeviceDescriptor): CameraDevice => ({
+  id,
+  name,
+  backend,
+  ...(controlIndex !== undefined ? { controlIndex } : {}),
+});
 
 const removeFfmpegPrefix = (line: string): string =>
   line.replace(/^\[[^\]]+\]\s*/u, '').trim();
@@ -77,6 +85,7 @@ export function parseDshowDevices(output: string): DeviceDescriptor[] {
         id: `dshow:${deviceMatch[1]}`,
         name: deviceMatch[1],
         backend: 'dshow',
+        controlIndex: devices.length,
         input: deviceMatch[1],
       };
       devices.push(pendingDevice);
@@ -282,6 +291,30 @@ export class FfmpegCameraBackend implements CameraBackend {
       windowsHide: true,
     });
     return new JpegProcessCameraSource(child, 'FFmpeg camera process');
+  }
+
+  async openHardwareControl(
+    deviceId: string,
+  ): Promise<CameraHardwareControl | undefined> {
+    if (this.platform !== 'win32') return undefined;
+    let device = this.deviceCache.get(deviceId);
+    if (!device) {
+      await this.listDevices();
+      device = this.deviceCache.get(deviceId);
+    }
+    if (!device || device.backend !== 'dshow') return undefined;
+    if (device.controlIndex === undefined)
+      throw new RobotVisionError(
+        'STREAM_FAILED',
+        `DirectShow control index is unavailable for ${device.name}`,
+      );
+    const control = new WindowsDshowHardwareControl(
+      device.id,
+      device.controlIndex,
+      device.name,
+    );
+    await control.open();
+    return control;
   }
 
   private buildCaptureArgs(

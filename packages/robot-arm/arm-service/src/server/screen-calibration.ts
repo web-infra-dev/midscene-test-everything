@@ -1311,9 +1311,11 @@ export class ScreenCalibration {
       }
     const assertObservation = (id: string) => {
       const before = session.observations.get(id);
-      const current = this.devices.entries
-        .get(id)
-        ?.host?.service.markerObservation(session.requests.get(id)!);
+      const host = this.devices.entries.get(id)?.host;
+      const current =
+        host?.service.phoneStatus()?.state === 'connected'
+          ? host.service.phoneObservation()
+          : undefined;
       if (
         !before ||
         !current ||
@@ -1385,6 +1387,12 @@ export class ScreenCalibration {
         page.mode = 'mapping';
         page.changed();
       }
+    }
+    if (
+      targets.every((target) => session.applied.get(target.id) === undefined)
+    ) {
+      const imagingHost = this.devices.entries.get(targets[0]!.id)?.host;
+      await imagingHost?.service.startImagingCalibration();
     }
     return response();
   }
@@ -1535,6 +1543,25 @@ export class ScreenCalibration {
       ).camera.deleteSavedPerspective();
       return {};
     }
+    if (input.action === 'clear-perspectives') {
+      const cameraId = input.cameraId;
+      if (!cameraId)
+        throw new RobotArmError(
+          'INVALID_ARGUMENT',
+          'Camera is required to clear perspectives',
+        );
+      await this.devices.cameras.clearPerspective(cameraId);
+      for (const target of this.devices
+        .screens()
+        .filter((screen) => screen.cameraId === cameraId)) {
+        const entry = this.devices.entries.get(target.id);
+        const host = entry?.host ?? (await entry?.hostOpening);
+        if (host) await host.service.clearMapping();
+        else await this.store.saveCalibrationMapping(target.id);
+        await this.devices.cameras.clearPerspective(cameraId, target.id);
+      }
+      return {};
+    }
     if (input.action === 'rename-screen') {
       const name = input.name!.trim();
       await this.store.updateScreenTarget(input.id!, { name });
@@ -1574,6 +1601,21 @@ export class ScreenCalibration {
        * report again as soon as the browser runs it.
        */
       page.phoneSocket.renew();
+      return {};
+    }
+    if (input.action === 'delete-screen-page') {
+      this.assertPageIdle(page);
+      const target = this.devices
+        .screens()
+        .find(
+          (screen) =>
+            screen.id === page.saved.targetId ||
+            screen.pageKey === page.saved.pageKey,
+        );
+      if (target) await this.removeScreen(target, { deletePerspective: true });
+      await this.store.removeScreenPage(page.saved.id);
+      this.pages.delete(page.saved.id);
+      page.close();
       return {};
     }
     if (input.action === 'forget') {
