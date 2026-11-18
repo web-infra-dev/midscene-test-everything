@@ -75,8 +75,6 @@ const FAST_TRAVEL_FACTOR = 0.6;
 const TILT_AUDIT_RANGE_MM = 6;
 const TILT_AUDIT_MARGIN_MM = 2;
 const TILT_AUDIT_MAX_DEVIATION_MM = 3;
-/** Lift above the guarded stop pose before the bracket re-measures contact. */
-const GUARDED_REFINE_LIFT_MM = 4;
 const STANDARD_PRESS_FACTOR = 0.25;
 const STEP_TIMEOUT_MS = 10000;
 interface TouchPoint {
@@ -827,96 +825,39 @@ export async function runAutoExploration(
   const startContact = contactPoint(start, tool.offsetMm);
   const initialStarted = performance.now();
   let first: SampledTouch | undefined;
-  if (fast && options.guardedInitialSearch && host.descendGuarded) {
-    try {
-      const guarded = await host.descendGuarded({
-        x: startContact.x,
-        y: startContact.y,
-        startTipZ: startContact.z,
-        maxDescentMm: INITIAL_DESCENT_MM,
-        speed: moveOptions.speed,
-        acceleration: moveOptions.acceleration,
-      });
-      timing?.('initial-search-guarded', guarded.elapsedMs);
-      if (guarded.contacted) {
+  try {
+    first = await touchAt(
+      startContact.x,
+      startContact.y,
+      startContact.z,
+      'Initial touch',
+      INITIAL_DESCENT_MM,
+      true,
+    );
+  } catch (error) {
+    if (!(error instanceof RobotArmError) || error.code !== 'TOUCH_NOT_FOUND')
+      throw error;
+    for (let row = -2; row <= 2 && !first; row++)
+      for (let column = -2; column <= 2 && !first; column++) {
+        if (row === 0 && column === 0) continue;
         try {
-          // The guarded move stopped inside the contact bracket; lift clear
-          // and let the normal bracket measure the contact height again.
           first = await touchAt(
-            startContact.x,
-            startContact.y,
-            guarded.stopTipZ + GUARDED_REFINE_LIFT_MM,
-            'Guarded touch',
-            GUARDED_REFINE_LIFT_MM + searchStepMm,
+            startContact.x + column * SEARCH_PITCH_MM,
+            startContact.y + row * SEARCH_PITCH_MM,
+            startContact.z,
+            'Search touch',
+            SEARCH_DESCENT_MM,
             false,
           );
-        } catch (error) {
-          if (!(error instanceof RobotArmError)) throw error;
+        } catch (searchError) {
+          if (
+            !(searchError instanceof RobotArmError) ||
+            searchError.code !== 'TOUCH_NOT_FOUND'
+          )
+            throw searchError;
         }
       }
-      if (!first)
-        await moveTo({
-          x: startContact.x,
-          y: startContact.y,
-          z: startContact.z,
-        });
-    } catch (error) {
-      // A failed guard must not hide a pause or stop failure.
-      if (
-        !(error instanceof RobotArmError) ||
-        ![
-          'UNSUPPORTED',
-          'TOUCH_NOT_FOUND',
-          'TOUCH_NOT_RELEASED',
-          'TOUCH_SAFETY_LIMIT',
-          'PHONE_STEP_TIMEOUT',
-          'PHONE_TOUCH_UNSTABLE',
-        ].includes(error.code)
-      )
-        throw error;
-      // Any guarded failure falls back to the stepped search from the taught
-      // start height; never let it consume the normal descent budget.
-      await moveTo({
-        x: startContact.x,
-        y: startContact.y,
-        z: startContact.z,
-      }).catch(() => undefined);
-    }
   }
-  if (!first)
-    try {
-      first = await touchAt(
-        startContact.x,
-        startContact.y,
-        startContact.z,
-        'Initial touch',
-        INITIAL_DESCENT_MM,
-        true,
-      );
-    } catch (error) {
-      if (!(error instanceof RobotArmError) || error.code !== 'TOUCH_NOT_FOUND')
-        throw error;
-      for (let row = -2; row <= 2 && !first; row++)
-        for (let column = -2; column <= 2 && !first; column++) {
-          if (row === 0 && column === 0) continue;
-          try {
-            first = await touchAt(
-              startContact.x + column * SEARCH_PITCH_MM,
-              startContact.y + row * SEARCH_PITCH_MM,
-              startContact.z,
-              'Search touch',
-              SEARCH_DESCENT_MM,
-              false,
-            );
-          } catch (searchError) {
-            if (
-              !(searchError instanceof RobotArmError) ||
-              searchError.code !== 'TOUCH_NOT_FOUND'
-            )
-              throw searchError;
-          }
-        }
-    }
   timing?.('initial-search', performance.now() - initialStarted);
   if (!first)
     throw new RobotArmError(
