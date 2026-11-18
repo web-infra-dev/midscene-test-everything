@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
+import { getDebug } from '@midscene/shared/logger';
 import {
   type AutomaticCaptureHost,
   type AutomaticCaptureMotionTiming,
@@ -13,6 +14,8 @@ import {
 } from '../../assisted-contracts.js';
 import {
   type CartesianPose,
+  type MotionAcceleration,
+  type MotionSpeed,
   RobotArmError,
   type Vector3,
 } from '../../contracts.js';
@@ -34,6 +37,10 @@ import type {
 const fail = (message: string): never => {
   throw new RobotArmError('AUTOMATIC_CAPTURE_FAILED', message, 409);
 };
+const GUARDED_POLL_MS = 40;
+/** Stop waiting even if the commanded move never reports completion. */
+const GUARDED_TIMEOUT_MS = 30_000;
+const log = getDebug('robot-arm:web-calibration', { console: true });
 
 /** Phone challenges bracket every descent and every stationary pose sample. */
 export class AutomaticCapture {
@@ -161,6 +168,83 @@ export class AutomaticCapture {
         409,
       );
   }
+  /**
+   * Submit a slow linear move toward the screen and stop it on the phone's
+   * contact flag. Speed is the normal probe speed, so the stop overrun stays
+   * within a millimetre instead of the tens of millimetres a jog produced.
+   */
+  private async descendGuarded(
+    host: AutomaticCaptureHost,
+    input: {
+      x: number;
+      y: number;
+      startTipZ: number;
+      maxDescentMm: number;
+      speed: MotionSpeed;
+      acceleration: MotionAcceleration;
+    },
+  ) {
+    if (!host.startGuardedMove)
+      throw new RobotArmError(
+        'UNSUPPORTED',
+        'Guarded descent is not available on this host',
+        409,
+      );
+    const target = flangePose(
+      { x: input.x, y: input.y, z: input.startTipZ - input.maxDescentMm },
+      this.reference!.orientation,
+      this.offset,
+    );
+    const startedAt = performance.now();
+    const handle = await host.startGuardedMove(target, {
+      speed: input.speed,
+      acceleration: input.acceleration,
+    });
+    let finished = false;
+    void handle.wait().then(() => {
+      finished = true;
+    });
+    let contacted = false;
+    let stopPose: CartesianPose | undefined;
+    let stopError: unknown;
+    try {
+      for (;;) {
+        this.check(host);
+        const latest = this.latest;
+        if (latest && latest.pageId === this.pageId && latest.contact) {
+          contacted = true;
+          break;
+        }
+        if (finished) break;
+        if (performance.now() - startedAt > GUARDED_TIMEOUT_MS) break;
+        await delay(GUARDED_POLL_MS, undefined, { signal: host.signal });
+      }
+    } finally {
+      // Even an aborted wait must not leave the slow move running.
+      if (!finished) {
+        try {
+          stopPose = await handle.stop();
+        } catch (error) {
+          stopError = error;
+          await host.stop?.().catch(() => undefined);
+        }
+      }
+    }
+    if (stopError) throw stopError;
+    const pose = stopPose ?? (await host.read());
+    const stopTipZ = contactPoint(pose, this.offset).z;
+    const elapsedMs = performance.now() - startedAt;
+    log(
+      `Guarded descent ${JSON.stringify({
+        startTipZ: input.startTipZ,
+        stopTipZ,
+        depthMm: input.startTipZ - stopTipZ,
+        contacted,
+        elapsedMs,
+      })}`,
+    );
+    return { contacted, stopTipZ, elapsedMs };
+  }
   private async move(
     host: AutomaticCaptureHost,
     pose: CartesianPose,
@@ -181,6 +265,8 @@ export class AutomaticCapture {
       tool: ToolProfile;
       webToImage: number[];
       minimumTravelTipZMm?: number;
+      /** Opt in to the guarded slow first descent (bench-validated builds only). */
+      guardedInitialSearch?: boolean;
       onTiming?(event: string, elapsedMs: number): void;
     },
   ) {
@@ -302,6 +388,7 @@ export class AutomaticCapture {
     const bridge: AutoExplorationHost = {
       check: () => this.check(host),
       currentPose: () => host.read(),
+      descendGuarded: (input) => this.descendGuarded(host, input),
       move: async (pose, _ctx, speed, acceleration) => {
         motionTiming = undefined;
         const actual = await this.move(host, pose, {
@@ -435,6 +522,7 @@ export class AutomaticCapture {
         mode: this.mode === 'standard' ? 'standard' : 'fast-horizontal',
         collection: this.mode === 'slide' ? 'slide' : 'tap',
         horizontalConfirmed: this.mode !== 'standard',
+        guardedInitialSearch: config.guardedInitialSearch,
         onTiming: config.onTiming,
       },
     );

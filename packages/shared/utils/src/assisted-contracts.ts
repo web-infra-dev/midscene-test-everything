@@ -489,6 +489,21 @@ export interface AutomaticCaptureHost {
   check(): void;
   read(): Promise<CartesianPose>;
   stop?(): Promise<void>;
+  /** Cached pose without waiting for the current motion to settle. */
+  pose?(): Promise<CartesianPose>;
+  /**
+   * Submit a slow linear move without waiting for it to finish. `stop()` on the
+   * returned handle pauses the motion, clears the queue, resumes the controller
+   * and reports where the stylus actually stopped.
+   */
+  startGuardedMove?(
+    pose: CartesianPose,
+    options: { speed: MotionSpeed; acceleration: MotionAcceleration },
+  ): Promise<{
+    /** Resolves when the move finishes or is stopped; never rejects. */
+    wait(): Promise<void>;
+    stop(): Promise<CartesianPose>;
+  }>;
   move(
     pose: CartesianPose,
     options?: {

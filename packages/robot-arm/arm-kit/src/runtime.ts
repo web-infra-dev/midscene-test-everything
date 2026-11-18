@@ -327,6 +327,77 @@ export class RobotArmRuntime extends RobotKernel {
         signal,
         check,
         stop: () => this.adapter.stop(),
+        pose: async () => {
+          check();
+          const pose = await this.adapter.getPose();
+          assertPose(pose);
+          check();
+          return structuredClone(pose);
+        },
+        startGuardedMove: async (pose, options) => {
+          if (!this.adapter.pause || !this.adapter.resume)
+            throw new RobotArmError(
+              'UNSUPPORTED',
+              'Guarded descent requires pause and resume support',
+              409,
+            );
+          check();
+          await this.ready(tool, setPayloadRecheck);
+          assertPose(pose);
+          assertOrientation(pose, this.capabilities);
+          const teaching =
+            input.cameraId &&
+            this.profileStore.installationTeaching({
+              ...input,
+              cameraId: input.cameraId,
+            });
+          if (teaching) assertCameraBoundary(pose, teaching, { tool });
+          const motion = captureMotion(options);
+          await this.adapter.preflightCartesian(
+            'linear',
+            pose,
+            motion,
+            robot.workspace,
+          );
+          check();
+          const handle = await this.adapter.moveLinear(pose, motion);
+          this.motionSubmitted = true;
+          let stopped = false;
+          return {
+            wait: () =>
+              handle
+                .wait({ timeoutMs: 300_000, signal })
+                .then(() => undefined)
+                .catch(() => undefined),
+            stop: async () => {
+              if (stopped)
+                throw new RobotArmError(
+                  'INVALID_STAGE',
+                  'Guarded move was already stopped',
+                  409,
+                );
+              stopped = true;
+              try {
+                // Pause performs a confirmed stop and leaves the controller
+                // paused; resume confirms it is enabled again before the
+                // bracket continues.
+                await this.adapter.pause?.();
+                await handle.wait({ timeoutMs: 10_000 }).catch(() => undefined);
+                await this.adapter.resume?.();
+              } catch (error) {
+                await this.adapter.stop().catch(() => undefined);
+                throw error;
+              } finally {
+                this.motionSubmitted = false;
+              }
+              check();
+              const measured = await this.adapter.getPose();
+              assertPose(measured);
+              check();
+              return structuredClone(measured);
+            },
+          };
+        },
         preflight: async (poses, motion) => {
           for (const pose of poses) {
             check();

@@ -114,6 +114,8 @@ export interface AutoExplorationOptions {
   mode?: 'standard' | 'fast-horizontal';
   collection?: 'tap' | 'slide';
   horizontalConfirmed?: boolean;
+  /** Try the guarded slow descent for the first touch instead of 2 mm steps. */
+  guardedInitialSearch?: boolean;
   /** Optional timing sink; events carry the elapsed wall time of one stage. */
   onTiming?(event: string, elapsedMs: number): void;
 }
@@ -132,6 +134,18 @@ export interface AutoExplorationHost {
   ): Promise<void>;
   check(): void;
   stop?(): Promise<void>;
+  /**
+   * Slow linear descent from the current pose. Resolves with how far below the
+   * start the stylus stopped and why; the caller refines the contact height.
+   */
+  descendGuarded?(input: {
+    x: number;
+    y: number;
+    startTipZ: number;
+    maxDescentMm: number;
+    speed: MotionSpeed;
+    acceleration: MotionAcceleration;
+  }): Promise<{ contacted: boolean; stopTipZ: number; elapsedMs: number }>;
   progress?(session: CalibrationSession): void;
   profileStore: {
     saveSession(
