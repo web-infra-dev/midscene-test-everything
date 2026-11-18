@@ -24,7 +24,7 @@ import {
   StationaryPhoneObservation,
 } from './phone-observation.js';
 import { runAutoExploration } from './sampler.js';
-import { explorationTargets, mappedExplorationTargets } from './targets.js';
+import { mappedExplorationTargets } from './targets.js';
 import type {
   ApplicationContext,
   AutoExplorationHost,
@@ -66,7 +66,7 @@ export class AutomaticCapture {
   private contactSeen = false;
   private challenge?: string;
   private phase: 'local' | 'grid' = 'local';
-  private runTargets?: ReturnType<typeof explorationTargets>;
+  private gridPoints: WebPoint[] = [];
   private index = 0;
   private operation?: CalibrationPointProgress['operation'];
   private heightSearch?: CalibrationPointProgress['heightSearch'];
@@ -85,22 +85,10 @@ export class AutomaticCapture {
         ? {
             mode: this.mode,
             index: this.index + 1,
-            total:
-              this.phase === 'local'
-                ? 3
-                : (
-                    this.runTargets ??
-                    explorationTargets(this.layout, this.mode !== 'standard')
-                  ).length,
+            total: this.phase === 'local' ? 3 : this.gridPoints.length,
             target: this.target,
             operation: this.operation,
-            targets:
-              this.phase === 'grid'
-                ? (
-                    this.runTargets ??
-                    explorationTargets(this.layout, this.mode !== 'standard')
-                  ).map((target) => target.point)
-                : undefined,
+            targets: this.phase === 'grid' ? this.gridPoints : undefined,
             measuredPoints:
               this.phase === 'grid' && this.mode === 'standard'
                 ? this.points.map((sample) => sample.point)
@@ -202,6 +190,7 @@ export class AutomaticCapture {
       point: { x: this.layout.width / 2, y: this.layout.height / 2 },
     };
     this.phase = 'local';
+    this.gridPoints = [];
     this.index = 0;
     this.changed();
     const first = performance.now();
@@ -249,11 +238,6 @@ export class AutomaticCapture {
       this.layout,
       (p) => project(config.webToImage, p),
       { width: config.screen.pixelWidth!, height: config.screen.pixelHeight! },
-    );
-    this.runTargets = explorationTargets(
-      this.layout,
-      this.mode !== 'standard',
-      mapped.inset,
     );
     const targets = mapped.targets.map((target, index) => ({
       id: String(index),
@@ -337,8 +321,12 @@ export class AutomaticCapture {
         if (progress.phase === 'grid') {
           this.phase = 'grid';
           this.index = Math.max(0, progress.index - 1);
-          const ordered = this.runTargets!;
-          this.target = { id: randomUUID(), point: ordered[this.index].point };
+          if (progress.gridTargets)
+            this.gridPoints = progress.gridTargets.map(({ css }) => css);
+          this.target = {
+            id: randomUUID(),
+            point: this.gridPoints[this.index],
+          };
         } else if (progress.phase === 'probe') {
           this.index = this.localPoints.length;
         }

@@ -846,6 +846,19 @@ export async function startPlaygroundHost({
           return send(200, await batch.plan(input.cameraId));
         if (input.action === 'screens')
           return send(200, await batch.screens(input.cameraId));
+        if (input.action === 'debug-visibility') {
+          const abort = new AbortController();
+          const cancel = () => abort.abort();
+          res.once('close', cancel);
+          try {
+            return send(
+              200,
+              await batch.debugVisibility(input.cameraId, abort.signal),
+            );
+          } finally {
+            res.off('close', cancel);
+          }
+        }
         if (input.action === 'start')
           return send(200, await batch.start(input));
         if (otherCamera && input.action !== 'delete-calibration')

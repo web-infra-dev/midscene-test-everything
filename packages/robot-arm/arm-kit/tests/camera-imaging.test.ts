@@ -455,7 +455,7 @@ describe('camera imaging', () => {
     }
   }, 30_000);
 
-  it('restores and clears focus and exposure with the same perspective', async () => {
+  it('waits for both saved screens before restoring focus and exposure', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'camera-imaging-'));
     const control = new FakeCameraControl();
     const correction: CameraCorrection = {
@@ -469,17 +469,19 @@ describe('camera imaging', () => {
       sourceHeight: 800,
       rotation: 0,
     };
-    const screenId = 'screen';
-    const fingerprint = createHash('sha256')
-      .update(JSON.stringify([screenId, correction]))
-      .digest('hex');
+    const screenIds = ['screen', 'second-screen'];
     const file = cameraImagingFile(directory, control.deviceId);
     await writeFile(
       file,
       JSON.stringify({
         version: 4,
         cameraId: control.deviceId,
-        rois: [{ screenId, fingerprint }],
+        rois: screenIds.map((screenId) => ({
+          screenId,
+          fingerprint: createHash('sha256')
+            .update(JSON.stringify([screenId, correction]))
+            .digest('hex'),
+        })),
         focus: { value: 45, score: 1 },
         exposure: { value: -8 },
         calibratedAt: new Date().toISOString(),
@@ -497,7 +499,13 @@ describe('camera imaging', () => {
     );
     try {
       await imaging.load();
-      imaging.registerScreen(screenId, () => correction);
+      imaging.registerScreen(screenIds[0], () => correction);
+      await imaging.resumeStored();
+      expect(imaging.status().state).toBe('idle');
+      expect(control.setCalls).toHaveLength(0);
+      await expect(readFile(file, 'utf8')).resolves.toContain('second-screen');
+
+      imaging.registerScreen(screenIds[1], () => correction);
       await imaging.resumeStored();
 
       expect(imaging.status()).toMatchObject({

@@ -12,6 +12,8 @@ import type {
 } from '../../server/twin-types.js';
 
 const DEG = Math.PI / 180;
+const DEFAULT_FOV = 34;
+const OVERVIEW_FILL = 0.9;
 
 /** Base millimetres, Z-up → three.js metres, Y-up. */
 function toWorld(point: { x: number; y: number; z: number }) {
@@ -154,7 +156,7 @@ export async function mountTwinStage(
   room.dispose();
   pmrem.dispose();
 
-  const camera = new THREE.PerspectiveCamera(34, 1, 0.01, 20);
+  const camera = new THREE.PerspectiveCamera(DEFAULT_FOV, 1, 0.01, 20);
   const controls = new OrbitControls(camera, canvas);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
@@ -163,22 +165,8 @@ export async function mountTwinStage(
   controls.maxPolarAngle = Math.PI / 2 - 0.02;
 
   const centers = snapshot.screens.map(screenCenter);
-  const target = centers.length
-    ? centers
-        .reduce((sum, point) => sum.add(point), new THREE.Vector3())
-        .multiplyScalar(1 / centers.length)
-    : new THREE.Vector3(0.16, -0.16, 0);
-  // The screens sit to one side of the base; bias the orbit target toward the
-  // arm so a narrow split column still frames the whole group.
-  target.lerp(new THREE.Vector3(0.04, -0.04, 0), 0.45);
-  const defaultPosition = target
-    .clone()
-    .add(new THREE.Vector3(0.42, 0.46, 0.52));
-  const defaultTarget = target.clone();
-  const fittedPosition = defaultPosition.clone();
-  camera.position.copy(defaultPosition);
-  controls.target.copy(defaultTarget);
-  controls.update();
+  const framingMeshes: THREE.Mesh[] = [];
+  const cameraFramePoints: THREE.Vector3[] = [];
 
   const keyLight = new THREE.DirectionalLight(0xffffff, 1.8);
   keyLight.position.set(0.7, 1.1, 0.8);
@@ -234,7 +222,6 @@ export async function mountTwinStage(
   scene.add(robotRoot);
 
   const groups = new Map<string, THREE.Group>();
-  const screenGroups: THREE.Group[] = [];
   let cameraPropRoot: THREE.Group | undefined;
   const loader = new STLLoader();
   const cameraProp = snapshot.camera;
@@ -264,6 +251,7 @@ export async function mountTwinStage(
     geometry.computeVertexNormals();
     const body = new THREE.Mesh(geometry, glass);
     group.add(body);
+    framingMeshes.push(body);
     const hull = new THREE.Mesh(geometry, outline);
     hull.renderOrder = 1;
     group.add(hull);
@@ -293,7 +281,9 @@ export async function mountTwinStage(
       part: THREE.BufferGeometry,
       parent: THREE.Object3D,
     ) => {
-      parent.add(new THREE.Mesh(part, glass));
+      const body = new THREE.Mesh(part, glass);
+      parent.add(body);
+      framingMeshes.push(body);
       const hull = new THREE.Mesh(part, outline);
       hull.renderOrder = 1;
       parent.add(hull);
@@ -376,7 +366,6 @@ export async function mountTwinStage(
     group.matrix.copy(screenMatrix(screen));
     group.matrixWorldNeedsUpdate = true;
     scene.add(group);
-    screenGroups.push(group);
 
     const width = screen.physicalWidthMm / 1000;
     const height = screen.physicalHeightMm / 1000;
@@ -404,6 +393,7 @@ export async function mountTwinStage(
       }),
     );
     group.add(body);
+    framingMeshes.push(body);
 
     const canvas = screenCanvases[screen.id];
     if (canvas) {
@@ -450,6 +440,9 @@ export async function mountTwinStage(
       new THREE.Vector3(p.x, p.y, p.z).multiplyScalar(0.001),
     );
     const lens = new THREE.Vector3();
+    for (const point of [lens, ...corners]) {
+      cameraFramePoints.push(pose.localToWorld(point.clone()));
+    }
     const segments = corners.flatMap((corner, i) => [
       lens,
       corner,
@@ -538,6 +531,7 @@ export async function mountTwinStage(
       body.add(new THREE.LineSegments(edges, edgeMaterial));
 
       pose.add(body);
+      framingMeshes.push(body);
 
       // The STL bezel faces +Y. Its annular lip starts at a 9.7 mm
       // radius; both bands share the front plane at the lens anchor.
@@ -584,8 +578,13 @@ export async function mountTwinStage(
   scheme.addEventListener('change', applyTheme);
   applyTheme();
 
-  const DEFAULT_FOV = 34;
   let cameraMode = false;
+  let autoFrame = true;
+  let viewGoal: { position: THREE.Vector3; target: THREE.Vector3 } | undefined;
+  controls.addEventListener('start', () => {
+    autoFrame = false;
+    viewGoal = undefined;
+  });
   const screenUp = snapshot.screens.length
     ? toWorld(snapshot.screens[0].yAxis).normalize().negate()
     : new THREE.Vector3(0, 0, -1);
@@ -637,50 +636,84 @@ export async function mountTwinStage(
   };
   applyJoints();
 
-  // Frame the arm, the screens and the camera prop together. The camera sits
-  // above the desk, so a screen-only centre would crop it out of the default
-  // view.
-  {
+  const overviewRotation = new THREE.Quaternion().setFromRotationMatrix(
+    new THREE.Matrix4().lookAt(
+      new THREE.Vector3(0.42, 0.46, 0.52),
+      new THREE.Vector3(),
+      new THREE.Vector3(0, 1, 0),
+    ),
+  );
+  const worldToOverview = overviewRotation.clone().invert();
+  const frameOverview = (animate: boolean) => {
+    const halfHeight = Math.tan((DEFAULT_FOV * DEG) / 2) * OVERVIEW_FILL;
+    const halfWidth = halfHeight * camera.aspect;
     const bounds = new THREE.Box3();
-    bounds.expandByObject(robotRoot);
-    for (const group of screenGroups) bounds.expandByObject(group);
-    if (cameraPropRoot) bounds.expandByObject(cameraPropRoot);
+    const point = new THREE.Vector3();
+    const includePoint = () => {
+      point.applyQuaternion(worldToOverview);
+      // The available half-width at depth z is halfWidth * (cameraZ - z).
+      // Collect both sides of that constraint, likewise for the height.
+      bounds.min.x = Math.min(bounds.min.x, point.x - halfWidth * point.z);
+      bounds.max.x = Math.max(bounds.max.x, point.x + halfWidth * point.z);
+      bounds.min.y = Math.min(bounds.min.y, point.y - halfHeight * point.z);
+      bounds.max.y = Math.max(bounds.max.y, point.y + halfHeight * point.z);
+      bounds.min.z = Math.min(bounds.min.z, point.z);
+      bounds.max.z = Math.max(bounds.max.z, point.z);
+    };
+
+    for (const mesh of framingMeshes) {
+      const { geometry } = mesh;
+      if (!geometry.boundingBox) geometry.computeBoundingBox();
+      const box = geometry.boundingBox;
+      if (!box || box.isEmpty()) continue;
+      mesh.updateWorldMatrix(true, false);
+      for (const x of [box.min.x, box.max.x]) {
+        for (const y of [box.min.y, box.max.y]) {
+          for (const z of [box.min.z, box.max.z]) {
+            point.set(x, y, z).applyMatrix4(mesh.matrixWorld);
+            includePoint();
+          }
+        }
+      }
+    }
+    for (const worldPoint of cameraFramePoints) {
+      point.copy(worldPoint);
+      includePoint();
+    }
+    if (bounds.min.z === Number.POSITIVE_INFINITY) return;
+
     const center = bounds.getCenter(new THREE.Vector3());
     const size = bounds.getSize(new THREE.Vector3());
-    const radius = Math.max(0.28, size.length() / 2);
-    const direction = new THREE.Vector3(0.42, 0.46, 0.52).normalize();
-    const distance =
-      (radius / Math.sin(THREE.MathUtils.degToRad(DEFAULT_FOV / 2))) * 1.15;
-    defaultTarget.copy(center);
-    defaultPosition.copy(center).addScaledVector(direction, distance);
-    fittedPosition.copy(defaultPosition);
-    camera.position.copy(fittedPosition);
-    controls.target.copy(defaultTarget);
-    controls.update();
-  }
+    const cameraZ = Math.max(
+      size.x / (2 * halfWidth),
+      size.y / (2 * halfHeight),
+      bounds.max.z + camera.near * 2,
+      center.z + controls.minDistance,
+    );
+    const target = center.clone().applyQuaternion(overviewRotation);
+    const position = center.setZ(cameraZ).applyQuaternion(overviewRotation);
+    controls.maxDistance = Math.max(2.6, position.distanceTo(target));
+    if (animate) {
+      viewGoal = { position, target };
+    } else {
+      camera.position.copy(position);
+      controls.target.copy(target);
+      controls.update();
+    }
+  };
 
-  let fitted = false;
-  const resize = () => {
+  const resize = (initial = false) => {
     const width = container.clientWidth || 640;
     const height = container.clientHeight || 420;
     if (width < 2 || height < 2) return;
-    camera.aspect = width / height;
+    const aspect = width / height;
+    const aspectChanged = camera.aspect !== aspect;
+    camera.aspect = aspect;
     if (cameraMode) applyCameraViewFov();
     else camera.updateProjectionMatrix();
     renderer.setSize(width, height, false);
-    if (!cameraMode && !fitted && width > 240 && height > 260) {
-      // A split column is narrower than a full-width stage; pull back once so
-      // the base and both slabs fit without the operator having to zoom out.
-      const aspect = width / height;
-      const scale = aspect >= 1.6 ? 1 : aspect >= 1.15 ? 1.12 : 1.35;
-      fittedPosition
-        .copy(defaultPosition)
-        .sub(defaultTarget)
-        .multiplyScalar(scale)
-        .add(defaultTarget);
-      camera.position.copy(fittedPosition);
-      controls.update();
-      fitted = true;
+    if (autoFrame && (initial || aspectChanged)) {
+      frameOverview(Boolean(viewGoal));
     }
     const buffer = new THREE.Vector2(
       renderer.domElement.width,
@@ -690,32 +723,16 @@ export async function mountTwinStage(
     lineMaterial.resolution.copy(buffer);
     outline.uniforms.uResolution.value.copy(buffer);
   };
-  const observer = new ResizeObserver(resize);
+  const observer = new ResizeObserver(() => resize());
   observer.observe(container);
-  resize();
+  resize(true);
 
   let last = performance.now();
-  let viewGoal: { position: THREE.Vector3; target: THREE.Vector3 } | undefined;
-  const resolveView = (preset: TwinViewPreset) => {
-    if (preset === 'screen' && centers.length) {
-      const target = centers
-        .reduce((sum, point) => sum.add(point), new THREE.Vector3())
-        .multiplyScalar(1 / centers.length);
-      return {
-        target,
-        position: target.clone().add(new THREE.Vector3(0, 0.45, 0.02)),
-      };
-    }
-    return {
-      target: defaultTarget.clone(),
-      position: fittedPosition.clone(),
-    };
-  };
-
   const applyViewPreset = (preset: TwinViewPreset) => {
+    autoFrame = false;
+    viewGoal = undefined;
     if (preset === 'camera' && cameraProp) {
       cameraMode = true;
-      viewGoal = undefined;
       controls.enabled = false;
       grid.visible = false;
       if (cameraPropRoot) cameraPropRoot.visible = false;
@@ -741,11 +758,23 @@ export async function mountTwinStage(
     controls.enabled = true;
     camera.fov = DEFAULT_FOV;
     camera.up.set(0, 1, 0);
-    camera.updateProjectionMatrix();
     grid.visible = true;
-    if (cameraPropRoot) cameraPropRoot.visible = preset === 'default';
-    if (preset === 'screen') camera.up.copy(screenUp);
-    viewGoal = resolveView(preset);
+    const focusScreen = preset === 'screen' && centers.length > 0;
+    if (cameraPropRoot) cameraPropRoot.visible = !focusScreen;
+    if (focusScreen) {
+      camera.up.copy(screenUp);
+      const target = centers
+        .reduce((sum, point) => sum.add(point), new THREE.Vector3())
+        .multiplyScalar(1 / centers.length);
+      viewGoal = {
+        target,
+        position: target.clone().add(new THREE.Vector3(0, 0.45, 0.02)),
+      };
+    } else {
+      autoFrame = true;
+      frameOverview(true);
+    }
+    camera.updateProjectionMatrix();
   };
   renderer.setAnimationLoop(() => {
     if (!active) return;
@@ -803,18 +832,7 @@ export async function mountTwinStage(
       // The measured base is the table; keep the reference grid on it rather
       // than on the calibrated screen plane.
       grid.position.y = robotRoot.position.y;
-      // The base sits below the screens after the offset; recenter vertically so
-      // the arm does not hug the top edge of a tall split column.
-      if (!cameraMode) {
-        const pan = 0.04 - controls.target.y;
-        if (Number.isFinite(pan) && Math.abs(pan) < 0.35) {
-          controls.target.y += pan;
-          camera.position.y += pan;
-          controls.update();
-        }
-      }
-      // A preset picked before the measured base arrived must not undo this pan.
-      viewGoal = undefined;
+      if (autoFrame) frameOverview(true);
       aligned = true;
     },
     setViewPreset(preset) {

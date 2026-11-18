@@ -83,6 +83,7 @@ function visibilityViewport(
 export async function measureScreenVisibility(
   frames: readonly Buffer[],
   screens: readonly VisibilityScreen[],
+  options?: { includeUndetected?: boolean },
 ): Promise<ScreenVisibilityEvidence> {
   if (frames.length !== 3 || !screens.length)
     throw new RobotArmError(
@@ -147,13 +148,18 @@ export async function measureScreenVisibility(
           'A screen visibility sample is outside the camera frame.',
         );
       const offset = (py * width + px) * channels;
-      const chroma = decoded.map(
-        ({ data }) => data[offset + 1] - (data[offset] + data[offset + 2]) / 2,
+      // The blue tile has a greater blue-to-red difference than the pale tile.
+      // Compare chroma across phases to reject brightness-only changes.
+      const blueMinusRed = decoded.map(
+        ({ data }) => data[offset + 2] - data[offset],
       );
-      const first = chroma[0] - chroma[1];
-      const last = chroma[2] - chroma[1];
-      if (first >= 36 && last >= 36) return 1;
-      if (first <= -36 && last <= -36) return -1;
+      const first = blueMinusRed[0] - blueMinusRed[1];
+      const last = blueMinusRed[2] - blueMinusRed[1];
+      // The outer frames display the same color. A weaker reversal can still
+      // count if both transitions exceed the drift between those frames.
+      const threshold = Math.max(12, Math.abs(first - last));
+      if (first >= threshold && last >= threshold) return 1;
+      if (first <= -threshold && last <= -threshold) return -1;
       return 0;
     };
     const viewportHeight = screen.layout?.height;
@@ -183,63 +189,77 @@ export async function measureScreenVisibility(
       response,
     );
     let visible = 0;
-    let interiorVisible = 0;
-    let interiorSamples = 0;
-    let minimumTileFraction = 1;
     const samplesPerSide = 6;
     const samplesPerTile = samplesPerSide ** 2;
+    const sampleColumns = columns * samplesPerSide;
+    const sampleRows = rows * samplesPerSide;
+    const detected = new Uint8Array(sampleColumns * sampleRows);
     for (let row = 0; row < rows; row++) {
       for (let column = 0; column < columns; column++) {
-        let tileVisible = 0;
-        let tileInteriorVisible = 0;
-        let tileInteriorSamples = 0;
         const sign = (row + column) % 2 === 0 ? 1 : -1;
         for (let y = 0; y < samplesPerSide; y++) {
           for (let x = 0; x < samplesPerSide; x++) {
-            const sampleRow = row + (y + 0.5) / samplesPerSide;
-            const sample = {
-              x: (column + (x + 0.5) / samplesPerSide) / columns,
-              y: sampleRow / rows,
-            };
-            // The fitted outline can include bezel and rounded corners.
-            const interior =
-              sample.x >= 0.5 / columns &&
-              sample.x <= 1 - 0.5 / columns &&
-              sample.y >= 0.5 / rows &&
-              sample.y <= 1 - 0.5 / rows;
-            if (interior) tileInteriorSamples++;
+            const sampleColumn = column * samplesPerSide + x;
+            const sampleRow = row * samplesPerSide + y;
             const polarity = response({
-              x: viewport.x + sample.x * viewport.width,
-              y: viewport.y + rowPosition(sampleRow) * viewport.height,
+              x:
+                viewport.x +
+                ((sampleColumn + 0.5) / sampleColumns) * viewport.width,
+              y:
+                viewport.y +
+                rowPosition((sampleRow + 0.5) / samplesPerSide) *
+                  viewport.height,
             });
             // A small outline error can put a sample near a tile boundary
             // into the neighboring tile. Still require the expected checkerboard
             // polarity at tile centers and a repeatable inversion everywhere.
             const center = x >= 2 && x < 4 && y >= 2 && y < 4;
             if (polarity === sign || (!center && polarity === -sign)) {
-              tileVisible++;
-              if (interior) tileInteriorVisible++;
+              detected[sampleRow * sampleColumns + sampleColumn] = 1;
+              visible++;
             }
           }
         }
-        visible += tileVisible;
-        interiorVisible += tileInteriorVisible;
-        interiorSamples += tileInteriorSamples;
-        if (tileInteriorSamples)
-          minimumTileFraction = Math.min(
-            minimumTileFraction,
-            tileInteriorVisible / tileInteriorSamples,
-          );
+      }
+    }
+    // The fitted outline can include bezel and rounded corners. Slide full
+    // tile-sized windows inside the margin so edge regions have equal weight.
+    const margin = samplesPerSide / 2;
+    const right = sampleColumns - margin;
+    const bottom = sampleRows - margin;
+    let interiorVisible = 0;
+    for (let y = margin; y < bottom; y++) {
+      for (let x = margin; x < right; x++) {
+        interiorVisible += detected[y * sampleColumns + x];
+      }
+    }
+    let minimumTileFraction = 1;
+    for (let y = margin; y + samplesPerSide <= bottom; y += margin) {
+      for (let x = margin; x + samplesPerSide <= right; x += margin) {
+        let windowVisible = 0;
+        for (let dy = 0; dy < samplesPerSide; dy++) {
+          for (let dx = 0; dx < samplesPerSide; dx++) {
+            windowVisible += detected[(y + dy) * sampleColumns + x + dx];
+          }
+        }
+        minimumTileFraction = Math.min(
+          minimumTileFraction,
+          windowVisible / samplesPerTile,
+        );
       }
     }
     return {
       id: screen.id,
-      visibleFraction: visible / (columns * rows * samplesPerTile),
-      interiorVisibleFraction: interiorVisible / interiorSamples,
+      visibleFraction: visible / detected.length,
+      interiorVisibleFraction:
+        interiorVisible / ((right - margin) * (bottom - margin)),
       minimumTileFraction,
     };
   });
-  if (results.every((screen) => screen.visibleFraction < 0.35))
+  if (
+    !options?.includeUndetected &&
+    results.every((screen) => screen.visibleFraction < 0.35)
+  )
     throw new RobotArmError(
       'VISIBILITY_UNAVAILABLE',
       'The screen visibility pattern could not be verified. Check the camera view and paired phone pages.',

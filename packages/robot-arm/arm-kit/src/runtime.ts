@@ -3701,9 +3701,13 @@ export class RobotArmRuntime extends RobotKernel {
           {
             screens: state.auto.cameraVisibility.screens.map((screen) => ({
               id: screen.id,
-              percent: Math.round(
+              percent: Math.floor(
                 100 *
-                  (screen.interiorVisibleFraction ?? screen.visibleFraction),
+                  Math.min(
+                    screen.visibleFraction,
+                    screen.interiorVisibleFraction ?? screen.visibleFraction,
+                    screen.minimumTileFraction,
+                  ),
               ),
             })),
           },

@@ -924,8 +924,53 @@ describe('phone-assisted calibration coordinator', () => {
       f.releaseImaging.mockClear();
       f.calibrateImaging.mockClear();
 
-      await service.mapSetup();
+      const restored = await service.mapSetup(undefined, {
+        reuseAppliedPerspective: true,
+      });
 
+      expect(restored.mapping).toBeDefined();
+      expect(f.detectMarkers).toHaveBeenCalledTimes(1);
+      expect(f.releaseImaging).not.toHaveBeenCalled();
+      expect(f.calibrateImaging).not.toHaveBeenCalled();
+    } finally {
+      await f.dispose();
+    }
+  });
+  it('maps a newly connected page against the existing perspective without releasing imaging', async () => {
+    const f = await setup();
+    try {
+      const service = f.forScreen('second-screen');
+      await service.prepare({
+        ...f.beforeTask.setup.selection!,
+        motion: f.screen,
+      });
+      const page = {
+        pageId: service.openPhonePage(),
+        sequence: 1,
+        platform: 'android',
+        displayMode: 'fullscreen',
+        visible: true,
+        layout,
+      } as const;
+      service.receivePhone(page);
+      f.releaseImaging.mockClear();
+      f.calibrateImaging.mockClear();
+
+      const mapping = service.mapSetup(undefined, {
+        reuseAppliedPerspective: true,
+      });
+      await rstest.waitFor(() =>
+        expect(service.phoneView().markerRequest).toBeDefined(),
+      );
+      service.receivePhone({
+        ...page,
+        sequence: 2,
+        view: 'markers',
+        markersPainted: true,
+        markerRequest: service.phoneView().markerRequest,
+      });
+
+      expect((await mapping).mapping).toBeDefined();
       expect(f.releaseImaging).not.toHaveBeenCalled();
       expect(f.calibrateImaging).not.toHaveBeenCalled();
     } finally {

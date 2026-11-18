@@ -1394,6 +1394,9 @@ function GuidedContent({
                   api={batchClient}
                   cameraId={cameraId}
                   screens={states}
+                  debugDisabled={
+                    outlineBlocked || controller.busy || singleBusy
+                  }
                   disabled={
                     !config?.ready ||
                     !config.installationTaught ||

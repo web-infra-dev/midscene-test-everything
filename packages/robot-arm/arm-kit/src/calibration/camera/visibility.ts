@@ -54,6 +54,7 @@ export async function verifyScreenVisibility(
   frame: () => Promise<Buffer>,
   signal: AbortSignal,
   check: () => void,
+  options?: { includeUndetected?: boolean },
 ) {
   const requests = new Map<VisibilityPhone, string>();
   const identities = new Map<VisibilityPhone, CalibrationPageUpdate>();
@@ -116,6 +117,7 @@ export async function verifyScreenVisibility(
         layout: identities.get(phone)!.layout,
         firstRowHeight: identities.get(phone)!.visibilityFirstRowHeight,
       })),
+      options,
     );
     assertCurrent();
     return result;

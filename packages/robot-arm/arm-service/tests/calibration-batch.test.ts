@@ -59,7 +59,12 @@ async function setup() {
       alignForBatch: rstest.fn(async () => {}),
       service: {
         status: () => sessions.get(id),
-        setup: () => ({ prepared: true, phoneConnected: true, mapping: {} }),
+        setup: () => ({
+          prepared: true,
+          phoneConnected: true,
+          mapping: {},
+          imaging: { state: 'ready' },
+        }),
         create: async () => {
           const state = {
             id: `${id}-${starts.length}`,
@@ -111,6 +116,7 @@ async function setup() {
     entries,
     screens: () => f.store.list().screenTargets!,
     ensureHost: async (id: string) => entries.get(id).host,
+    calibrateCameraImaging: rstest.fn(),
   } as unknown as PlaygroundDevices;
   const batch = new CalibrationBatch(devices);
   rstest.spyOn(f.runtime, 'parkScreenGroup').mockImplementation(async () => {
@@ -239,6 +245,45 @@ it('rejects an unconfirmed tool payload before creating a batch or starting samp
   } finally {
     check.mockRestore();
   }
+});
+
+it('prepares the last screen mapping and camera imaging before sampling any screen', async () => {
+  const f = await setup();
+  const first = f.entries.get('one').host;
+  const second = f.entries.get('two').host;
+  let mapped = false;
+  let imaging = 'ready';
+  first.service.setup = () => ({
+    prepared: true,
+    phoneConnected: true,
+    mapping: {},
+    imaging: { state: imaging },
+  });
+  second.service.setup = () => ({
+    ...first.service.setup(),
+    mapping: mapped ? {} : undefined,
+  });
+  second.alignForBatch.mockImplementation(async () => {
+    mapped = true;
+    imaging = 'released';
+  });
+  rstest
+    .mocked(f.devices.calibrateCameraImaging)
+    .mockImplementation(async () => {
+      expect(mapped).toBe(true);
+      expect(f.starts).toEqual([]);
+      imaging = 'ready';
+      return { state: 'ready' };
+    });
+  await f.start();
+  await rstest.waitFor(() =>
+    expect(f.batch.read()?.items[0].status).toBe('awaiting-acceptance'),
+  );
+  f.complete('one');
+  await rstest.waitFor(() =>
+    expect(f.batch.read()?.items[1].status).toBe('awaiting-acceptance'),
+  );
+  expect(f.devices.calibrateCameraImaging).toHaveBeenCalledTimes(1);
 });
 
 it('holds the shared queue while waiting for acceptance and retains completed screen results', async () => {

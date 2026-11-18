@@ -208,8 +208,8 @@ export class PlaygroundDevices {
   }
   async calibrateCameraImaging(cameraId: string) {
     const request = randomUUID();
-    await this.setCameraImagingPattern(cameraId, request);
     try {
+      await this.setCameraImagingPattern(cameraId, request);
       const entry = [...this.entries.values()].find(
         (item) => item.cameraId === cameraId && item.host,
       );

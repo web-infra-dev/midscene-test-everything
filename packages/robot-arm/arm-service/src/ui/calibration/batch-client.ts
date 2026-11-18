@@ -5,6 +5,7 @@ import type {
   CalibrationBatchState,
   WorkstationScreenState,
 } from '@midscene/robotics-shared/assisted-contracts';
+import type { ScreenVisibilityEvidence } from '@midscene/robotics-shared/contracts';
 import { markerRequest } from './marker-client';
 export class BatchClient {
   constructor(readonly cameraId: string) {}
@@ -28,6 +29,13 @@ export class BatchClient {
   }
   calibrationBatchPlan(cameraId: string) {
     return this.request<CalibrationBatchPlan>('plan', { cameraId });
+  }
+  debugScreenVisibility(signal: AbortSignal) {
+    return this.request<ScreenVisibilityEvidence>(
+      'debug-visibility',
+      {},
+      signal,
+    );
   }
   screens(signal?: AbortSignal) {
     return this.request<WorkstationScreenState[]>('screens', {}, signal);

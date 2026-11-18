@@ -13,6 +13,14 @@ const teachingBoundaryZh: Record<string, string> = {
   'Screen calibration results saved': '屏幕标定结果已保存',
   'Finish calibration and return': '完成标定并返回',
   'Shared Safe Position pending': '共用安全位待确认',
+  'Advanced debugging': '高级调试',
+  'Debug screen visibility': '调试可见性',
+  'Last Safe Position check': '最近一次安全位检测',
+  'Screen visibility passed': '屏幕可见性检测通过',
+  'Screen visibility did not pass': '屏幕可见性检测未通过',
+  'Whole screen': '整屏',
+  'Screen interior': '屏内',
+  'Lowest local coverage': '最低局部检出率',
   'Confirm current shared Safe Position': '人工确认当前共用安全位',
   'Confirm the arm is stationary, clear of the camera and all screens, and does not block any screen in the live view.':
     '请确认机械臂已静止，与相机和所有屏幕保持安全距离，且实时画面中没有遮挡任何屏幕。',
@@ -71,7 +79,7 @@ const teachingBoundaryZh: Record<string, string> = {
   'No reachable camera-clear Safe Position was found within the bounded search.':
     '在限定范围内未找到相机视野清晰且可达的安全位。',
   'The arm reached a candidate Safe Position, but the camera could not verify every screen.':
-    '机械臂已到达候选安全位，但相机未能确认所有屏幕清晰可见。括号内为各屏内部图案检出率。',
+    '机械臂已到达候选安全位，但相机未能确认所有屏幕清晰可见。',
   'Automatic camera avoidance could not clear every screen. Review the camera view or record a Safe Position manually.':
     '自动避让后仍有屏幕被遮挡，请检查相机画面或手动记录安全位。',
   'The screen visibility pattern could not be verified. Check the camera view and paired phone pages.':
@@ -700,6 +708,7 @@ const calibrationZh: Record<string, string> = {
   'Open the phone binding page and keep it fullscreen. The service detects the page and reads its resolution automatically.':
     '打开手机绑定页面并保持全屏，服务会自动发现页面并读取分辨率。',
   'Keep the phone page visible and fullscreen': '请保持手机页面在前台并全屏',
+  'Calibrating camera focus and exposure': '正在标定相机对焦和曝光',
   'Installation reference saved independently of calibration.':
     '安装参考已独立保存，不受重标定结果影响。',
   'Update Installation Teaching': '更新安装示教',

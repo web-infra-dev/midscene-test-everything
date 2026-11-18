@@ -720,6 +720,7 @@ export class CameraSessionManager {
       );
       await session.load();
       imaging.registerScreen(camera.id, () => session.getCorrection());
+      await imaging.reopenAfterRestart();
       this.imaging.set(id, imaging);
       return session;
     } catch (error) {

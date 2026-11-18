@@ -5,6 +5,7 @@ import type {
   CalibrationBatchState,
   WorkstationScreenState,
 } from '@midscene/robotics-shared/assisted-contracts';
+import type { ScreenVisibilityEvidence } from '@midscene/robotics-shared/contracts';
 import {
   Alert,
   Button,
@@ -13,6 +14,7 @@ import {
   Popconfirm,
   Radio,
   Space,
+  Table,
   Tag,
   Typography,
 } from 'antd';
@@ -48,6 +50,8 @@ const itemLabels: Record<string, string> = {
 };
 const describeCause = (cause: unknown) =>
   cause instanceof Error ? cause.message : String(cause);
+const visibilityPercent = (fraction: number | undefined) =>
+  fraction === undefined ? '—' : `${Math.floor(fraction * 1000) / 10}%`;
 function calibrationStatus(calibrated: boolean, cameraMappingChanged = false) {
   if (cameraMappingChanged)
     return {
@@ -101,17 +105,43 @@ export const CalibrationBatchPanel = forwardRef<
     /** Screens of the selected camera, already fetched by the workspace. */
     screens: readonly WorkstationScreenState[];
     disabled: boolean;
+    debugDisabled: boolean;
     onChanged?: () => void | Promise<void>;
     onActiveChange?: (active: boolean) => void;
   }
 >(function CalibrationBatchPanel(
-  { api, cameraId, screens, disabled, onChanged, onActiveChange },
+  {
+    api,
+    cameraId,
+    screens,
+    disabled,
+    debugDisabled,
+    onChanged,
+    onActiveChange,
+  },
   ref,
 ) {
   const [batch, setBatch] = useState<CalibrationBatchState | null>();
   const [startedHere, setStartedHere] = useState(false);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string>();
+  const [visibility, setVisibility] = useState<{
+    api: RobotArmApi;
+    result?: ScreenVisibilityEvidence;
+    error?: string;
+  }>();
+  const visibilityRequest = useRef<AbortController>();
+  const currentVisibility = visibility?.api === api ? visibility : undefined;
+  const debugging = Boolean(
+    currentVisibility && !currentVisibility.result && !currentVisibility.error,
+  );
+  useEffect(
+    () => () => {
+      visibilityRequest.current?.abort();
+      visibilityRequest.current = undefined;
+    },
+    [api],
+  );
   const [plan, setPlan] = useState<CalibrationBatchPlan>();
   const [previewPlan, setPreviewPlan] = useState<CalibrationBatchPlan>();
   const [deletedCalibrations, setDeletedCalibrations] = useState<string[]>([]);
@@ -202,6 +232,22 @@ export const CalibrationBatchPanel = forwardRef<
       if (mounted.current) setWorking(false);
     }
   };
+  const debugVisibility = async () => {
+    if (visibilityRequest.current) return;
+    const request = new AbortController();
+    visibilityRequest.current = request;
+    setVisibility({ api });
+    try {
+      const result = await api.debugScreenVisibility(request.signal);
+      if (!request.signal.aborted) setVisibility({ api, result });
+    } catch (cause) {
+      if (!request.signal.aborted)
+        setVisibility({ api, error: describeCause(cause) });
+    } finally {
+      if (visibilityRequest.current === request)
+        visibilityRequest.current = undefined;
+    }
+  };
   const openPlan = () =>
     void perform(async () => {
       if (!cameraId) throw new Error(t('Select the main camera first.'));
@@ -218,11 +264,11 @@ export const CalibrationBatchPanel = forwardRef<
     ref,
     () => ({
       open: () => {
-        if (disabled || working || !cameraId) return;
+        if (disabled || working || debugging || !cameraId) return;
         openPlan();
       },
     }),
-    [disabled, working, cameraId],
+    [disabled, working, debugging, cameraId],
   );
   const start = () =>
     void perform(async () => {
@@ -363,7 +409,7 @@ export const CalibrationBatchPanel = forwardRef<
         </Typography.Text>
         {batch && !isActive && (
           <Button
-            disabled={working}
+            disabled={working || debugging}
             onClick={() =>
               void perform(async () => {
                 await api.clearCalibrationBatches();
@@ -459,9 +505,6 @@ export const CalibrationBatchPanel = forwardRef<
                   </>
                 )}
                 {calibrationErrorText(batch.error)}
-                {batch.visibilityMissingScreens?.length
-                  ? ` (${batch.visibilityMissingScreens.join(' · ')})`
-                  : null}
               </Typography.Paragraph>
             )}
           <Space wrap>
@@ -596,6 +639,75 @@ export const CalibrationBatchPanel = forwardRef<
             {calibrationErrorText(error)}
           </Typography.Paragraph>
         )}
+      <details>
+        <summary>{t('Advanced debugging')}</summary>
+        <Button
+          disabled={
+            debugDisabled || working || isActive || !cameraId || !screens.length
+          }
+          loading={debugging}
+          onClick={() => void debugVisibility()}
+          size="small"
+          type="link"
+        >
+          {t('Debug screen visibility')}
+        </Button>
+        {batch?.visibilityMissingScreens?.length ? (
+          <Typography.Paragraph type="secondary">
+            {t('Last Safe Position check')} ·{' '}
+            {batch.visibilityMissingScreens.join(' · ')}
+          </Typography.Paragraph>
+        ) : null}
+        {currentVisibility?.error && (
+          <Alert
+            type="error"
+            message={calibrationErrorText(currentVisibility.error)}
+          />
+        )}
+        {currentVisibility?.result && (
+          <div aria-live="polite">
+            <Typography.Text
+              type={currentVisibility.result.clear ? 'success' : 'warning'}
+            >
+              {t(
+                currentVisibility.result.clear
+                  ? 'Screen visibility passed'
+                  : 'Screen visibility did not pass',
+              )}
+            </Typography.Text>
+            <Table
+              size="small"
+              rowKey="id"
+              pagination={false}
+              scroll={{ x: 'max-content' }}
+              dataSource={currentVisibility.result.screens}
+              columns={[
+                {
+                  title: t('Screen name'),
+                  render: (_, screen) =>
+                    screens.find(({ screenId }) => screenId === screen.id)
+                      ?.name ?? screen.id,
+                },
+                {
+                  title: t('Whole screen'),
+                  dataIndex: 'visibleFraction',
+                  render: visibilityPercent,
+                },
+                {
+                  title: t('Screen interior'),
+                  dataIndex: 'interiorVisibleFraction',
+                  render: visibilityPercent,
+                },
+                {
+                  title: t('Lowest local coverage'),
+                  dataIndex: 'minimumTileFraction',
+                  render: visibilityPercent,
+                },
+              ]}
+            />
+          </div>
+        )}
+      </details>
       <Modal
         destroyOnClose
         footer={

@@ -274,13 +274,18 @@ export class CameraImagingController {
 
   async resumeStored(): Promise<void> {
     if (!this.stored) return;
+    const expected = new Map(
+      this.stored.rois.map((roi) => [roi.screenId, roi.fingerprint]),
+    );
+    // Screen sessions reopen one at a time. A screen we have yet to load
+    // provides no evidence that its saved perspective changed.
+    for (const screenId of expected.keys()) {
+      if (!this.registered.has(screenId)) return;
+    }
     const currentRois = this.screens().map((screen) => ({
       screenId: screen.screenId,
       fingerprint: correctionFingerprint(screen),
     }));
-    const expected = new Map(
-      this.stored.rois.map((roi) => [roi.screenId, roi.fingerprint]),
-    );
     if (
       currentRois.length !== expected.size ||
       currentRois.some((roi) => expected.get(roi.screenId) !== roi.fingerprint)

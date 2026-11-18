@@ -1036,6 +1036,7 @@ export async function runAutoExploration(
   };
   setPhase(host, session, {
     phase: 'grid',
+    gridTargets: orderedTargets,
     index: 0,
     total: orderedTargets.length,
     message: 'Sampling the screen',

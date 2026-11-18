@@ -18,6 +18,7 @@ import {
   captureScreenMarkers,
   recognizeScreenMarkers,
 } from '../camera/calibration-markers.js';
+import { RobotVisionError } from '../camera/errors.js';
 import type { CameraSession } from '../camera/session.js';
 import type { CameraFrame } from '../camera/types.js';
 import { calibrationAccepted } from '../contracts.js';
@@ -549,13 +550,18 @@ export class CalibrationHost {
     }
   }
   private alignmentTask?: Promise<void>;
-  alignForBatch(signal: AbortSignal, fast = false) {
+  alignForBatch(
+    signal: AbortSignal,
+    fast = false,
+    { reuseAppliedPerspective = false } = {},
+  ) {
     if (this.alignmentTask) return this.alignmentTask;
     const abort = new AbortController();
     this.alignment = abort;
     const task = this.alignScreen(
       AbortSignal.any([signal, abort.signal]),
       fast,
+      reuseAppliedPerspective,
     );
     this.alignmentTask = task.finally(() => {
       this.alignmentTask = undefined;
@@ -564,7 +570,11 @@ export class CalibrationHost {
     return this.alignmentTask;
   }
   private alignment?: AbortController;
-  private async alignScreen(signal: AbortSignal, fast: boolean) {
+  private async alignScreen(
+    signal: AbortSignal,
+    fast: boolean,
+    reuseAppliedPerspective: boolean,
+  ) {
     this.editable();
     const session = this.service.status();
     if (
@@ -577,6 +587,25 @@ export class CalibrationHost {
         'Resume or cancel the current calibration first',
         409,
       );
+    const camera = this.options.camera;
+    if (reuseAppliedPerspective && camera.getCorrection()) {
+      try {
+        await this.service.mapSetup(undefined, {
+          reuseAppliedPerspective,
+          signal,
+        });
+        signal.throwIfAborted();
+        return;
+      } catch (error) {
+        signal.throwIfAborted();
+        if (
+          !(error instanceof RobotVisionError) ||
+          !['NO_SCREEN_DETECTED', 'CALIBRATION_MISMATCH'].includes(error.code)
+        )
+          throw error;
+        // Require a successful raw marker scan before replacing the perspective.
+      }
+    }
     let request = this.service.requestMarkerDisplay();
     let accepted = false;
     try {
@@ -619,7 +648,6 @@ export class CalibrationHost {
               409,
             );
         };
-        const camera = this.options.camera;
         const output = this.autoOutputSize() ?? this.input ?? layout.screen;
         let correction: CameraCorrection;
         const recognize = async (
@@ -710,8 +738,16 @@ export class CalibrationHost {
           request = this.service.requestMarkerDisplay(true);
           continue;
         }
-        await this.saveCorrection(correction);
-        if (this.input) await this.service.mapSetup();
+        if (
+          !reuseAppliedPerspective ||
+          semanticJson(correction) !== semanticJson(camera.getCorrection())
+        )
+          await this.saveCorrection(correction, false, undefined, check);
+        if (this.input)
+          await this.service.mapSetup(undefined, {
+            reuseAppliedPerspective,
+            signal,
+          });
         check();
         accepted = true;
         return;

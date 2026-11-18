@@ -21,7 +21,7 @@ export const CALIBRATION_PHONE_POLICY = {
   visibilityPattern: {
     columns: 8,
     rows: 12,
-    colors: ['#40e55b', '#e540d9'],
+    colors: ['#9ec5ff', '#f6f8fb'],
   },
   heartbeatMs: 750,
   stepAcknowledgementMs: 5000,

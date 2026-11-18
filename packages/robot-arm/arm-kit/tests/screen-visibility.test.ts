@@ -21,7 +21,7 @@ const screens = [
 
 async function pattern(
   phase: number,
-  blocked?: 'center' | 'edge' | 'speckled' | 'top-tile',
+  blocked?: 'center' | 'edge' | 'rounded-corner' | 'speckled' | 'top-tile',
   gridOffset = 0,
   leftInset = 0,
   iosFirstRow?: number,
@@ -53,6 +53,7 @@ async function pattern(
           Math.abs(x - width / 2) < 36) ||
         (blocked === 'top-tile' && x >= 30 && x < 60 && y < 48) ||
         (blocked === 'edge' && x < 12) ||
+        (blocked === 'rounded-corner' && x < 27 && y < 27 && x + y < 44) ||
         (blocked === 'speckled' &&
           x % 30 >= 11 &&
           x % 30 <= 13 &&
@@ -82,6 +83,26 @@ it('confirms full-screen pattern response and detects a central obstruction', as
   expect(result.screens[0].minimumTileFraction).toBeLessThan(0.85);
 });
 
+it('distinguishes a muted checkerboard reversal from a stationary obstruction', async () => {
+  for (const blocked of [undefined, 'center'] as const) {
+    const frames = await Promise.all(
+      [0, 1, 0].map(async (phase) =>
+        sharp(await pattern(phase, blocked))
+          .recomb([
+            [0.625, 0, 0.375],
+            [0, 1, 0],
+            [0.375, 0, 0.625],
+          ])
+          .png()
+          .toBuffer(),
+      ),
+    );
+    expect((await measureScreenVisibility(frames, screens)).clear).toBe(
+      !blocked,
+    );
+  }
+});
+
 it('allows a thin bezel in the fitted outline while requiring a clear interior', async () => {
   const frames = await Promise.all(
     [0, 1, 0].map((phase) => pattern(phase, 'edge')),
@@ -91,11 +112,27 @@ it('allows a thin bezel in the fitted outline while requiring a clear interior',
   expect(result.clear).toBe(true);
 });
 
+it('tolerates a few missing samples near a rounded screen corner', async () => {
+  const frames = await Promise.all(
+    [0, 1, 0].map((phase) => pattern(phase, 'rounded-corner')),
+  );
+  expect((await measureScreenVisibility(frames, screens)).clear).toBe(true);
+});
+
 it('rejects repeated frames instead of accepting stale screen content', async () => {
   const image = await pattern(0);
   await expect(
     measureScreenVisibility([image, image, image], screens),
   ).rejects.toMatchObject({ code: 'VISIBILITY_UNAVAILABLE' });
+  const diagnostic = await measureScreenVisibility(
+    [image, image, image],
+    screens,
+    {
+      includeUndetected: true,
+    },
+  );
+  expect(diagnostic.clear).toBe(false);
+  expect(diagnostic.screens[0].visibleFraction).toBe(0);
 });
 
 it('tolerates scattered misses when every tile still responds', async () => {

@@ -1024,9 +1024,12 @@ export class CalibrationWorkflow {
     options: {
       reuseVisibleMarkers?: boolean;
       deferImagingCalibration?: boolean;
+      reuseAppliedPerspective?: boolean;
+      signal?: AbortSignal;
     } = {},
   ) {
     return this.configureSetup(async () => {
+      options.signal?.throwIfAborted();
       let request: string | undefined;
       let mapped = false;
       const previousMapping =
@@ -1038,50 +1041,57 @@ export class CalibrationWorkflow {
       this.mappingCheck = 'checking';
       this.changed();
       try {
-        const result = await this.configuration.map(output, async () => {
-          // An unchanged mapping can be confirmed while the touch preview is open.
-          // A fresh optical check needs the phone to paint the codes again.
-          const view = this.phoneView().view;
-          const page = this.phone.update;
-          if (
-            options.reuseVisibleMarkers &&
-            view === 'markers' &&
-            page?.markersPainted
-          )
-            return;
-          let expected = this.markerRequest;
-          if (!expected) {
+        const result = await this.configuration.map(
+          output,
+          async () => {
+            options.signal?.throwIfAborted();
+            // An unchanged mapping can be confirmed while the touch preview is open.
+            // A fresh optical check needs the phone to paint the codes again.
+            const view = this.phoneView().view;
+            const page = this.phone.update;
             if (
-              view !== 'touch-preview' &&
-              !(
-                view === 'markers' &&
-                (page?.markersPainted === false ||
-                  page?.markerRequest !== undefined)
-              )
+              options.reuseVisibleMarkers &&
+              view === 'markers' &&
+              page?.markersPainted
             )
               return;
-            request = this.requestMarkerDisplay();
-            expected = request;
-          }
-          const deadline = Date.now() + 12000;
-          while (!this.markerObservation(expected)) {
-            if (this.markerRequest !== expected || Date.now() >= deadline)
-              throw new RobotArmError(
-                'PAGE_CHANGED',
-                'The phone did not report visible screen markers. Keep the paired page in the foreground.',
-                409,
-              );
-            this.phone.assertAvailable();
-            await delay(80);
-          }
-        });
+            let expected = this.markerRequest;
+            if (!expected) {
+              if (
+                !options.reuseAppliedPerspective &&
+                view !== 'touch-preview' &&
+                !(
+                  view === 'markers' &&
+                  (page?.markersPainted === false ||
+                    page?.markerRequest !== undefined)
+                )
+              )
+                return;
+              request = this.requestMarkerDisplay();
+              expected = request;
+            }
+            const deadline = Date.now() + 12000;
+            while (!this.markerObservation(expected)) {
+              if (this.markerRequest !== expected || Date.now() >= deadline)
+                throw new RobotArmError(
+                  'PAGE_CHANGED',
+                  'The phone did not report visible screen markers. Keep the paired page in the foreground.',
+                  409,
+                );
+              this.phone.assertAvailable();
+              await delay(80, undefined, { signal: options.signal });
+            }
+          },
+          options.signal,
+        );
         mapped = Boolean(result.mapping);
         const mappingChanged =
           mapped &&
           (!previousMapping ||
             previousMapping.vision.fingerprint !==
               result.mapping!.vision.fingerprint);
-        if (mappingChanged) {
+        // A page-only mapping leaves the perspective and its imaging binding intact.
+        if (mappingChanged && !options.reuseAppliedPerspective) {
           await this.releaseImaging();
           if (!options.deferImagingCalibration)
             void this.startImagingCalibration();

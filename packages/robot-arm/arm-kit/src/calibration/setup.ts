@@ -269,7 +269,9 @@ export class CalibrationSetup {
   async map(
     output?: AssistedMappingInput,
     beforeCapture?: () => Promise<void>,
+    signal?: AbortSignal,
   ) {
+    signal?.throwIfAborted();
     this.inputSnapshot();
     if (output) {
       if (
@@ -316,6 +318,7 @@ export class CalibrationSetup {
       )
     ) {
       if (!this.mapping) await this.vision.assertPerspectiveCurrent?.();
+      signal?.throwIfAborted();
       this.phone!.assertAvailable();
       if (
         !sameLayout(layout, this.phone!.update!.layout) ||
@@ -335,6 +338,7 @@ export class CalibrationSetup {
     await beforeCapture?.();
     const display = this.phone.assertAvailable();
     const checkPage = () => {
+      signal?.throwIfAborted();
       const page = this.phone.assertAvailable();
       if (
         page.pageId !== pageId ||

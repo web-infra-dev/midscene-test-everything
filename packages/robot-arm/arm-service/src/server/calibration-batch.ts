@@ -4,10 +4,12 @@ import {
   type CalibrationProfile,
   type CartesianPose,
   RobotArmError,
+  type ScreenVisibilityEvidence,
   type SharedParkingEvidence,
   calibrationAccepted,
   semanticJson,
 } from '@midscene/arm-kit';
+import type { CalibrationHost } from '@midscene/arm-kit/internal/calibration-server/host';
 import { insideCameraParkingFootprint } from '@midscene/arm-kit/internal/calibration/camera-avoidance';
 import {
   confirmVisibilityPages,
@@ -38,6 +40,10 @@ const terminal = (status: string) => ['completed', 'skipped'].includes(status);
 export class CalibrationBatch {
   private state?: CalibrationBatchState;
   private abort?: AbortController;
+  private visibilityDebug?: {
+    abort: AbortController;
+    task: Promise<ScreenVisibilityEvidence>;
+  };
   private task?: Promise<void>;
   private busy = false;
   private starting = false;
@@ -53,7 +59,13 @@ export class CalibrationBatch {
   private transfer?: CalibrationBatchPlan['transfer'];
   constructor(private readonly devices: PlaygroundDevices) {}
   get active() {
-    return Boolean(this.task || this.starting || this.stopping || this.busy);
+    return Boolean(
+      this.task ||
+        this.starting ||
+        this.stopping ||
+        this.busy ||
+        this.visibilityDebug,
+    );
   }
   private get runtime() {
     return controllerRuntime(this.devices.arm);
@@ -207,50 +219,52 @@ export class CalibrationBatch {
       if (camera?.getCorrection()) await camera.assertPerspectiveCurrent();
     }
   }
-  private entries(cameraId: string) {
-    const data = this.runtime.profileStore.list();
-    const input = this.selection(cameraId);
+  private mappedTargets(cameraId: string) {
     return this.devices
       .screens()
       .filter(
         (t) =>
           t.cameraId === cameraId &&
           this.devices.entries.get(t.id)?.camera.getCorrection(),
-      )
-      .map((target) => {
-        const binding = data.devices?.find((d) => d.deviceId === target.id);
-        const c =
-          binding &&
-          data.calibrations.find((c) => c.id === binding.calibrationProfileId);
-        const screen =
-          binding && data.screens.find((s) => s.id === binding.screenProfileId);
-        const savedCalibration =
-          c &&
-          screen &&
-          binding &&
-          calibrationAccepted(c, c.pendingParkingBatchId) &&
-          c.robotProfileId === input.robotProfileId &&
-          c.toolProfileId === input.toolProfileId &&
-          c.robotGeometryRevision ===
-            this.runtime.profileStore.getRobot(input.robotProfileId)
-              .geometryRevision &&
-          c.toolGeometryRevision ===
-            this.runtime.profileStore.getTool(input.toolProfileId)
-              .geometryRevision &&
-          c.screenGeometryRevision === screen.geometryRevision
-            ? c
-            : undefined;
-        const calibration =
-          savedCalibration &&
-          this.devices.entries
-            .get(target.id)!
-            .camera.isBindingCurrent(binding!.vision)
-            ? savedCalibration
-            : undefined;
-        const cameraMappingChanged =
-          !calibration && calibrationAccepted(savedCalibration);
-        return { target, binding, calibration, screen, cameraMappingChanged };
-      });
+      );
+  }
+  private entries(cameraId: string) {
+    const data = this.runtime.profileStore.list();
+    const input = this.selection(cameraId);
+    return this.mappedTargets(cameraId).map((target) => {
+      const binding = data.devices?.find((d) => d.deviceId === target.id);
+      const c =
+        binding &&
+        data.calibrations.find((c) => c.id === binding.calibrationProfileId);
+      const screen =
+        binding && data.screens.find((s) => s.id === binding.screenProfileId);
+      const savedCalibration =
+        c &&
+        screen &&
+        binding &&
+        calibrationAccepted(c, c.pendingParkingBatchId) &&
+        c.robotProfileId === input.robotProfileId &&
+        c.toolProfileId === input.toolProfileId &&
+        c.robotGeometryRevision ===
+          this.runtime.profileStore.getRobot(input.robotProfileId)
+            .geometryRevision &&
+        c.toolGeometryRevision ===
+          this.runtime.profileStore.getTool(input.toolProfileId)
+            .geometryRevision &&
+        c.screenGeometryRevision === screen.geometryRevision
+          ? c
+          : undefined;
+      const calibration =
+        savedCalibration &&
+        this.devices.entries
+          .get(target.id)!
+          .camera.isBindingCurrent(binding!.vision)
+          ? savedCalibration
+          : undefined;
+      const cameraMappingChanged =
+        !calibration && calibrationAccepted(savedCalibration);
+      return { target, binding, calibration, screen, cameraMappingChanged };
+    });
   }
   private estimates(cameraId: string) {
     const entries = this.entries(cameraId);
@@ -312,14 +326,29 @@ export class CalibrationBatch {
       ? pose
       : undefined;
   }
-  private async visibilityInputs(cameraId: string, signal: AbortSignal) {
+  private async visibilityInputs(
+    cameraId: string,
+    check: () => void,
+    resumePages = false,
+  ) {
     await this.assertPerspectives(cameraId);
-    this.check(signal);
-    const entries = this.entries(cameraId);
+    check();
+    const targets = this.mappedTargets(cameraId);
     const phones = await Promise.all(
-      entries.map(async ({ target }) => {
+      targets.map(async (target) => {
         const entry = this.devices.entries.get(target.id)!;
         const host = await this.devices.ensureHost(target.id);
+        if (resumePages && host.service.phoneStatus().state !== 'connected') {
+          await this.devices.markerCalibration.resumeBoundPage(host);
+          const deadline = performance.now() + 3000;
+          while (
+            host.service.phoneStatus().state !== 'connected' &&
+            performance.now() < deadline
+          ) {
+            check();
+            await delay(50);
+          }
+        }
         const correction = entry.camera.getCorrection();
         if (!correction)
           throw new RobotArmError(
@@ -340,7 +369,7 @@ export class CalibrationBatch {
         };
       }),
     );
-    const camera = this.devices.entries.get(entries[0]?.target.id)?.camera;
+    const camera = this.devices.entries.get(targets[0]?.id)?.camera;
     if (!camera)
       throw new RobotArmError(
         'VISIBILITY_UNAVAILABLE',
@@ -351,11 +380,11 @@ export class CalibrationBatch {
       phones,
       frame: () => camera.rawFrame(),
       check: () => {
-        this.check(signal);
+        check();
         if (
           semanticJson(
-            this.entries(cameraId).map(({ target }) => target.id),
-          ) !== semanticJson(entries.map(({ target }) => target.id)) ||
+            this.mappedTargets(cameraId).map((target) => target.id),
+          ) !== semanticJson(targets.map((target) => target.id)) ||
           phones.some(
             (phone) =>
               semanticJson(
@@ -370,6 +399,39 @@ export class CalibrationBatch {
           );
       },
     };
+  }
+  async debugVisibility(cameraId: string, signal: AbortSignal) {
+    this.devices.assertBatchIdle();
+    this.assertNoScreenCalibration();
+    if (!this.mappedTargets(cameraId).length)
+      throw new RobotArmError(
+        'MAPPING_REQUIRED',
+        'Apply the screen perspective results first',
+        409,
+      );
+    const abort = new AbortController();
+    const probeSignal = AbortSignal.any([signal, abort.signal]);
+    const stopRevision = this.runtime.stopRevision;
+    const check = () => {
+      probeSignal.throwIfAborted();
+      this.runtime.assertStopRevision(stopRevision);
+    };
+    const task = (async () => {
+      const {
+        phones,
+        frame,
+        check: checkInputs,
+      } = await this.visibilityInputs(cameraId, check, true);
+      return verifyScreenVisibility(phones, frame, probeSignal, checkInputs, {
+        includeUndetected: true,
+      });
+    })();
+    this.visibilityDebug = { abort, task };
+    try {
+      return await task;
+    } finally {
+      this.visibilityDebug = undefined;
+    }
   }
   private async recordSharedParking(
     pose: CartesianPose,
@@ -755,6 +817,112 @@ export class CalibrationBatch {
     await delay(150, undefined, { signal });
     this.check(signal);
   }
+  private async waitForPhone(host: CalibrationHost, signal: AbortSignal) {
+    const state = this.state!;
+    const row = state.items[state.currentIndex];
+    if (!host.service.setup().prepared)
+      throw new RobotArmError(
+        'SETUP_REQUIRED',
+        'Save tool configuration first',
+        409,
+      );
+    if (!host.service.setup().phoneConnected)
+      await this.devices.markerCalibration.resumeBoundPage(host);
+    const deadline = performance.now() + 15_000;
+    while (!host.service.setup().phoneConnected && !this.choice) {
+      if (performance.now() >= deadline)
+        throw new RobotArmError(
+          'PHONE_UNAVAILABLE',
+          'Open the phone page and retry this step',
+          409,
+        );
+      if (row.status !== 'awaiting-mapping')
+        await this.update(() => {
+          state.status = 'waiting';
+          row.status = 'awaiting-mapping';
+          row.note = 'Keep the phone page visible and fullscreen';
+        });
+      await this.wait(signal);
+    }
+    this.check(signal);
+  }
+  private async prepareCamera(signal: AbortSignal) {
+    const state = this.state!;
+    const cameraId = state.cameraId!;
+    const prepared: CalibrationHost[] = [];
+    for (let index = 0; index < state.items.length; index++) {
+      this.check(signal);
+      const row = state.items[index];
+      if (terminal(row.status)) continue;
+      await this.update(() => {
+        state.currentIndex = index;
+        state.status = 'running';
+        row.status = 'preparing';
+      });
+      const host = await this.devices.ensureHost(row.deviceId);
+      await this.waitForPhone(host, signal);
+      const choice = this.choice;
+      this.choice = undefined;
+      if (choice === 'retry') {
+        index--;
+        continue;
+      }
+      if (!choice) {
+        if (state.status === 'waiting')
+          await this.update(() => {
+            state.status = 'running';
+            row.status = 'preparing';
+            row.note = undefined;
+          });
+        if (!host.service.setup().mapping) {
+          await host.alignForBatch(signal, state.samplingMode === 'slide', {
+            reuseAppliedPerspective: true,
+          });
+          this.check(signal);
+          const contextVersion = this.contextVersion(cameraId);
+          if (state.transfer && contextVersion !== state.contextVersion)
+            throw new RobotArmError(
+              'STALE_CONTEXT',
+              'Review the calibration plan again before starting.',
+              409,
+            );
+          state.contextVersion = contextVersion;
+        }
+        prepared.push(host);
+      }
+      await this.update(() => {
+        state.status = 'running';
+        row.status = choice === 'skip' ? 'skipped' : 'pending';
+        row.note = undefined;
+      });
+    }
+    if (!prepared.length) return;
+    await this.update(() => {
+      state.currentIndex = state.items.findIndex(
+        (row) => !terminal(row.status),
+      );
+    });
+    this.check(signal);
+    for (const host of prepared) {
+      const setup = host.service.setup();
+      if (!setup.phoneConnected || !setup.mapping)
+        throw new RobotArmError(
+          'MAPPING_REQUIRED',
+          'Keep the phone page visible and fullscreen',
+          409,
+        );
+    }
+    const imaging = prepared[0].service.setup().imaging?.state;
+    if (imaging === 'ready' || imaging === 'unsupported') return;
+    await this.update(() => {
+      const row = state.items[state.currentIndex];
+      row.status = 'preparing';
+      row.note = 'Calibrating camera focus and exposure';
+    });
+    this.check(signal);
+    await this.devices.calibrateCameraImaging(cameraId);
+    this.check(signal);
+  }
   private async run(
     signal: AbortSignal,
     operatorConfirmedParking: boolean,
@@ -762,6 +930,8 @@ export class CalibrationBatch {
     const state = this.state!;
     let last: CalibrationProfile | undefined;
     try {
+      if (!state.items.some((row) => row.runIds.length))
+        await this.prepareCamera(signal);
       for (; state.currentIndex < state.items.length; state.currentIndex++) {
         const row = state.items[state.currentIndex];
         if (terminal(row.status)) continue;
@@ -783,38 +953,21 @@ export class CalibrationBatch {
           try {
             await this.assertPerspectives(state.cameraId!);
             this.check(signal);
-            const setup = host.service.setup();
-            if (!setup.prepared)
-              throw new RobotArmError(
-                'SETUP_REQUIRED',
-                'Save tool configuration first',
-                409,
-              );
-            if (!host.service.setup().phoneConnected)
-              await this.devices.markerCalibration.resumeBoundPage(host);
-            const phoneDeadline = performance.now() + 15_000;
-            while (!host.service.setup().phoneConnected) {
-              if (performance.now() >= phoneDeadline)
-                throw new RobotArmError(
-                  'PHONE_UNAVAILABLE',
-                  'Open the phone page and retry this step',
-                  409,
-                );
-              if (row.status !== 'awaiting-mapping')
-                await this.update(() => {
-                  row.status = 'awaiting-mapping';
-                  state.status = 'waiting';
-                  row.note = 'Keep the phone page visible and fullscreen';
-                });
-              await this.wait(signal);
-              if (this.choice) break;
-            }
+            await this.waitForPhone(host, signal);
             if (this.choice) throw new Error('Batch screen changed');
             if (!host.service.setup().mapping)
-              await host.alignForBatch(signal, state.samplingMode === 'slide');
-            const imaging = host.service.setup().imaging;
-            if (!imaging || !['ready', 'unsupported'].includes(imaging.state))
-              await this.devices.calibrateCameraImaging(state.cameraId!);
+              throw new RobotArmError(
+                'MAPPING_REQUIRED',
+                'Check camera mapping before starting calibration',
+                409,
+              );
+            const imaging = host.service.setup().imaging?.state;
+            if (imaging !== 'ready' && imaging !== 'unsupported')
+              throw new RobotArmError(
+                'MAPPING_REQUIRED',
+                'Finish camera mapping to calibrate focus and exposure automatically.',
+                409,
+              );
             this.check(signal);
             let session = await host.service.create({ batch: true });
             attemptId = session.id;
@@ -1115,7 +1268,7 @@ export class CalibrationBatch {
           async (signal) => {
             const { phones, frame, check } = await this.visibilityInputs(
               state.cameraId!,
-              signal,
+              () => this.check(signal),
             );
             return verifyScreenVisibility(phones, frame, signal, check);
           },
@@ -1123,7 +1276,7 @@ export class CalibrationBatch {
           async () => {
             const { phones, check } = await this.visibilityInputs(
               state.cameraId!,
-              signal,
+              () => this.check(signal),
             );
             await confirmVisibilityPages(phones, signal, check);
           },
@@ -1256,7 +1409,12 @@ export class CalibrationBatch {
       );
     // Stop must preempt ordinary commands and stale UI revisions, as in the original flow.
     if (action === 'stop') return this.stopActive(true);
-    if (this.busy || this.stopping || state.revision !== revision)
+    if (
+      this.busy ||
+      this.stopping ||
+      this.visibilityDebug ||
+      state.revision !== revision
+    )
       throw new RobotArmError(
         'STALE_CONTEXT',
         'Refresh the calibration batch before continuing',
@@ -1373,10 +1531,7 @@ export class CalibrationBatch {
           ) {
             await host.service.command(session.id, 'verify-boundary', true);
           } else if (row.status === 'awaiting-mapping')
-            await host.alignForBatch(
-              this.abort!.signal,
-              this.state?.samplingMode === 'slide',
-            );
+            await this.devices.markerCalibration.resumeBoundPage(host);
           else if (row.status === 'awaiting-placement') {
             if ((await this.runtime.state()).state.dragMode)
               await this.runtime.exitDragMode();
@@ -1416,6 +1571,8 @@ export class CalibrationBatch {
     await this.runtime.profileStore.clearCalibrationBatch();
   }
   async close() {
+    this.visibilityDebug?.abort.abort();
+    await this.visibilityDebug?.task.catch(() => undefined);
     await this.stopActive(false);
     await this.writes;
   }
