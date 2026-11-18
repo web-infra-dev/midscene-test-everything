@@ -1,3 +1,7 @@
+<p align="center">
+  <img alt="Midscene Test Everything" width="160" src="https://github.com/user-attachments/assets/f60de3c1-dd6f-4213-97a1-85bf7c6e79e4"><br />
+</p>
+
 <h1 align="center">iOS AirLink</h1>
 
 <p align="center">
@@ -44,7 +48,6 @@
 - **硬件**：一台开启蓝牙的 Mac（仅支持 macOS），以及一台可解锁的 iPhone。
 - **Node.js**：`20.19+`（20.x）、`22.12+`（22.x）或 `24+`（通过 `node --version` 检查）。
 - **Xcode Command Line Tools**：用于编译原生组件（通过 `xcode-select -p` 检查，缺失时运行 `xcode-select --install`）。
-- **视觉模型**：准备好可用的视觉模型 API Key（按 [Universal Device 文档](https://midscenejs.com/zh/universal-device/)配置环境变量）。
 - **系统权限**：首次运行时，按 macOS 弹窗提示允许蓝牙和相机/采集权限。
 
 可以根据测试场景灵活选择画面来源，并准备对应环境：

@@ -1,3 +1,7 @@
+<p align="center">
+  <img alt="Midscene Test Everything" width="160" src="https://github.com/user-attachments/assets/f60de3c1-dd6f-4213-97a1-85bf7c6e79e4"><br />
+</p>
+
 <h1 align="center">iOS AirLink</h1>
 
 <p align="center">
@@ -44,7 +48,6 @@ Traditional iOS automation tools (such as Appium / WebDriverAgent) typically req
 - **Hardware:** A Mac (macOS) with Bluetooth on, and an iPhone you can unlock.
 - **Node.js:** `20.19+` (20.x), `22.12+` (22.x), or `24+` (`node --version`).
 - **Xcode Command Line Tools:** Used to compile native helpers (`xcode-select -p`, or `xcode-select --install` if missing).
-- **Vision model:** An API key configured for Midscene (see the [Universal Device docs](https://midscenejs.com/universal-device/)).
 - **macOS permissions:** Allow Bluetooth and Camera/capture prompts when macOS asks on first run.
 
 Choose a screen source for your scenario and prepare the corresponding setup:

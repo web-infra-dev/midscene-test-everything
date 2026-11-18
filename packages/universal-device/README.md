@@ -1,3 +1,7 @@
+<p align="center">
+  <img alt="Midscene Test Everything" width="160" src="https://github.com/user-attachments/assets/f60de3c1-dd6f-4213-97a1-85bf7c6e79e4"><br />
+</p>
+
 <h1 align="center">Midscene Universal Device</h1>
 
 <p align="center">
