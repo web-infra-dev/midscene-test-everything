@@ -473,19 +473,8 @@ describe('MG400 transport boundary', () => {
       // Direct adapter callers can select a different joint.
       await f.adapter.startJog({ joint: 3, direction: -1 });
       await f.adapter.stopJog();
-      // A guarded descent sets a slow controller-wide factor and restores it.
-      await f.adapter.startJog({ axis: 'z', direction: -1 }, 2);
-      await f.adapter.stopJog();
-      expect(f.commands.indexOf('SpeedFactor(2)')).toBeGreaterThan(-1);
-      expect(f.commands.indexOf('SpeedFactor(2)')).toBeLessThan(
-        f.commands.indexOf('MoveJog(Z-)'),
-      );
-      expect(f.commands.indexOf('SpeedFactor(50)')).toBeGreaterThan(
-        f.commands.indexOf('MoveJog(Z-)'),
-      );
       expect(f.commands).toContain('MoveJog(X+)');
       expect(f.commands).toContain('MoveJog(J4-)');
-      expect(f.commands).toContain('MoveJog(Z-)');
       expect(f.commands).toContain('MoveJog()');
       expect(f.commands).toContain('RobotMode()');
     } finally {

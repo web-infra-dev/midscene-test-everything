@@ -175,8 +175,6 @@ const EMERGENCY_STOP_CONFIRM_MS = 5000;
 const JOG_COMMAND_TIMEOUT_MS = 1200;
 /** How long `RobotMode()` may keep reporting JOG after a release. */
 const JOG_STOP_CONFIRM_MS = 1500;
-/** Controller-wide speed factor when a guarded jog does not override it. */
-const MG400_DEFAULT_SPEED_FACTOR = 50;
 /**
  * Backoff for reopening channels the controller closed on its own. DobotStudio
  * takes the command channel while it is in `tp` mode and hands it back when the
@@ -1005,8 +1003,6 @@ export class Mg400Adapter implements RobotArmAdapter {
   private motion: TextChannel;
   /** True between `MoveJog(axisID)` and a confirmed release. */
   private jogActive = false;
-  /** Speed factor this adapter set for a guarded jog, restored on release. */
-  private jogSpeedFactor?: number;
   /**
    * The controller resets the connection that carried `MoveJog` when the jog
    * ends. That close is expected and must not be read as a lost robot.
@@ -2405,19 +2401,12 @@ export class Mg400Adapter implements RobotArmAdapter {
    * commands. Sending it on the queued-motion channel made the controller reset
    * that connection right after acknowledging, which looked like a lost robot.
    */
-  async startJog(target: JogTarget, speedFactor?: number) {
+  async startJog(target: JogTarget) {
     this.requireConnected();
     const axis = jogAxis(target);
     // A state refresh already in flight can time out against the jogging
     // controller and take the dashboard channel down with it.
     await this.stateRefresh?.catch(() => undefined);
-    // Jog speed follows the controller-wide speed factor. A guarded contact
-    // search needs a few mm/s, so set it before the jog and restore it after.
-    if (speedFactor !== undefined) {
-      const factor = Math.min(100, Math.max(1, Math.round(speedFactor)));
-      await this.dashboard.send(`SpeedFactor(${factor})`);
-      this.jogSpeedFactor = factor;
-    }
     // A timeout means the acknowledgement is unknown, not that the arm did
     // not start. Keep release enabled so the runtime watchdog can stop it.
     this.jogActive = true;
@@ -2461,18 +2450,6 @@ export class Mg400Adapter implements RobotArmAdapter {
       );
     } finally {
       this.jogReleasing = false;
-      await this.restoreJogSpeed();
-    }
-  }
-  /** Jog speed is controller-wide; leave it at the documented default. */
-  private async restoreJogSpeed() {
-    const factor = this.jogSpeedFactor;
-    if (factor === undefined) return;
-    this.jogSpeedFactor = undefined;
-    try {
-      await this.dashboard.send(`SpeedFactor(${MG400_DEFAULT_SPEED_FACTOR})`);
-    } catch (error) {
-      logMg400(`speed factor restore failed: ${String(error)}`);
     }
   }
   private async reopenDashboard(): Promise<void> {

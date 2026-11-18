@@ -33,7 +33,6 @@ describe('first-time automatic exploration', () => {
     'fast-offset-hysteresis',
     'fast-reported-failure',
     'fast-tilt-audit',
-    'fast-guarded',
     'press-recovers',
     'bad-validation',
     'fast-no-touch',
@@ -326,20 +325,6 @@ describe('first-time automatic exploration', () => {
         validateCalibration: () => undefined,
         validateScreenTargets: () => undefined,
         currentPose: async () => actualPose,
-        descendGuarded: async ({ startTipZ }: { startTipZ: number }) => {
-          expect(mode).toBe('fast-guarded');
-          // The jog stops 0.6 mm inside the contact bracket; the sampler must
-          // lift clear and re-measure it with the normal bracket.
-          const stopTipZ = activationZ - 0.6;
-          actualPose = pose(100, -50, stopTipZ);
-          contact = contactPoint(actualPose, f.tool.offsetMm);
-          lowestZ = Math.min(lowestZ, contact.z);
-          return {
-            contacted: true,
-            stopTipZ: stopTipZ >= startTipZ ? startTipZ : stopTipZ,
-            elapsedMs: 5000,
-          };
-        },
         screenCalib,
         progress: (current: CalibrationSession) => {
           if (current.auto?.progress?.message === 'Initial touch · refine')
@@ -358,7 +343,6 @@ describe('first-time automatic exploration', () => {
               collection: mode.endsWith('slide')
                 ? ('slide' as const)
                 : ('tap' as const),
-              guardedInitialSearch: mode === 'fast-guarded',
             }
           : {}),
       });
@@ -394,12 +378,6 @@ describe('first-time automatic exploration', () => {
           return;
         }
         const collection = await job;
-        if (mode === 'fast-guarded') {
-          expect(samplingTiming.get('initial-search-guarded')).toBe(1);
-          // The guarded stop is 0.6 mm deep; the bracket still reports the
-          // real surface height within its 0.25 mm interval.
-          expect(collection.probes[0].contact.z).toBeCloseTo(activationZ, 1);
-        }
         expect(collection.probes).toHaveLength(3);
         expect(collection.grid).toHaveLength(isFast ? 6 : 9);
         if (mode === 'standard') expect(finalPressCount).toBe(12);

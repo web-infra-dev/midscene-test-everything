@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { getDebug } from '@midscene/shared/logger';
 import {
   type AutomaticCaptureHost,
   type AutomaticCaptureMotionTiming,
@@ -35,14 +34,6 @@ import type {
 const fail = (message: string): never => {
   throw new RobotArmError('AUTOMATIC_CAPTURE_FAILED', message, 409);
 };
-/** Controller speed factor for the first guarded descent (a few mm/s). */
-const GUARDED_SPEED_FACTOR = 2;
-const GUARDED_POLL_MS = 40;
-const GUARDED_RENEW_MS = 200;
-const GUARDED_POSE_MS = 100;
-/** Hard stop even when the pose never reaches the descent cap. */
-const GUARDED_TIMEOUT_MS = 12_000;
-const log = getDebug('robot-arm:web-calibration', { console: true });
 
 /** Phone challenges bracket every descent and every stationary pose sample. */
 export class AutomaticCapture {
@@ -170,84 +161,6 @@ export class AutomaticCapture {
         409,
       );
   }
-  /**
-   * Jog down slowly and stop on the phone's contact flag. The returned pose is
-   * somewhere inside the contact bracket (the jog overrun), so the sampler
-   * re-measures it with the normal bracket before trusting the height.
-   */
-  private async descendGuarded(
-    host: AutomaticCaptureHost,
-    input: { x: number; y: number; startTipZ: number; maxDescentMm: number },
-  ) {
-    if (!host.jog || !host.stopJog)
-      throw new RobotArmError(
-        'UNSUPPORTED',
-        'Guarded descent is not available on this host',
-        409,
-      );
-    const leaseId = randomUUID();
-    const startedAt = performance.now();
-    const target = { axis: 'z' as const, direction: -1 as const };
-    let contacted = false;
-    let lastRenew = 0;
-    let lastPose = 0;
-    let stopError: unknown;
-    await host.jog(target, {
-      leaseId,
-      speedFactor: GUARDED_SPEED_FACTOR,
-    });
-    try {
-      for (;;) {
-        this.check(host);
-        const latest = this.latest;
-        if (latest && latest.pageId === this.pageId && latest.contact) {
-          contacted = true;
-          break;
-        }
-        const now = performance.now();
-        if (now - startedAt > GUARDED_TIMEOUT_MS) break;
-        if (host.pose && now - lastPose >= GUARDED_POSE_MS) {
-          lastPose = now;
-          const pose = await host.pose();
-          if (
-            input.startTipZ - contactPoint(pose, this.offset).z >=
-            input.maxDescentMm
-          )
-            break;
-        }
-        if (now - lastRenew >= GUARDED_RENEW_MS) {
-          lastRenew = now;
-          await host.jog(target, { leaseId });
-        }
-        await delay(GUARDED_POLL_MS, undefined, { signal: host.signal });
-      }
-    } finally {
-      try {
-        await host.stopJog(leaseId);
-      } catch (error) {
-        stopError = error;
-      }
-    }
-    if (stopError) {
-      // A jog that cannot be confirmed stopped must not continue sampling.
-      await host.stop?.().catch(() => undefined);
-      throw stopError;
-    }
-    const pose = await host.read();
-    const stopTipZ = contactPoint(pose, this.offset).z;
-    const elapsedMs = performance.now() - startedAt;
-    // Bench validation needs the jog speed and how deep the stop overran.
-    log(
-      `Guarded descent ${JSON.stringify({
-        startTipZ: input.startTipZ,
-        stopTipZ,
-        depthMm: input.startTipZ - stopTipZ,
-        contacted,
-        elapsedMs,
-      })}`,
-    );
-    return { contacted, stopTipZ, elapsedMs };
-  }
   private async move(
     host: AutomaticCaptureHost,
     pose: CartesianPose,
@@ -268,8 +181,6 @@ export class AutomaticCapture {
       tool: ToolProfile;
       webToImage: number[];
       minimumTravelTipZMm?: number;
-      /** Opt in to the guarded jog first touch (bench-validated builds only). */
-      guardedInitialSearch?: boolean;
       onTiming?(event: string, elapsedMs: number): void;
     },
   ) {
@@ -391,7 +302,6 @@ export class AutomaticCapture {
     const bridge: AutoExplorationHost = {
       check: () => this.check(host),
       currentPose: () => host.read(),
-      descendGuarded: (input) => this.descendGuarded(host, input),
       move: async (pose, _ctx, speed, acceleration) => {
         motionTiming = undefined;
         const actual = await this.move(host, pose, {
@@ -525,7 +435,6 @@ export class AutomaticCapture {
         mode: this.mode === 'standard' ? 'standard' : 'fast-horizontal',
         collection: this.mode === 'slide' ? 'slide' : 'tap',
         horizontalConfirmed: this.mode !== 'standard',
-        guardedInitialSearch: config.guardedInitialSearch,
         onTiming: config.onTiming,
       },
     );

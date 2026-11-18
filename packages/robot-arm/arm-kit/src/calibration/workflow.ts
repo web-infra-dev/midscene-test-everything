@@ -1879,11 +1879,6 @@ export class CalibrationWorkflow {
               this.batchTravelTipZMm ?? Number.NEGATIVE_INFINITY,
             ),
             onTiming: trackTiming,
-            // Opt-in until the guarded jog speed and stop overrun are measured
-            // on a bench; the stepped search remains the fallback.
-            guardedInitialSearch:
-              s.explorationMode !== 'standard' &&
-              process.env.MIDSCENE_GUARDED_TOUCH === '1',
             screen: {
               ...input.motion!,
               id: s.id,

@@ -327,24 +327,6 @@ export class RobotArmRuntime extends RobotKernel {
         signal,
         check,
         stop: () => this.adapter.stop(),
-        jog: async (target, options) => {
-          check();
-          await this.startJog(target, options?.leaseId, options?.speedFactor);
-          check();
-        },
-        stopJog: async (leaseId) => {
-          await this.stopJog(leaseId);
-          check();
-        },
-        pose: async () => {
-          // Cached pose is enough to bound a guarded jog; a fresh read waits
-          // for motion to settle and would defeat the contact search.
-          check();
-          const pose = await this.adapter.getPose();
-          assertPose(pose);
-          check();
-          return structuredClone(pose);
-        },
         preflight: async (poses, motion) => {
           for (const pose of poses) {
             check();
@@ -3249,15 +3231,11 @@ export class RobotArmRuntime extends RobotKernel {
    * so the runtime holds a short lease: every renewal extends it, and losing the
    * caller (closed tab, dropped request) stops the arm on its own.
    */
-  startJog(
-    target: JogTarget,
-    leaseId?: string,
-    speedFactor?: number,
-  ): Promise<void> {
+  startJog(target: JogTarget, leaseId?: string): Promise<void> {
     const stopVersion = this.jogStopVersion;
     const revision = this.stopRevision;
     return this.queueJog(() =>
-      this.startJogNow(target, leaseId, stopVersion, revision, speedFactor),
+      this.startJogNow(target, leaseId, stopVersion, revision),
     );
   }
 
@@ -3266,7 +3244,6 @@ export class RobotArmRuntime extends RobotKernel {
     leaseId: string | undefined,
     stopVersion: number,
     revision: number,
-    speedFactor?: number,
   ): Promise<void> {
     const released = () => {
       if (stopVersion !== this.jogStopVersion) {
@@ -3321,7 +3298,7 @@ export class RobotArmRuntime extends RobotKernel {
       this.jogLease = leaseId;
       this.jogTarget = target;
       this.armJogWatchdog();
-      await jog(target, speedFactor);
+      await jog(target);
     }
     // A release can arrive while the controller acknowledges the start. The
     // queued stop owns cleanup; never re-arm its lease after that release.

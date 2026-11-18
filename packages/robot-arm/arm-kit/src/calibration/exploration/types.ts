@@ -114,8 +114,6 @@ export interface AutoExplorationOptions {
   mode?: 'standard' | 'fast-horizontal';
   collection?: 'tap' | 'slide';
   horizontalConfirmed?: boolean;
-  /** Try the guarded jog descent for the first touch instead of 2 mm steps. */
-  guardedInitialSearch?: boolean;
   /** Optional timing sink; events carry the elapsed wall time of one stage. */
   onTiming?(event: string, elapsedMs: number): void;
 }
@@ -134,17 +132,6 @@ export interface AutoExplorationHost {
   ): Promise<void>;
   check(): void;
   stop?(): Promise<void>;
-  /**
-   * Jog down from the current pose until the phone reports contact, a distance
-   * cap is reached, or the descent times out. Returns how far below the start
-   * the stylus stopped; the caller refines the contact height from there.
-   */
-  descendGuarded?(input: {
-    x: number;
-    y: number;
-    startTipZ: number;
-    maxDescentMm: number;
-  }): Promise<{ contacted: boolean; stopTipZ: number; elapsedMs: number }>;
   progress?(session: CalibrationSession): void;
   profileStore: {
     saveSession(

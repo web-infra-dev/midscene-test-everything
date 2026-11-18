@@ -11,7 +11,6 @@ import type {
   Vector3,
   VisionBinding,
 } from './contracts.js';
-import type { JogTarget } from './kernel/contracts.js';
 export * from './calibration-quality.js';
 
 export const CALIBRATION_CLICK_RADIUS_PX = 13;
@@ -490,17 +489,6 @@ export interface AutomaticCaptureHost {
   check(): void;
   read(): Promise<CartesianPose>;
   stop?(): Promise<void>;
-  /**
-   * Continuous guarded descent. `speedFactor` is the controller-wide jog
-   * speed; `leaseId` renews the same jog so a lost caller stops the arm.
-   */
-  jog?(
-    target: JogTarget,
-    options?: { leaseId?: string; speedFactor?: number },
-  ): Promise<void>;
-  stopJog?(leaseId?: string): Promise<void>;
-  /** Cached pose without waiting for the current motion to settle. */
-  pose?(): Promise<CartesianPose>;
   move(
     pose: CartesianPose,
     options?: {
