@@ -799,7 +799,8 @@ export class CalibrationWorkflow {
   startImagingCalibration(): Promise<void> {
     if (this.imagingRun) return this.imagingRun;
     const current = this.options.vision.imagingStatus?.() ?? this.imagingStatus;
-    if (current?.state === 'ready') return Promise.resolve();
+    if (current?.state === 'ready' || current?.state === 'unsupported')
+      return Promise.resolve();
     const generation = ++this.imagingGeneration;
     const run = this.calibrateImaging(generation);
     this.imagingRun = run;

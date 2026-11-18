@@ -63,7 +63,7 @@ async function setup() {
           prepared: true,
           phoneConnected: true,
           mapping: {},
-          imaging: { state: 'ready' },
+          imaging: { state: 'unsupported' },
         }),
         create: async () => {
           const state = {
@@ -293,6 +293,7 @@ it('holds the shared queue while waiting for acceptance and retains completed sc
     expect(f.batch.read()?.items[0].status).toBe('awaiting-acceptance'),
   );
   expect(f.starts).toEqual(['one']);
+  expect(f.devices.calibrateCameraImaging).not.toHaveBeenCalled();
   let otherRan = false;
   const other = f.queue.enqueue('other-device', async () => {
     otherRan = true;

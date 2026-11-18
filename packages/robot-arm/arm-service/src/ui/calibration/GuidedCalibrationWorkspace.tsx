@@ -851,8 +851,9 @@ function GuidedContent({
     for (;;) {
       const setup = await client.assistedCalibrationSetup();
       const imaging = setup.imaging;
-      if (imaging?.state === 'ready') return;
-      if (imaging?.state === 'error' || imaging?.state === 'unsupported')
+      if (imaging?.state === 'ready' || imaging?.state === 'unsupported')
+        return;
+      if (imaging?.state === 'error')
         throw new Error(
           imaging.message ?? 'Could not calibrate camera focus and exposure.',
         );

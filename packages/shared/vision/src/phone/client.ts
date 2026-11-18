@@ -16,9 +16,12 @@ export function mountCalibrationPhonePage(
     typeof CALIBRATION_PHONE_POLICY & { verificationRadiusPx: number },
   pageId: string,
 ): void {
-  const zh = (
-    new URLSearchParams(location.search).get('lang') || navigator.language
-  ).startsWith('zh');
+  const airlink = document.body.dataset.appearance === 'airlink';
+  const zh =
+    !airlink &&
+    (
+      new URLSearchParams(location.search).get('lang') || navigator.language
+    ).startsWith('zh');
   const text = {
     waiting: [
       '已连接，请在电脑端继续。',
@@ -121,6 +124,8 @@ export function mountCalibrationPhonePage(
     return value;
   };
   const message = element('message');
+  const airlinkTitle = airlink ? element('page-title') : undefined;
+  const airlinkBrand = airlink ? element('midscene-phone-brand') : undefined;
   const connection = element('connection');
   const target = element('target');
   const number = element('target-number');
@@ -130,7 +135,9 @@ export function mountCalibrationPhonePage(
     target.classList.remove('touched');
   };
   hideGuidance();
-  message.textContent = label('connecting');
+  message.textContent = airlinkTitle
+    ? 'Keep this page open.'
+    : label('connecting');
   const newId = () =>
     crypto.randomUUID
       ? crypto.randomUUID()
@@ -399,6 +406,8 @@ export function mountCalibrationPhonePage(
   }
   let lastGridKey: string | undefined;
   function paint(next: CalibrationPageReply) {
+    // Keep the camera's view free of branding after the connection is ready.
+    if (airlinkBrand) airlinkBrand.hidden = true;
     document.body.dataset.stage = next.view;
     document.body.dataset.imageTrial = String(Boolean(next.imageTrial));
     document.body.dataset.connectionError = String(Boolean(next.error));
@@ -502,7 +511,14 @@ export function mountCalibrationPhonePage(
         ? (next.error ?? '')
         : '';
     if (next.view === 'capture-failed') message.textContent = label('retry');
+    if (airlinkTitle) {
+      airlinkTitle.textContent = 'Camera alignment';
+      if (next.view === 'markers' && !next.error)
+        message.textContent =
+          'Keep this page open while you finish setup in AirLink.';
+    }
     if (next.view === 'markers' && insetReason === 'awaiting-origin-tap') {
+      if (airlinkTitle) airlinkTitle.textContent = 'Locate this page';
       message.textContent = zh
         ? '请轻点页面一次，以确定网页在屏幕上的位置。'
         : 'Tap the page once to locate it on the screen.';
@@ -511,6 +527,7 @@ export function mountCalibrationPhonePage(
       insetReason === 'no-safe-area-or-positive-touch-origin' &&
       /iPhone/i.test(navigator.userAgent)
     ) {
+      if (airlinkTitle) airlinkTitle.textContent = 'Add to Home Screen';
       message.textContent = zh
         ? '在 Safari 选择「分享 → 添加到主屏幕」，再从主屏幕图标打开标定页。'
         : 'In Safari, choose Share → Add to Home Screen, then reopen this page from its icon.';
@@ -684,7 +701,16 @@ export function mountCalibrationPhonePage(
       hideGuidance();
       document.body.dataset.connectionError = 'true';
       const replaced = event.code === 4410;
+      if (airlinkBrand) airlinkBrand.hidden = false;
       message.textContent = label(replaced ? 'replaced' : 'offline');
+      if (airlinkTitle) {
+        airlinkTitle.textContent = replaced
+          ? 'Screen opened elsewhere'
+          : 'Reconnecting…';
+        message.textContent = replaced
+          ? 'Continue on the other page, or close this one.'
+          : 'Keep this page open while AirLink reconnects.';
+      }
       connection.textContent = '';
       if (replaced) {
         reconnectStopped = true;

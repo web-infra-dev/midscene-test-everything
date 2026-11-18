@@ -627,7 +627,10 @@ test('phone follows six-point sliding progress and preserves the failed endpoint
     capture,
     error: 'No touch within the fast local recovery range',
   });
-  expect(phone.elements.get('message')?.textContent).toContain(
+  expect(phone.elements.get('message')?.textContent).toBe(
+    'Check sample 5 on your computer.',
+  );
+  expect(phone.elements.get('error-detail')?.textContent).toContain(
     'Touch recovery failed',
   );
   expect(phone.elements.get('target')?.dataset).toMatchObject({

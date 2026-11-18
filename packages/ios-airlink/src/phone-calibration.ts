@@ -17,7 +17,7 @@ export class PhoneCalibration {
   private phone(id: string, token: string) {
     let phone = this.phones.get(id);
     if (!phone) {
-      phone = new ScreenPhoneServer(token);
+      phone = new ScreenPhoneServer(token, { appearance: 'airlink' });
       this.phones.set(id, phone);
     }
     return phone;
