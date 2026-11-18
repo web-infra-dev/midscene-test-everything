@@ -24,7 +24,10 @@ export class ScreenPhoneServer {
   private starting?: Promise<void>;
   private server = createServer((req, res) => this.handle(req, res));
 
-  constructor(private token: string = randomUUID()) {}
+  constructor(
+    private token: string = randomUUID(),
+    private options: { appearance?: 'airlink' } = {},
+  ) {}
 
   handle(req: IncomingMessage, res: ServerResponse) {
     const url = new URL(req.url ?? '/', 'http://localhost');
@@ -44,7 +47,7 @@ export class ScreenPhoneServer {
       'Cache-Control': 'no-store',
       'Referrer-Policy': 'no-referrer',
     });
-    res.end(calibrationPhonePage(this.session.openPage()));
+    res.end(calibrationPhonePage(this.session.openPage(), this.options));
   }
   upgrade(req: IncomingMessage, stream: Duplex, head: Buffer) {
     const url = new URL(req.url ?? '/', 'http://localhost');

@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { midscenePhoneLogo } from '@midscene/robotics-vision/phone/brand';
 import {
   CALIBRATION_CLICK_RADIUS_PX,
   CALIBRATION_MARKERS,
@@ -15,6 +16,7 @@ const asset = (name: string) =>
 const awakeScript = asset('awake.js').toString('utf8');
 const awakeVideo = `data:video/mp4;base64,${asset('awake.mp4').toString('base64')}`;
 const touchStyles = asset('touch.css').toString('utf8');
+const pageStyles = asset('page.css').toString('utf8');
 
 export function phoneMarkerElements(markerCodes?: readonly number[]) {
   return CALIBRATION_MARKERS.map(
@@ -32,7 +34,8 @@ export function calibrationPhonePage(
   cameraPreview = false,
 ): string {
   const markers = phoneMarkerElements(markerCodes).join('');
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="referrer" content="no-referrer"><title>Midscene Calibration</title><style>
+  const screenId = label?.replace(/[<&>"]/g, '') ?? '';
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="referrer" content="no-referrer"><title>Midscene Calibration</title><style>
 *{box-sizing:border-box}html{touch-action:none;overscroll-behavior:none}body{isolation:isolate;--marker-size:min(100px,18vmin);margin:0;background:#fff;color:#1f2329;font:14px -apple-system,BlinkMacSystemFont,sans-serif;touch-action:none;overscroll-behavior:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}#surface{position:fixed;inset:0;overflow:hidden;touch-action:none}
 #instructions{position:absolute;z-index:1;left:50%;top:50%;transform:translate(-50%,-50%);width:calc(100% - 48px);max-width:320px;display:grid;gap:8px;text-align:center;pointer-events:none}header{font-weight:600;font-size:13px}#page-label{font-size:11px;letter-spacing:.14em;color:#8c8c8c}#page-label:empty{display:none}#message{color:#646a73;font-size:12px;line-height:1.5}#connection{color:#646a73;font-size:11px}#connection:empty,#touch-status:empty{display:none}#touch-status{font-size:11px;color:#ad5700}
 body[data-preview][data-connection-error=true] .mapping-marker,body[data-stage]:not([data-stage=markers]) .mapping-marker{visibility:hidden}body[data-inset-markers=true] .mapping-marker{top:var(--inset-y)}.mapping-marker{top:var(--marker-y);position:absolute;transform:translate(-50%,-50%);pointer-events:none}body[data-stage=markers] #instructions{top:31%}@media(max-height:450px){body[data-stage=markers] #instructions header,body[data-stage=markers] #connection{display:none}}.marker{display:block;flex:none;width:var(--marker-size);height:var(--marker-size);image-rendering:pixelated}
@@ -45,7 +48,8 @@ ${touchStyles}
 body[data-verification=true] #instructions,body[data-stage=collect] #target,body[data-stage=collect] #instructions{display:none}
 #fullscreen-controls{position:fixed;z-index:5;top:39%;left:50%;transform:translate(-50%,-50%);width:min(80vw,340px);text-align:center}#fullscreen-controls button{padding:8px 16px}#fullscreen-help:not([hidden]){display:block;background:white}#wake-gesture{display:none}body[data-wake-blocked=true] #wake-gesture{display:inline-block}body[data-display-ready=false] .mapping-marker,body[data-display-ready=false] #target{visibility:hidden}body:is([data-stage=collect],[data-stage=safety],[data-stage=verify],[data-stage=returning],[data-stage=completed]) #wake-gesture{display:none}#fullscreen-controls{pointer-events:none}#fullscreen-controls button{pointer-events:auto}
 body[data-stage=waiting] #page-label{font-size:clamp(28px,9vmin,54px);font-weight:700;color:#1f2329;letter-spacing:.08em}body[data-stage=waiting] #fullscreen-controls{top:auto;bottom:max(20px,env(safe-area-inset-bottom));transform:translateX(-50%)}body[data-stage=waiting] :is(#mapping-trail,#mapping-hit,#touch-status,#target,#capture-grid){display:none!important}
-</style></head><body${cameraPreview ? ' data-camera-preview="true"' : ''} data-display-ready="false" data-wake-video="${awakeVideo}" data-stage="markers"${markerCodes ? ' data-preview data-connection-error="true"' : ''}><main id="surface"><div id="selection-hint" hidden><span id="selection-label" role="status"></span></div><div id="instructions"><header id="page-title">Midscene · Calibration</header><div id="page-label">${label ? label.replace(/[<&>"]/g, '') : ''}</div><div id="message"></div><div id="connection"></div><div id="touch-status" role="status"></div></div>${markers}<div id="approach-guides" aria-hidden="true">
+${pageStyles}
+</style></head><body${cameraPreview ? ' data-camera-preview="true"' : ''} data-display-ready="false" data-wake-video="${awakeVideo}" data-stage="markers"${markerCodes ? ' data-preview data-connection-error="true"' : ''}><main id="surface"><div id="page-brand"><span>${midscenePhoneLogo}Midscene · Screen Calibration</span><span id="screen-id">${screenId}</span></div><div id="selection-hint" hidden><span id="selection-label" role="status"></span></div><div id="instructions"><header id="page-title">Connecting to your computer</header><div id="page-label">${screenId}</div><div id="message"></div><div id="connection"></div><div id="error-detail"></div><div id="touch-status" role="status"></div></div>${markers}<div id="approach-guides" aria-hidden="true">
           <span class="approach-reference" data-corner="1">1</span>
           <span class="approach-reference" data-corner="2">2</span>
           <span class="approach-reference" data-corner="3">3</span>

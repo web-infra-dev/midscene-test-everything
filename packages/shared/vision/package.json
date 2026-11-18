@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": ["dist", "native"],
+  "files": ["dist", "native", "assets/phone"],
   "scripts": {
     "build": "rslib build",
     "typecheck": "tsc --noEmit -p tsconfig.build.json && tsc --noEmit -p tsconfig.tests.json",

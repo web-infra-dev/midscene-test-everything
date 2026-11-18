@@ -27,134 +27,48 @@ export function mountCalibrationPhonePage(
     resume(): void;
   },
 ): void {
-  const zh = (
-    new URLSearchParams(location.search).get('lang') || navigator.language
-  ).startsWith('zh');
   const text = {
-    keepOpen: [
-      '保持本页打开，在电脑端选择此设备。',
-      'Keep this page open and select this device on your computer.',
-    ],
-    waiting: [
-      '已连接，请在电脑端继续。',
-      'Connected. Continue on your computer.',
-    ],
-    preview: [
-      '轻触或滑动可查看实际触点。',
-      'Touch or slide to see the contact trace.',
-    ],
-    closed: ['标记预览已结束。', 'Marker preview closed.'],
-    connecting: ['正在连接电脑…', 'Connecting to your computer…'],
-    position: [
-      '请先在电脑端记录屏幕上方的标定参考位。',
+    keepOpen:
+      'On your computer, select the matching code. Keep this page open.',
+    waiting: 'Connected. Continue on your computer.',
+    preview: 'Tap or swipe to see where the screen registers contact.',
+    closed: 'Marker preview closed.',
+    connecting: 'Connecting to your computer…',
+    recordPosition: 'Record the reference position on your computer.',
+    position:
       'Record a calibration reference position above the screen on your computer.',
-    ],
-    slide: [
-      '正在滑向下一个采样点，请勿触碰手机。',
-      'Sliding to the next sample. Do not touch the phone.',
-    ],
-    recover: [
-      '当前点触摸丢失，正在有限范围内重新探测。',
-      'Touch lost at this point. Recovering within the bounded range.',
-    ],
-    release: ['正在抬笔确认触摸释放。', 'Lifting to confirm touch release.'],
-    search: [
-      '正在逐步寻找接触高度。',
-      'Finding screen contact in bounded steps.',
-    ],
-    refine: ['正在细化接触高度。', 'Refining the contact height.'],
-    press: ['正在确认稳定触摸。', 'Confirming stable touch.'],
-    travel: ['正在屏幕上方移向下一个点。', 'Moving above the next point.'],
-    recorded: [
-      '此点已记录，继续采样。',
-      'Point recorded. Continuing collection.',
-    ],
-    recoveryFailed: [
-      '此点未恢复触摸，采样已停止。请查看电脑端失败位置。',
-      'Touch recovery failed. Sampling stopped; review the endpoint on the computer.',
-    ],
-    collect: [
-      '机械臂正在自动探测，请勿触碰手机或机械臂。',
-      'Automatic probing is running. Do not touch the phone or robot.',
-    ],
-    retry: [
-      '本轮采集未通过，拖动模式保持开启。请查看电脑端提示，选择重新采集。',
-      'Collection needs retry. Drag Mode remains active. Check the computer and collect again.',
-    ],
-    hold: [
-      '正在记录本步触点，请保持工作区清空…',
-      'Recording this step’s touch. Keep the workspace clear…',
-    ],
-    movement: [
-      '请稍微停一下，正在等待稳定读数。',
-      'Pause briefly. Waiting for steady readings.',
-    ],
-    latency: [
-      '读数延迟，正在继续采集。',
-      'Readings delayed. Continuing collection.',
-    ],
-    lift: [
-      '已记录，机械臂正在自动抬笔。',
-      'Recorded. The robot is lifting automatically.',
-    ],
-    returnReady: [
-      '请在电脑端确认安全位置，保持工作区清空。',
+    slide: 'Sliding to the next sample. Do not touch the phone.',
+    recover: 'Touch lost at this point. Recovering within the bounded range.',
+    release: 'Lifting to confirm touch release.',
+    search: 'Finding screen contact in bounded steps.',
+    refine: 'Refining the contact height.',
+    press: 'Confirming stable touch.',
+    travel: 'Moving above the next point.',
+    recorded: 'Point recorded. Continuing collection.',
+    recoveryFailed: 'Touch recovery failed.',
+    collect: 'Automatic probing is running. Do not touch the phone or robot.',
+    retry: 'Drag mode is still active. Retry sampling from your computer.',
+    hold: 'Recording this step’s touch. Keep the workspace clear…',
+    movement: 'Pause briefly. Waiting for steady readings.',
+    latency: 'Readings delayed. Continuing collection.',
+    lift: 'Recorded. The robot is lifting automatically.',
+    returnReady:
       'Check the safe position on the computer and keep the work area clear.',
-    ],
-    returning: [
-      '正在准备边界验证，请保持工作区清空。',
-      'Preparing boundary verification. Keep the workspace clear.',
-    ],
-    safe: [
-      '正在自动检查悬停与接触边界，请保持工作区清空。',
-      'Automatically verifying hover and contact boundaries. Keep the workspace clear.',
-    ],
-    verify: [
-      '正在验证点击，请勿触碰手机。',
-      'Verifying touches. Do not touch the phone.',
-    ],
-    boundaryReview: [
-      '采集已结束，请在电脑端复核测量结果并确认是否开始边界验证。',
+    returning: 'Preparing boundary verification. Keep the workspace clear.',
+    safe: 'Automatically verifying hover and contact boundaries. Keep the workspace clear.',
+    verify: 'Do not touch the screen.',
+    boundaryReview:
       'Sampling complete. Review the measurements on the computer before starting boundary verification.',
-    ],
-    verificationFailed: [
-      '验证未通过，请在电脑端查看结果。',
+    verificationFailed:
       'Verification failed. Review the results on your computer.',
-    ],
-    review: [
-      '边界验证完成，请在电脑端查看结果。',
+    review:
       'Boundary verification complete. Review the results on your computer.',
-    ],
-    done: [
-      '标定已完成，可返回手机应用。',
-      'Calibration complete. You can return to your app.',
-    ],
-    interrupted: [
-      '标定已中断，请在电脑端重新开始。',
-      'Calibration interrupted. Start again on your computer.',
-    ],
-    offline: [
-      '与电脑的连接已断开，正在自动重连…',
-      'Disconnected. Reconnecting automatically…',
-    ],
-    replaced: [
-      '标定已切换到新页面，可以关闭此页。',
-      'Calibration switched to a new page. You can close this one.',
-    ],
+    done: 'You can close this page.',
+    interrupted: 'Review the interruption on your computer.',
+    offline: 'Disconnected. Reconnecting automatically…',
+    replaced: 'Calibration switched to a new page. You can close this one.',
   };
-  const label = (key: keyof typeof text) => text[key][zh ? 0 : 1];
-  const phoneErrorsZh: Record<string, string> = {
-    'No touch before the safe descent limit; collected points are retained':
-      '安全下探范围内仍未接触屏幕，采样已停止。',
-    'Touch recovery budget exhausted; collected points are retained':
-      '本轮补探次数已用完，采样已停止。',
-    'Phone step acknowledgement timed out. Touch at this position is unknown.':
-      '手机未在时限内确认本步，当前位置的接触状态未知。请检查标定页和连接后重试。',
-    'The phone cancelled the active pointer. Touch at this position is unknown.':
-      '手机浏览器取消了当前触点，当前位置的接触状态未知。',
-    'Phone contact changed while the robot was stationary. This position could not be measured.':
-      '机械臂静止期间，手机回报的触点未稳定，本次位置未计入测量。',
-  };
+  const label = (key: keyof typeof text) => text[key];
   const element = (id: string) => {
     const value = document.getElementById(id);
     if (!value) throw new Error(`Missing calibration element: ${id}`);
@@ -163,10 +77,9 @@ export function mountCalibrationPhonePage(
   const message = element('message');
   const pageTitle = element('page-title');
   const selectionHint = element('selection-hint');
-  element('selection-label').textContent = zh
-    ? '已选中此设备'
-    : 'This device is selected';
+  element('selection-label').textContent = 'This device is selected';
   const connection = element('connection');
+  const errorDetail = element('error-detail');
   const target = element('target');
   const number = element('target-number');
   const hideGuidance = () => {
@@ -576,17 +489,11 @@ export function mountCalibrationPhonePage(
     });
     const legend = document.createElement('div');
     legend.className = 'verification-legend';
-    legend.textContent =
-      guide.group === 'hover'
-        ? zh
-          ? '悬停边界'
-          : 'Hover boundary'
-        : zh
-          ? '轻触示意'
-          : 'Light contact';
-    legend.textContent += zh
-      ? '\n橙色：计划路径 · 蓝色：实际触摸\n请对照笔尖、触摸轨迹与编号十字中心，保持屏幕不动。'
-      : '\nOrange: planned path · Blue: actual touch\nCompare the tip and trace with the numbered crosshairs. Keep still.';
+    legend.textContent = [
+      guide.group === 'hover' ? 'Hover boundary' : 'Light contact',
+      'Orange: planned path · Blue: actual touch',
+      'Compare the tip and trace with the numbered crosshairs. Keep still.',
+    ].join('\n');
     view.append(legend);
   }
   let paintedKey: string | undefined;
@@ -704,14 +611,32 @@ export function mountCalibrationPhonePage(
         }),
       );
     }
-    const title =
-      next.view === 'waiting'
-        ? zh
-          ? '屏幕页面'
-          : 'Screen page'
-        : 'Midscene · Calibration';
-    pageTitle.textContent = title;
-    document.title = title;
+    const titles: Record<CalibrationPageReply['view'], string> = {
+      waiting: 'Select this screen',
+      markers: 'Locating the screen',
+      'camera-tuning': 'Camera setup',
+      'touch-preview': 'Touch preview',
+      positioning: 'Set the reference position',
+      collect: 'Sampling',
+      'reference-required': 'Reference position required',
+      'capture-failed': 'Sampling failed',
+      'return-ready': 'Confirm the safe position',
+      returning: 'Preparing boundary verification',
+      safety: 'Checking screen boundaries',
+      verify: 'Verifying touches',
+      review:
+        next.reviewStage === 'boundary-review'
+          ? 'Review the measurements'
+          : next.reviewStage === 'verification-failed'
+            ? 'Verification failed'
+            : 'Boundary verification complete',
+      completed: 'Calibration complete',
+      interrupted: 'Sampling stopped',
+    };
+    pageTitle.textContent = titles[next.view];
+    document.title = `Midscene · ${titles[next.view]}`;
+    delete document.body.dataset.connectionState;
+    document.body.dataset.reviewStage = next.reviewStage ?? '';
     document.body.dataset.imageTrial = String(Boolean(next.imageTrial));
     document.body.dataset.connectionError = String(Boolean(next.error));
     document.body.dataset.probePhase = next.automaticPhase ?? 'grid';
@@ -748,7 +673,7 @@ export function mountCalibrationPhonePage(
       'camera-tuning': 'waiting',
       waiting: 'keepOpen',
       'touch-preview': 'preview',
-      positioning: 'position',
+      positioning: 'recordPosition',
       collect: 'collect',
       'capture-failed': 'retry',
       'reference-required': 'position',
@@ -779,9 +704,7 @@ export function mountCalibrationPhonePage(
     const error =
       next.error === 'No touch within the fast local recovery range'
         ? label('recoveryFailed')
-        : next.error && zh
-          ? (phoneErrorsZh[next.error] ?? next.error)
-          : next.error;
+        : next.error;
     message.textContent =
       error ||
       label(
@@ -798,11 +721,18 @@ export function mountCalibrationPhonePage(
                   : stages[next.view],
       );
     connection.textContent = capture
-      ? `${capture.mode === 'slide' ? (zh ? '快速' : 'Fast') : capture.mode === 'fast' ? (zh ? '快速探测' : 'Fast probing') : (zh ? '普通' : 'Regular')} · ${next.automaticPhase === 'local' ? (zh ? '方向探点' : 'Direction probe') : zh ? '网格点' : 'Grid point'} ${capture.index} / ${capture.total}`
-      : next.view === 'capture-failed'
-        ? (error ?? '')
-        : '';
-    if (next.view === 'capture-failed') message.textContent = label('retry');
+      ? `${capture.mode === 'slide' ? 'Fast' : capture.mode === 'fast' ? 'Fast probing' : 'Regular'} · ${next.automaticPhase === 'local' ? 'Direction probe' : 'Grid point'} ${capture.index} / ${capture.total}`
+      : '';
+    errorDetail.textContent = '';
+    if (next.view === 'capture-failed' || next.view === 'interrupted') {
+      message.textContent =
+        next.view === 'capture-failed'
+          ? label('retry')
+          : capture
+            ? `Check sample ${capture.index} on your computer.`
+            : label('interrupted');
+      errorDetail.textContent = error ?? '';
+    }
     const visibleTarget =
       capture?.target ??
       (next.view === 'verify' && !next.error ? next.target : undefined);
@@ -989,24 +919,16 @@ export function mountCalibrationPhonePage(
       (!state || state.view === 'waiting' || state.view === 'markers')
     ) {
       fullscreenHelp.hidden = false;
-      fullscreenHelp.textContent = zh
-        ? '请轻点页面一次，以确定网页在屏幕上的位置。'
-        : 'Tap the page once to locate it on the screen.';
+      fullscreenHelp.textContent =
+        'Tap the page once to locate it on the screen.';
       return;
     }
-    fullscreenHelp.hidden = finished || ready || switching;
+    fullscreenHelp.hidden =
+      finished || ready || switching || !fullscreenButton.hidden;
     fullscreenHelp.textContent =
       platform === 'ios'
-        ? zh
-          ? '请用 Safari 打开，选择「分享 → 添加到主屏幕」，再从主屏幕图标打开标定页。'
-          : 'In Safari, choose Share → Add to Home Screen, then open the calibration page from its icon.'
-        : zh
-          ? enter
-            ? '进入全屏后，标定会自动继续。'
-            : '请通过浏览器菜单进入全屏以继续标定。'
-          : enter
-            ? 'Enter full screen to continue calibration automatically.'
-            : 'Use the browser menu to enter full screen and continue calibration.';
+        ? 'In Safari, choose Share → Add to Home Screen, then open the calibration page from its icon.'
+        : 'Use the browser menu to enter full screen and continue calibration.';
   }
   async function enterFullscreen(fromGesture = false) {
     if (fullscreenReady()) return;
@@ -1042,7 +964,7 @@ export function mountCalibrationPhonePage(
     }
   }
   if (fullscreenButton) {
-    fullscreenButton.textContent = zh ? '进入全屏' : 'Enter full screen';
+    fullscreenButton.textContent = 'Enter full screen';
     fullscreenButton.onclick = () => enterFullscreen(true);
     for (const event of ['fullscreenchange', 'webkitfullscreenchange'])
       document.addEventListener(event, send);
@@ -1051,9 +973,8 @@ export function mountCalibrationPhonePage(
         .matchMedia?.(`(display-mode: ${mode})`)
         .addEventListener?.('change', send);
   }
-  element('wake-gesture').textContent = zh
-    ? '浏览器已阻止保持常亮'
-    : 'Screen wake lock blocked by the browser';
+  element('wake-gesture').textContent =
+    'Screen wake lock blocked by the browser';
   function startDisplay() {
     if (displayFinished) return;
     void awake.start();
@@ -1234,8 +1155,10 @@ export function mountCalibrationPhonePage(
               /* Transport renewal does not require storage. */
             }
           }
-          if (typeof next.label === 'string')
+          if (typeof next.label === 'string') {
             element('page-label').textContent = next.label;
+            element('screen-id').textContent = next.label;
+          }
           pageId = next.pageId;
           reconnectDelay = 1000;
           connect();
@@ -1332,6 +1255,17 @@ export function mountCalibrationPhonePage(
         ended ? 'closed' : replaced ? 'replaced' : 'offline',
       );
       connection.textContent = '';
+      errorDetail.textContent = '';
+      document.body.dataset.connectionState = replaced
+        ? 'replaced'
+        : ended
+          ? 'closed'
+          : 'offline';
+      pageTitle.textContent = replaced
+        ? 'Screen opened elsewhere'
+        : ended
+          ? 'Preview closed'
+          : 'Reconnecting';
       if (replaced || ended) {
         document.body.dataset.stage = 'completed';
         displayFinished = true;
@@ -1342,12 +1276,14 @@ export function mountCalibrationPhonePage(
         if (replaced) {
           const claim = document.createElement('button');
           claim.type = 'button';
-          claim.textContent = zh
-            ? '\u4f7f\u7528\u6b64\u9875\u9762'
-            : 'Use This Page';
+          claim.id = 'takeover-page';
+          claim.textContent = 'Use This Page';
           claim.onclick = () => {
             if (document.hidden) return;
             claim.remove();
+            document.body.dataset.connectionState = 'offline';
+            pageTitle.textContent = 'Reconnecting';
+            message.textContent = label('offline');
             claimBrowserInstance = true;
             reconnectStopped = false;
             reconnectTimer = undefined;
