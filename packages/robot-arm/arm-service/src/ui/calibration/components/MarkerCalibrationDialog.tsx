@@ -231,6 +231,7 @@ export function MarkerCalibrationDialog({
   const [creating, setCreating] = useState(false);
   const [reconnectAttempt, setReconnectAttempt] = useState(0);
   const [detecting, setDetecting] = useState(false);
+  const [handoffPending, setHandoffPending] = useState(false);
   const [countdown, setCountdown] = useState<{
     seconds: number;
     retry: boolean;
@@ -979,6 +980,7 @@ export function MarkerCalibrationDialog({
       )
         return;
       setDetecting(true);
+      setHandoffPending(false);
       setError(undefined);
       const controller = new AbortController();
       detectionController.current = controller;
@@ -1028,6 +1030,12 @@ export function MarkerCalibrationDialog({
                 );
             },
             response(response) {
+              if (
+                response.session.targets.some(
+                  (target) => target.state === 'succeeded',
+                )
+              )
+                return;
               setSession((current) =>
                 mergeSession(current, {
                   ...response.session,
@@ -1045,6 +1053,13 @@ export function MarkerCalibrationDialog({
             target.state === 'succeeded',
         );
         robotCue.play(succeeded ? 'found' : 'click');
+        // Keep the calibration displays after success: the console hands each
+        // assigned page over to page mapping without a second scan.
+        if (controller.signal.aborted || activeSessionId.current !== session.id)
+          return;
+        handingOff.current = true;
+        setHandoffPending(true);
+        await onDetected(response.session, response, detectionTargetIds, token);
         setSession(
           mergeSession(session, {
             ...response.session,
@@ -1053,12 +1068,7 @@ export function MarkerCalibrationDialog({
             ),
           }),
         );
-        // Keep the calibration displays after success: the console hands each
-        // assigned page over to page mapping without a second scan.
-        if (controller.signal.aborted || activeSessionId.current !== session.id)
-          return;
-        handingOff.current = true;
-        await onDetected(response.session, response, detectionTargetIds, token);
+        await new Promise((resolve) => setTimeout(resolve, 600));
         activeSessionId.current = undefined;
         activeToken.current = undefined;
         onClose('detected');
@@ -1072,6 +1082,7 @@ export function MarkerCalibrationDialog({
         if (detectionController.current === controller)
           detectionController.current = undefined;
         setCountdown(undefined);
+        setHandoffPending(false);
         setDetecting(false);
       }
     },
@@ -1783,7 +1794,15 @@ export function MarkerCalibrationDialog({
           />
         ) : null}
         {active && !countdown ? (
-          <Alert showIcon type="info" message={t('Detecting markers')} />
+          <Alert
+            showIcon
+            type="info"
+            message={t(
+              handoffPending
+                ? 'Calibrating camera intrinsics'
+                : 'Detecting markers',
+            )}
+          />
         ) : null}
         <SetupNotice
           notice={

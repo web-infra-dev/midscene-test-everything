@@ -12,7 +12,7 @@ import {
   Typography,
   message,
 } from 'antd';
-import { House } from 'lucide-react';
+import { House, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type {
   CameraPhoneReadiness,
@@ -66,6 +66,7 @@ export function PhoneConnectDialog({
   onRestoreHome,
   onWake,
   onForget,
+  onDeletePage,
   connectingDeviceId,
   connectError,
 }: {
@@ -98,6 +99,8 @@ export function PhoneConnectDialog({
   onWake?: (deviceId: string) => Promise<void> | void;
   /** Forgets an offline page record whose browser identity is gone. */
   onForget?: (deviceId: string) => Promise<void> | void;
+  /** Deletes the bound screen, perspective and page record together. */
+  onDeletePage?: (pageId: string, screenId: string) => Promise<void> | void;
   connectingDeviceId?: string;
   connectError?: string;
 }) {
@@ -135,6 +138,7 @@ export function PhoneConnectDialog({
   const [savingScreenId, setSavingScreenId] = useState<string>();
   const [screenRenameError, setScreenRenameError] = useState<string>();
   const [restoringPageId, setRestoringPageId] = useState<string>();
+  const [deletingScreenId, setDeletingScreenId] = useState<string>();
   const [pageActionError, setPageActionError] = useState<string>();
   const openedRef = useRef(false);
   useEffect(() => {
@@ -245,6 +249,12 @@ export function PhoneConnectDialog({
       message.success(t('Restored the page to its home view.'));
     });
     setRestoringPageId(undefined);
+  };
+  const deleteScreen = async (pageId: string, screenId: string) => {
+    if (!onDeletePage) return;
+    setDeletingScreenId(screenId);
+    await runPageAction(() => onDeletePage(pageId, screenId));
+    setDeletingScreenId(undefined);
   };
   /*
    * A page belongs to the selected camera when it is bound to it. A page that is
@@ -575,6 +585,25 @@ export function PhoneConnectDialog({
                         >
                           {t('Bind to this camera')}
                         </Button>
+                      ) : null}
+                      {device.screenId && onDeletePage ? (
+                        <Popconfirm
+                          title={t('Delete Screen?')}
+                          okText={t('Delete Screen')}
+                          onConfirm={() =>
+                            void deleteScreen(device.id, device.screenId!)
+                          }
+                        >
+                          <Button
+                            danger
+                            icon={<Trash2 size={14} />}
+                            loading={deletingScreenId === device.screenId}
+                            size="small"
+                            type="text"
+                          >
+                            {t('Delete Screen')}
+                          </Button>
+                        </Popconfirm>
                       ) : null}
                     </div>
                     {device.cameraId === cameraId && onRenamePage ? (

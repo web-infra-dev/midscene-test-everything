@@ -27,3 +27,18 @@ it('can serve a stale camera list without probing the devices again', async () =
   await registry.listDevices({ refresh: true });
   expect(listDevices).toHaveBeenCalledTimes(2);
 });
+
+it('forwards hardware controls to the underlying camera backend', async () => {
+  const control = { deviceId: 'camera' };
+  const openHardwareControl = rstest.fn(async () => control);
+  const registry = new DeviceRegistry({
+    listDevices: async () => [],
+    openStream: async () => {
+      throw new Error('not used');
+    },
+    openHardwareControl,
+  } as never);
+
+  await expect(registry.openHardwareControl('camera')).resolves.toBe(control);
+  expect(openHardwareControl).toHaveBeenCalledWith('camera');
+});

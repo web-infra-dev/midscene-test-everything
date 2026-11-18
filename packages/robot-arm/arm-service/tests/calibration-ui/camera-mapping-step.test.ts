@@ -3,6 +3,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { mergeSession } from '../../src/ui/calibration/components/MarkerCalibrationDialog';
 import { CameraMappingStep } from '../../src/ui/calibration/components/robot-arm/CameraMappingStep';
+import { t } from '../../src/ui/calibration/i18n';
 
 const camera = { name: 'Bench camera', online: true };
 const screens = [
@@ -106,6 +107,58 @@ it('marks the mapping confirmed once the page and the perspective are in place',
   expect(html).toContain('校正透视');
 });
 
+it('omits manual mapping confirmation after the mapping is already ready', () => {
+  const render = (mappingReady: boolean) =>
+    renderToStaticMarkup(
+      createElement(CameraMappingStep, {
+        camera,
+        screens,
+        screenId: 'screen-a',
+        base: '/api/devices/screen-a/calibration',
+        correction,
+        phoneConnected: true,
+        mappingReady,
+        footer: null,
+        onPair() {},
+        onDetect() {},
+        onApply: async () => {},
+        onConfirm: async () => {},
+        onContinue() {},
+        refresh: async () => {},
+      }),
+    );
+
+  expect(render(true)).not.toContain(t('Confirm Camera Mapping'));
+  expect(render(false)).toContain(t('Confirm Camera Mapping'));
+});
+
+it('omits the diagnostics and selected-screen delete footer', () => {
+  const html = renderToStaticMarkup(
+    createElement(CameraMappingStep, {
+      camera,
+      screens,
+      screenId: 'screen-a',
+      base: '/api/devices/screen-a/calibration',
+      correction,
+      output: { width: 400, height: 300 },
+      phoneConnected: true,
+      mappingReady: true,
+      footer: null,
+      onPair() {},
+      onDetect() {},
+      onApply: async () => {},
+      onConfirm: async () => {},
+      onClear: async () => {},
+      onContinue() {},
+      refresh: async () => {},
+    }),
+  );
+
+  expect(html).not.toContain(t('Diagnostics'));
+  expect(html).not.toContain(t('Delete Screen'));
+  expect(html).not.toContain('camera-checklist-status');
+});
+
 it('shows a failed mapping check against an applied perspective until confirmation succeeds', () => {
   const render = (mappingError?: string) =>
     renderToStaticMarkup(
@@ -170,6 +223,31 @@ it('names every screen that already has a perspective applied', () => {
   expect(html).toContain('Screen A');
   expect(html).toContain('Screen B');
   expect(html).not.toContain('尚未应用透视');
+});
+
+it('marks each uncalibrated screen by name', () => {
+  const html = renderToStaticMarkup(
+    createElement(CameraMappingStep, {
+      camera,
+      screens: [
+        { id: 'screen-a', name: 'Screen A', correction },
+        { id: 'screen-b', name: 'Screen B' },
+      ],
+      screenId: 'screen-a',
+      base: '/api/devices/screen-a/calibration',
+      correction,
+      phoneConnected: true,
+      footer: null,
+      onPair() {},
+      onDetect() {},
+      onApply: async () => {},
+      onContinue() {},
+      refresh: async () => {},
+    }),
+  );
+  expect(html).toMatch(/ant-tag-success[\s\S]*?Screen A/);
+  expect(html).toMatch(/ant-tag-warning[\s\S]*?Screen B/);
+  expect(html).toContain(`${t('Perspective not applied')} · Screen B`);
 });
 
 it('shows that no perspective is applied yet', () => {
@@ -241,7 +319,7 @@ it('offers clearing the applied perspective without dropping the screen', () => 
   const withClear = renderToStaticMarkup(
     createElement(CameraMappingStep, { ...props, onClear: async () => {} }),
   );
-  expect(withClear).toContain('清除透视');
+  expect(withClear).toContain('清除当前透视');
   // The screen row stays; only the applied framing can be released.
   expect(withClear).toContain('Screen A');
   const withoutHandler = renderToStaticMarkup(

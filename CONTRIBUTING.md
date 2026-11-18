@@ -1,4 +1,4 @@
-# Contributing to Midscene Robotics
+# Contributing to Midscene Test Everything
 
 ## Local setup
 

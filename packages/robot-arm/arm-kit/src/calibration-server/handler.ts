@@ -78,6 +78,9 @@ export function createCalibrationHandler(options: {
         // An empty POST confirms the output already prepared for this screen.
         const output = Object.keys(input).length ? input : undefined;
         send(200, { setup: await service.mapSetup(output) });
+      } else if (relative === '/assisted-calibration/setup/imaging/release') {
+        await service.releaseImaging();
+        send(200, { setup: service.setup() });
       } else {
         const match =
           /^\/assisted-calibration\/([^/]+)\/(commands|safety)$/.exec(relative);

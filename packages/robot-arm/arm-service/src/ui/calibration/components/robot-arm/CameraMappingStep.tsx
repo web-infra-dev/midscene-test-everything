@@ -5,13 +5,7 @@ import {
 import { measuredPerspectiveTarget } from '@midscene/robotics-shared/camera/vision-geometry';
 import type { CameraCorrection } from '@midscene/robotics-shared/contracts';
 import { Alert, Button, Modal, Select, Space, Tag, Typography } from 'antd';
-import {
-  Camera,
-  Check,
-  CircleSlash,
-  ScanLine,
-  SlidersHorizontal,
-} from 'lucide-react';
+import { Check, CircleSlash, ScanLine } from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CameraCornerEditor } from '../../CameraCornerEditor';
@@ -60,7 +54,6 @@ export function CameraMappingStep({
   mappingError,
   footer,
   busy,
-  extra,
   perspectiveOpen,
   onPerspectiveOpenChange,
   onSelectScreen,
@@ -93,8 +86,6 @@ export function CameraMappingStep({
   mappingError?: string;
   footer: HTMLElement | null;
   busy?: boolean;
-  /** A step-specific action, such as reopening the multi-screen review. */
-  extra?: ReactNode;
   /**
    * Controlled by the host: marker detection hands a failed pass over to this
    * editor, so the host owns whether the editor is open.
@@ -120,12 +111,10 @@ export function CameraMappingStep({
     onPerspectiveOpenChange?.(open);
   };
   const [clearOpen, setClearOpen] = useState(false);
-  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [clearError, setClearError] = useState<string>();
   const [error, setError] = useState<string>();
   const screen = screens.find((entry) => entry.id === screenId);
-  const applied = screens.filter((entry) => entry.correction);
   const mapped = Boolean(correction);
   const canConfirm =
     mapped && phoneConnected && phoneFullscreen && validity !== 'invalid';
@@ -243,16 +232,17 @@ export function CameraMappingStep({
         ? t('Camera mapping confirmed')
         : t('Confirm that the corrected image matches the screen.'),
       done: verified,
-      action: onConfirm ? (
-        <Button
-          size="small"
-          type="primary"
-          disabled={!canConfirm || busy}
-          onClick={() => void confirm()}
-        >
-          {t('Confirm Camera Mapping')}
-        </Button>
-      ) : undefined,
+      action:
+        onConfirm && !verified ? (
+          <Button
+            size="small"
+            type="primary"
+            disabled={!canConfirm || busy}
+            onClick={() => void confirm()}
+          >
+            {t('Confirm Camera Mapping')}
+          </Button>
+        ) : undefined,
     },
   ];
   return (
@@ -279,15 +269,29 @@ export function CameraMappingStep({
         />
       )}
       <div className="camera-mapping-applied">
-        {applied.length ? (
-          applied.map((entry) => (
+        {screens.length ? (
+          screens.map((entry) => (
             <Tag
               key={entry.id}
               bordered={false}
-              color={entry.id === screenId ? 'success' : 'default'}
-              icon={<Check size={12} />}
+              color={entry.correction ? 'success' : 'warning'}
+              icon={
+                entry.correction ? (
+                  <Check size={12} />
+                ) : (
+                  <CircleSlash size={12} />
+                )
+              }
             >
-              {t('Perspective applied')} · {entry.name}
+              {entry.correction ? (
+                <>
+                  {t('Perspective applied')} · {entry.name}
+                </>
+              ) : (
+                <>
+                  {t('Perspective not applied')} · {entry.name}
+                </>
+              )}
             </Tag>
           ))
         ) : (
@@ -305,7 +309,7 @@ export function CameraMappingStep({
             {t('Perspective needs review')}
           </Tag>
         )}
-        {mapped && onClear && (
+        {screens.some((entry) => entry.correction) && onClear && (
           <Button
             danger
             size="small"
@@ -315,28 +319,10 @@ export function CameraMappingStep({
               setClearOpen(true);
             }}
           >
-            {t('Clear Perspective')}
+            {t('Clear Applied Perspective')}
           </Button>
         )}
       </div>
-      {correction && output && (
-        <details
-          className="robot-device-diagnostics"
-          open={diagnosticsOpen}
-          onToggle={(event) => setDiagnosticsOpen(event.currentTarget.open)}
-        >
-          <summary>{t('Diagnostics')}</summary>
-          {diagnosticsOpen && (
-            <div className="robot-setup-corrected-preview">
-              <CorrectedPreview
-                correction={correction}
-                size={output}
-                src={cameraPreviewUrl(base, 'mapping-corrected')}
-              />
-            </div>
-          )}
-        </details>
-      )}
       {notice && (
         <Alert type="error" showIcon message={calibrationErrorText(notice)} />
       )}
@@ -345,29 +331,6 @@ export function CameraMappingStep({
           warnings={mappingQualityWarnings(mapping.accuracy, mapping.layout)}
         />
       )}
-      <Space wrap>
-        {extra}
-        {verified ? (
-          <Tag
-            bordered={false}
-            className="camera-checklist-status"
-            color="success"
-            icon={<ScanLine size={12} />}
-          >
-            {t('Camera Mapping Confirmed')}
-          </Tag>
-        ) : (
-          <Tag
-            bordered={false}
-            className="camera-checklist-status"
-            icon={
-              mapped ? <SlidersHorizontal size={12} /> : <Camera size={12} />
-            }
-          >
-            {t('Camera Mapping Needed')}
-          </Tag>
-        )}
-      </Space>
       {footer
         ? createPortal(
             <Button
@@ -384,7 +347,7 @@ export function CameraMappingStep({
         open={clearOpen}
         centered
         title={t('Clear Perspective Correction')}
-        okText={t('Clear Perspective')}
+        okText={t('Clear Applied Perspective')}
         cancelText={t('Cancel')}
         okButtonProps={{ danger: true, loading: clearing }}
         cancelButtonProps={{ disabled: clearing }}
@@ -408,9 +371,7 @@ export function CameraMappingStep({
         }}
       >
         <Typography.Paragraph>
-          {t('Clear the applied perspective correction for {0}?', [
-            screen?.name ?? camera.name,
-          ])}
+          {t('Clear every applied perspective correction for this camera?')}
         </Typography.Paragraph>
         <Typography.Text type="secondary">
           {t('Saved screens are kept for recalibration.')}

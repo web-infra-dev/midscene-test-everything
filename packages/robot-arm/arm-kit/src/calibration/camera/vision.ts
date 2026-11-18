@@ -2,6 +2,7 @@ import type {
   CalibrationPageLayout,
   CameraMappingAccuracy,
 } from '../../assisted-contracts.js';
+import type { CalibrationImagingStatus } from '../../assisted-contracts.js';
 import type {
   CameraCorrection,
   VisionBinding,
@@ -16,6 +17,9 @@ export interface CalibrationVisionOptions {
 /** In-process seam shared by SDK calibration and the Playground host. */
 export interface CalibrationVision {
   rawFrame?(): Promise<Buffer>;
+  calibrateImaging?(): Promise<CalibrationImagingStatus>;
+  imagingStatus?(): CalibrationImagingStatus;
+  releaseImaging?(): Promise<void>;
   getCorrection?(): CameraCorrection | undefined;
   /** Optional for injected providers; built-in cameras verify current outlines. */
   assertPerspectiveCurrent?(): Promise<void>;

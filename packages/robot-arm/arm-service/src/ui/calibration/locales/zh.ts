@@ -2358,6 +2358,13 @@ export const zh: Record<string, string> = {
   'the selected screen': '所选屏幕',
   'Speed, contact and release values for {0}. Saving does not enable or move the robot and keeps the existing calibration geometry.':
     '{0} 的速度、接触与释放参数。保存不会使能或移动机械臂，并保留已有的标定几何。',
+  'Focus and Exposure': '对焦与曝光',
+  'Automatic focus is locked and exposure is monitored.':
+    '已自动锁定焦距，曝光正在自动监测。',
+  'Finish camera mapping to calibrate focus and exposure automatically.':
+    '完成相机映射后将自动标定焦距和曝光。',
+  'Clear Applied Perspective': '清除当前透视（保留屏幕）',
+  'Calibrating camera intrinsics': '正在调整相机内参',
   ...setupZh,
   ...migratedZh,
   ...assistedCalibrationZh,

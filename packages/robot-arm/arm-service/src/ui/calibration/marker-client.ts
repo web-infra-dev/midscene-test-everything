@@ -210,6 +210,9 @@ export class ScreenCalibClient {
   deleteScreen(cameraId: string, id: string) {
     return this.request<void>('delete-screen', { cameraId, id });
   }
+  deleteScreenPage(cameraId: string, id: string) {
+    return this.request<void>('delete-screen-page', { cameraId, id });
+  }
   discardAddedScreen(cameraId: string, id: string) {
     return this.request<void>('delete-screen', {
       cameraId,
@@ -219,6 +222,9 @@ export class ScreenCalibClient {
   }
   deletePerspective(cameraId: string, id: string) {
     return this.request<void>('delete-perspective', { cameraId, id });
+  }
+  clearCameraPerspectives(cameraId: string) {
+    return this.request<void>('clear-perspectives', { cameraId });
   }
   renameScreen(cameraId: string, id: string, name: string) {
     return this.request<void>('rename-screen', { cameraId, id, name });

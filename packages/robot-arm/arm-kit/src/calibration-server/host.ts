@@ -62,6 +62,7 @@ export interface CalibrationHostOptions {
   markerCodes?: readonly number[];
   basePath?: string;
   phoneLinks?: () => { name: string; url: string }[];
+  onImagingPattern?: (request?: string) => Promise<void>;
 }
 /** One Device's calibration endpoints. Listening, origin checks and static assets belong to the host. */
 export class CalibrationHost {
@@ -85,6 +86,7 @@ export class CalibrationHost {
       vision: options.camera,
       phoneLinks: options.phoneLinks,
       markerCodes: options.markerCodes,
+      onImagingPattern: options.onImagingPattern,
       onPhoneObservation: (update) => this.observePhone(update),
       referencePosition: () => {
         const store = controllerRuntime(options.arm).profileStore;
@@ -537,7 +539,10 @@ export class CalibrationHost {
     }
     if (this.input) {
       try {
-        await this.service.mapSetup();
+        await this.service.mapSetup(undefined, {
+          reuseVisibleMarkers: true,
+          deferImagingCalibration: true,
+        });
       } catch (error) {
         return error instanceof Error ? error.message : String(error);
       }
