@@ -1,6 +1,10 @@
 <p align="center">
   <img alt="Midscene Test Everything" width="160" src="https://github.com/user-attachments/assets/f60de3c1-dd6f-4213-97a1-85bf7c6e79e4"><br />
-  <h1 align="center">Midscene Test Everything</h1>
+</p>
+
+<h1 align="center">Midscene Test Everything</h1>
+
+<p align="center">
   <strong>看得见的界面，就能测。</strong><br />
   用视觉模型驱动任意界面的端到端测试：车机屏幕、iPhone 真机、嵌入式面板，以及你接下来要接入的任何设备。
 </p>
