@@ -59,7 +59,12 @@ async function setup() {
       alignForBatch: rstest.fn(async () => {}),
       service: {
         status: () => sessions.get(id),
-        setup: () => ({ prepared: true, phoneConnected: true, mapping: {} }),
+        setup: () => ({
+          prepared: true,
+          phoneConnected: true,
+          mapping: {},
+          imaging: { state: 'unsupported' },
+        }),
         create: async () => {
           const state = {
             id: `${id}-${starts.length}`,
