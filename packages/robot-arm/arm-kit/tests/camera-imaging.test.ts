@@ -94,6 +94,51 @@ class FakeCameraControl implements CameraHardwareControl {
 }
 
 describe('camera imaging', () => {
+  it.each(['no control bridge', 'fixed focus', 'bridge failure'] as const)(
+    'distinguishes %s from supported imaging',
+    async (scenario) => {
+      const control = new FakeCameraControl();
+      if (scenario === 'fixed focus')
+        control.values.focus.supportsManual = false;
+      const imaging = new CameraImagingController(
+        { id: 'camera', name: 'Camera', backend: 'dshow' },
+        {} as never,
+        tmpdir(),
+        undefined,
+        async () => {
+          if (scenario === 'bridge failure')
+            throw new Error('Driver unavailable');
+          return scenario === 'fixed focus' ? control : undefined;
+        },
+      );
+      imaging.registerScreen('screen', () => ({
+        points: {
+          topLeft: { x: 0, y: 0 },
+          topRight: { x: 99, y: 0 },
+          bottomRight: { x: 99, y: 199 },
+          bottomLeft: { x: 0, y: 199 },
+        },
+        sourceWidth: 100,
+        sourceHeight: 200,
+        rotation: 0,
+      }));
+      await imaging.releaseForCorrection();
+      expect(imaging.status().state).toBe(
+        scenario === 'bridge failure' ? 'error' : 'unsupported',
+      );
+      if (scenario === 'bridge failure') {
+        await expect(imaging.calibrate()).rejects.toThrow('Driver unavailable');
+        expect(imaging.status().state).toBe('error');
+      } else {
+        await expect(imaging.calibrate()).resolves.toMatchObject({
+          state: 'unsupported',
+        });
+        expect(control.setCalls).toEqual([]);
+      }
+      await imaging.close();
+    },
+  );
+
   it('samples only the white calibration tile for exposure convergence', async () => {
     const jpeg = await sharp(
       Buffer.from(

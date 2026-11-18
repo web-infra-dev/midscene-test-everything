@@ -189,25 +189,7 @@ export class CameraImagingController {
     return screens;
   }
 
-  private async preset(): Promise<{
-    exposure: CameraControlValue;
-    focus: CameraControlValue;
-  }> {
-    const controls = await this.ensureControls();
-    const values = await controls.read();
-    if (!values.exposure?.supportsManual || !values.focus?.supportsManual)
-      throw new RobotArmError(
-        'VISION_UNAVAILABLE',
-        'This camera does not support automatic focus and exposure control',
-        409,
-      );
-    return {
-      exposure: values.exposure,
-      focus: values.focus,
-    };
-  }
-
-  private async ensureControls(): Promise<CameraHardwareControl> {
+  private async getControls(): Promise<CameraHardwareControl | undefined> {
     if (!this.controls && this.controlFactory) {
       try {
         this.controls = await this.controlFactory();
@@ -221,13 +203,24 @@ export class CameraImagingController {
         );
       }
     }
-    if (!this.controls)
-      throw new RobotArmError(
-        'VISION_UNAVAILABLE',
-        'This camera does not expose focus and exposure controls',
-        409,
-      );
     return this.controls;
+  }
+
+  private setUnsupported(): CameraImagingStatus {
+    this.statusValue = {
+      state: 'unsupported',
+      message: 'This camera does not expose focus and exposure controls',
+      updatedAt: Date.now(),
+    };
+    return this.status();
+  }
+
+  private async readManualControls() {
+    const controls = await this.getControls();
+    if (!controls) return undefined;
+    const { focus, exposure } = await controls.read();
+    if (!focus?.supportsManual || !exposure?.supportsManual) return undefined;
+    return { controls, values: { focus, exposure } };
   }
 
   async releaseForCorrection(): Promise<void> {
@@ -235,28 +228,28 @@ export class CameraImagingController {
     this.applied = false;
     this.extremeDirection = undefined;
     this.extremeCount = 0;
-    if (this.controls || this.controlFactory) {
-      try {
-        const controls = await this.ensureControls();
-        const current = await controls.read();
-        if (current.focus?.supportsAuto)
-          await controls.set('focus', current.focus.value, 'auto');
-        if (current.exposure?.supportsAuto)
-          await controls.set('exposure', current.exposure.value, 'auto');
-      } catch (error) {
-        this.statusValue = {
-          state: 'error',
-          message: error instanceof Error ? error.message : String(error),
-          updatedAt: Date.now(),
-        };
+    try {
+      const reading = await this.readManualControls();
+      if (!reading) {
+        this.setUnsupported();
         return;
       }
+      const { controls, values: current } = reading;
+      if (current.focus.supportsAuto)
+        await controls.set('focus', current.focus.value, 'auto');
+      if (current.exposure.supportsAuto)
+        await controls.set('exposure', current.exposure.value, 'auto');
+    } catch (error) {
+      this.statusValue = {
+        state: 'error',
+        message: error instanceof Error ? error.message : String(error),
+        updatedAt: Date.now(),
+      };
+      return;
     }
     this.statusValue = {
-      state: this.controls ? 'released' : 'unsupported',
-      message: this.controls
-        ? 'Focus and exposure are released for perspective correction'
-        : 'This camera cannot release focus and exposure through the API',
+      state: 'released',
+      message: 'Focus and exposure are released for perspective correction',
       updatedAt: Date.now(),
     };
   }
@@ -289,7 +282,11 @@ export class CameraImagingController {
       return;
     }
     try {
-      const controls = await this.ensureControls();
+      const controls = await this.getControls();
+      if (!controls) {
+        this.setUnsupported();
+        return;
+      }
       await controls.set('exposure', this.stored.exposure.value, 'manual');
       await controls.set('focus', this.stored.focus.value, 'manual');
       this.applied = true;
@@ -318,18 +315,16 @@ export class CameraImagingController {
         'Perspective correction is required before focus and exposure calibration',
         409,
       );
-    const controls = await this.ensureControls().catch((error) => {
+    const reading = await this.readManualControls().catch((error) => {
       this.statusValue = {
-        state:
-          error instanceof RobotArmError &&
-          error.message.includes('does not expose')
-            ? 'unsupported'
-            : 'error',
+        state: 'error',
         message: error instanceof Error ? error.message : String(error),
         updatedAt: Date.now(),
       };
       throw error;
     });
+    if (!reading) return this.setUnsupported();
+    const { controls, values: original } = reading;
 
     this.stopMonitor();
     this.applied = false;
@@ -338,11 +333,9 @@ export class CameraImagingController {
       message: 'Calibrating exposure',
       updatedAt: Date.now(),
     };
-    const original = await controls.read();
     try {
-      const preset = await this.preset();
-      await controls.set('exposure', preset.exposure.value, 'manual');
-      await controls.set('focus', preset.focus.value, 'auto');
+      await controls.set('exposure', original.exposure.value, 'manual');
+      await controls.set('focus', original.focus.value, 'auto');
       await delay(800);
       await this.convergeExposureForCalibration();
       const exposure = (await controls.read()).exposure;
@@ -420,18 +413,12 @@ export class CameraImagingController {
       return this.status();
     } catch (error) {
       try {
-        if (original.focus)
-          await controls.set(
-            'focus',
-            original.focus.value,
-            original.focus.mode,
-          );
-        if (original.exposure)
-          await controls.set(
-            'exposure',
-            original.exposure.value,
-            original.exposure.mode,
-          );
+        await controls.set('focus', original.focus.value, original.focus.mode);
+        await controls.set(
+          'exposure',
+          original.exposure.value,
+          original.exposure.mode,
+        );
       } catch {
         // The primary calibration error is more actionable than rollback failure.
       }
