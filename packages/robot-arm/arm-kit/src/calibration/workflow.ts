@@ -1810,6 +1810,14 @@ export class CalibrationWorkflow {
           409,
         );
       const reference = s.referencePosition!;
+      const knownTravelTipZMm = Math.max(
+        knownScreenTravelHeight(this.runtime.profileStore.list(), input),
+        this.batchTravelTipZMm ?? Number.NEGATIVE_INFINITY,
+      );
+      const allowDirectTravel =
+        (s.explorationMode === 'fast' || s.explorationMode === 'slide') &&
+        teaching !== undefined &&
+        semanticJson(reference) === semanticJson(teaching.referencePose);
       const travelToReference = async (reason: 'approach' | 'return') => {
         s.referenceTravel = reason;
         this.changed();
@@ -1820,11 +1828,12 @@ export class CalibrationWorkflow {
             tool,
             reference,
             input.motion!,
-            Math.max(
-              knownScreenTravelHeight(this.runtime.profileStore.list(), input),
-              this.batchTravelTipZMm ?? Number.NEGATIVE_INFINITY,
-            ),
-            { attemptId: s.id, direction: reason },
+            knownTravelTipZMm,
+            {
+              attemptId: s.id,
+              direction: reason,
+              allowDirect: allowDirectTravel,
+            },
           );
         } catch (error) {
           if (!isRobotArmError(error)) throw error;
@@ -1872,6 +1881,15 @@ export class CalibrationWorkflow {
           {
             tool,
             webToImage: s.mapping!.webToImage,
+            directTravel: allowDirectTravel
+              ? {
+                  teaching,
+                  minimumTipZMm: Math.max(
+                    contactPoint(reference, tool.offsetMm).z,
+                    knownTravelTipZMm,
+                  ),
+                }
+              : undefined,
             minimumTravelTipZMm: Math.max(
               teaching
                 ? contactPoint(teaching.referencePose, tool.offsetMm).z

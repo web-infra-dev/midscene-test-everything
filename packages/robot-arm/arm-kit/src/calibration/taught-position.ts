@@ -9,6 +9,7 @@ import type {
   InstallationTeaching,
   ScreenMotionSettings,
   ToolProfile,
+  Vector3,
 } from '../contracts.js';
 import {
   contactPoint,
@@ -20,6 +21,17 @@ import {
 // Match the 0.5 mm measured arrival tolerance for the start of the route only.
 const BOUNDARY_READBACK_NOISE_MM = 0.5;
 
+export function insideTaughtTravelSpace(
+  tip: Vector3,
+  teaching: InstallationTeaching,
+  minimumTipZMm: number,
+) {
+  return (
+    tip.z >= minimumTipZMm &&
+    cameraBoundaryExcessMm(tip, teaching) <= CAMERA_BOUNDARY_EPSILON_MM
+  );
+}
+
 export async function moveToTaughtPosition(
   host: Required<Pick<AutomaticCaptureHost, 'read' | 'preflight' | 'move'>>,
   teaching: InstallationTeaching | undefined,
@@ -27,18 +39,29 @@ export async function moveToTaughtPosition(
   target: CartesianPose,
   motion: Pick<ScreenMotionSettings, 'actionSpeed' | 'actionAcceleration'>,
   minimumTipZMm = Number.NEGATIVE_INFINITY,
-  travel?: { attemptId: string; direction: 'approach' | 'return' },
+  travel?: {
+    attemptId: string;
+    direction: 'approach' | 'return';
+    allowDirect?: boolean;
+  },
 ) {
   const current = await host.read();
   const from = contactPoint(current, tool.offsetMm);
   const to = contactPoint(target, tool.offsetMm);
-  const z = Math.max(
-    from.z,
-    to.z,
+  const travelFloor = Math.max(
     teaching ? contactPoint(teaching.referencePose, tool.offsetMm).z : to.z,
     minimumTipZMm,
   );
+  const z = Math.max(from.z, to.z, travelFloor);
   const excess = teaching ? cameraBoundaryExcessMm(from, teaching) : 0;
+  // With a fixed orientation, both the tip height and its signed distance
+  // from the camera plane interpolate linearly over the whole move.
+  const direct =
+    travel?.allowDirect &&
+    teaching?.corridorConfirmed &&
+    insideTaughtTravelSpace(from, teaching, travelFloor) &&
+    insideTaughtTravelSpace(to, teaching, travelFloor) &&
+    quaternionDistance(current.orientation, target.orientation) <= 1e-6;
   if (
     teaching &&
     excess > 0 &&
@@ -48,20 +71,23 @@ export async function moveToTaughtPosition(
     from.x -= excess * normal.x;
     from.y -= excess * normal.y;
   }
-  const route = [
-    flangePose({ ...from, z }, current.orientation, tool.offsetMm),
-    flangePose({ ...to, z }, target.orientation, tool.offsetMm),
-    target,
-  ];
+  const route = direct
+    ? [target]
+    : [
+        flangePose({ ...from, z }, current.orientation, tool.offsetMm),
+        flangePose({ ...to, z }, target.orientation, tool.offsetMm),
+        target,
+      ];
+  const legs = direct
+    ? (['direct'] as const)
+    : (['lift', 'traverse', 'lower'] as const);
   const options = {
     speed: motion.actionSpeed,
     acceleration: motion.actionAcceleration,
   };
   await host.preflight(route, options);
   let reached = current;
-  for (const [index, leg] of (
-    ['lift', 'traverse', 'lower'] as const
-  ).entries()) {
+  for (const [index, leg] of legs.entries()) {
     const pose = route[index];
     try {
       if (
@@ -75,7 +101,11 @@ export async function moveToTaughtPosition(
       // the requested pose to collapse an identical following waypoint.
       await host.move(pose, {
         ...options,
-        referenceTravel: travel && { ...travel, leg },
+        referenceTravel: travel && {
+          attemptId: travel.attemptId,
+          direction: travel.direction,
+          leg,
+        },
       });
       reached = pose;
     } catch (error) {

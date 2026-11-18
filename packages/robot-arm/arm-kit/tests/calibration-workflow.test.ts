@@ -1583,12 +1583,17 @@ it.each([
       f.adapter.setPoseForTesting(pose(140, 50, 80));
       await f.service.command(f.state.id, 'record-boundary', true);
       await f.service.command(f.state.id, 'save-teaching', true);
-      f.adapter.setPoseForTesting(pose(100, 50.000008, 75));
+      f.adapter.setPoseForTesting(
+        mode === 'slide' ? pose(100, 40, 95) : pose(100, 50.000008, 75),
+      );
       const move = rstest.spyOn(f.adapter, 'moveLinear');
+      let approachMoveCount: number | undefined;
       const phases = new Set<string>();
       const unsubscribe = f.service.subscribe(() => {
         const current = f.service.status()!;
         if (current.referenceTravel) phases.add(current.referenceTravel);
+        else if (phases.has('approach'))
+          approachMoveCount ??= move.mock.calls.length;
         if (current.stage === 'safety' && current.calibration?.progress)
           phases.add(current.calibration.progress.group);
         if (current.stage === 'avoiding-camera') phases.add(current.stage);
@@ -1628,11 +1633,14 @@ it.each([
         'contact',
         'avoiding-camera',
       ]);
-      expect(move.mock.calls.slice(0, 2).map(([p]) => p)).toEqual([
-        pose(100, 50, 80),
-        pose(100, -50, 80),
-      ]);
-      for (const [, options] of move.mock.calls.slice(0, 2)) {
+      expect(approachMoveCount).toBe(mode === 'slide' ? 1 : 2);
+      const approachMoves = move.mock.calls.slice(0, approachMoveCount);
+      expect(approachMoves.map(([p]) => p)).toEqual(
+        mode === 'slide'
+          ? [pose(100, -50, 80)]
+          : [pose(100, 50, 80), pose(100, -50, 80)],
+      );
+      for (const [, options] of approachMoves) {
         expect(options).toMatchObject({
           speed: f.screen.actionSpeed,
           acceleration: f.screen.actionAcceleration,

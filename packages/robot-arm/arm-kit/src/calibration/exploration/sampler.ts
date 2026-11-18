@@ -10,6 +10,7 @@ import {
   scaleAcceleration,
   scaleSpeed,
 } from '../../screen-interaction/motion-policy.js';
+import { insideTaughtTravelSpace } from '../taught-position.js';
 import {
   type ScreenPoint2,
   affinePoint,
@@ -539,17 +540,32 @@ export async function runAutoExploration(
         zHigh,
         ctx.minimumTravelTipZMm ?? Number.NEGATIVE_INFINITY,
       );
-      if (Math.hypot(current.x - x, current.y - y) > 0.2) {
-        if (current.z < safeZ - 0.05)
-          await moveTo({ x: current.x, y: current.y, z: safeZ }, travelOptions);
-        await moveTo({ x, y, z: safeZ }, travelOptions);
+      const lateral = Math.hypot(current.x - x, current.y - y) > 0.2;
+      if (lateral) {
+        const lifted =
+          current.z < safeZ - 0.05
+            ? await moveTo(
+                { x: current.x, y: current.y, z: safeZ },
+                travelOptions,
+              )
+            : current;
+        const clearance = ctx.directTravel;
+        const minimumTipZMm = Math.max(
+          clearance?.minimumTipZMm ?? Number.NEGATIVE_INFINITY,
+          ctx.minimumTravelTipZMm ?? Number.NEGATIVE_INFINITY,
+        );
+        // Keep the vertical release, then merge only the airborne legs.
+        const direct =
+          fast &&
+          !prediction &&
+          clearance &&
+          insideTaughtTravelSpace(lifted, clearance.teaching, minimumTipZMm) &&
+          insideTaughtTravelSpace(approach, clearance.teaching, minimumTipZMm);
+        if (!direct) await moveTo({ x, y, z: safeZ }, travelOptions);
       }
       // After a lost sliding endpoint, XY is already correct but the tip is
       // still down. Establish release before reacquiring this same point.
-      if (
-        !prediction ||
-        (Math.hypot(current.x - x, current.y - y) <= 0.2 && current.z < zHigh)
-      ) {
+      if (!prediction || (!lateral && current.z < zHigh)) {
         await preflight({ x, y, z: zHigh }, `${label} approach`);
         approach = await moveTo({ x, y, z: zHigh });
       }

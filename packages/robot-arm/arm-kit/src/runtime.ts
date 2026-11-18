@@ -374,15 +374,16 @@ export class RobotArmRuntime extends RobotKernel {
           const travel = probeOptions?.referenceTravel;
           const detectStartFailure =
             !calibrationSessionId && travel?.direction === 'approach';
+          const crossesWorkArea =
+            travel?.leg === 'traverse' || travel?.leg === 'direct';
           const trace =
-            this.auditStore &&
-            (detectStartFailure || travel?.leg === 'traverse')
+            this.auditStore && (detectStartFailure || crossesWorkArea)
               ? travel
               : undefined;
           if (detectStartFailure) options.detectStartFailure = true;
           const extraReadback =
             travel?.direction === 'approach' &&
-            travel.leg === 'traverse' &&
+            crossesWorkArea &&
             process.env.MIDSCENE_ARM_DIAGNOSTIC_PAYLOAD_READBACK === '1';
           if (trace) options.traceCompletion = true;
           if (extraReadback)

@@ -1,6 +1,7 @@
 /** Narrow host boundary for the pinned upstream sampling algorithm. */
 import type {
   CartesianPose,
+  InstallationTeaching,
   MotionAcceleration,
   MotionOptions,
   MotionSpeed,
@@ -106,6 +107,8 @@ export interface ApplicationContext {
   };
   tool: ToolProfile;
   minimumTravelTipZMm?: number;
+  /** Confirmed clearance for a straight approach to a stationary probe. */
+  directTravel?: { teaching: InstallationTeaching; minimumTipZMm: number };
   batchTransfer?: { travelTipZMm: number };
 }
 export interface AutoExplorationOptions {

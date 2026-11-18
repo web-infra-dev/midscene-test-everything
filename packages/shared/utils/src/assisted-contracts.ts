@@ -502,7 +502,7 @@ export interface AutomaticCaptureHost {
       referenceTravel?: {
         attemptId: string;
         direction: 'approach' | 'return';
-        leg: 'lift' | 'traverse' | 'lower';
+        leg: 'lift' | 'traverse' | 'lower' | 'direct';
       };
     },
   ): Promise<CartesianPose | undefined>;

@@ -800,11 +800,29 @@ export function mountCalibrationPhonePage(
       requestedStep?.phase === 'prepare' ||
       requestedStep?.contactMode === 'current' ||
       (requestedStep && phoneStep?.id === requestedStep.id);
+    const probe = capture?.probe?.id;
+    // The prepare reply already confirmed this target was painted. A Fast
+    // result for the same sample only reads the current pointer state.
+    if (
+      next.view === 'collect' &&
+      (capture?.mode === 'fast' || capture?.mode === 'slide') &&
+      requestedStep?.phase === 'result' &&
+      requestedStep.contactMode === 'current' &&
+      phoneStep?.id === requestedStep.id &&
+      phoneStep.phase === 'prepare' &&
+      readyTarget === visibleTarget.id &&
+      captureAck === probe &&
+      previous?.capture?.probe?.id === probe
+    ) {
+      phoneStep = { ...requestedStep };
+      releasedBeforeAck = false;
+      send();
+      return;
+    }
     if (stepChanged || !requestedStep) {
       phoneStep = undefined;
       releasedBeforeAck = false;
     }
-    const probe = capture?.probe?.id;
     if (
       stepChanged ||
       readyTarget !== visibleTarget.id ||

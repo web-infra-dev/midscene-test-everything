@@ -735,6 +735,50 @@ test('retains a complete touch between receiving a stationary request and painti
   expect(phone.last().stepFeedback?.releasedBeforeAck).toBeUndefined();
 });
 
+test('reports a Fast stationary result immediately for an already painted target', () => {
+  const phone = openPhone(699, 0, 0);
+  const target = { id: 'grid-1', point: { x: 100, y: 130 } };
+  const step = { id: 'probe', phase: 'prepare', contactMode: 'current' };
+  const capture = {
+    target,
+    index: 1,
+    total: 3,
+    phase: 'waiting',
+    mode: 'fast',
+  };
+  phone.receive({
+    view: 'collect',
+    anchors: [],
+    capture: { ...capture, step },
+  });
+  phone.paint();
+  expect(phone.last().stepFeedback?.phase).toBe('prepare');
+
+  const result = { ...step, phase: 'result' };
+  phone.receive({
+    view: 'collect',
+    anchors: [],
+    capture: { ...capture, step: result },
+  });
+  expect(phone.last().stepFeedback).toMatchObject({
+    ...result,
+    outcome: 'no_touch',
+  });
+
+  phone.receive({
+    view: 'collect',
+    anchors: [],
+    capture: {
+      ...capture,
+      target: { ...target, id: 'grid-2' },
+      step: { ...result, id: 'other-probe' },
+    },
+  });
+  expect(phone.last().targetReady).toBe('grid-1');
+  phone.paint();
+  expect(phone.last().targetReady).toBe('grid-2');
+});
+
 test.each(['pointercancel', 'lostpointercapture', 'pointerup'])(
   'reports %s with its actual stationary probe outcome',
   (ending) => {

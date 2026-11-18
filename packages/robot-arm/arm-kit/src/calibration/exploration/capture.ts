@@ -26,6 +26,7 @@ import {
 import { runAutoExploration } from './sampler.js';
 import { explorationTargets, mappedExplorationTargets } from './targets.js';
 import type {
+  ApplicationContext,
   AutoExplorationHost,
   ScreenCalibSessionSummary,
   CalibrationSession as UpstreamSession,
@@ -181,6 +182,7 @@ export class AutomaticCapture {
       tool: ToolProfile;
       webToImage: number[];
       minimumTravelTipZMm?: number;
+      directTravel?: ApplicationContext['directTravel'];
       onTiming?(event: string, elapsedMs: number): void;
     },
   ) {
@@ -429,6 +431,7 @@ export class AutomaticCapture {
         screen: config.screen,
         tool: config.tool,
         minimumTravelTipZMm: config.minimumTravelTipZMm,
+        directTravel: config.directTravel,
       },
       {
         startPose: home,
