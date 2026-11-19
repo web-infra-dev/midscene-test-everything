@@ -718,6 +718,7 @@ const calibrationZh: Record<string, string> = {
     '打开手机绑定页面并保持全屏，服务会自动发现页面并读取分辨率。',
   'Keep the phone page visible and fullscreen': '请保持手机页面在前台并全屏',
   'Calibrating camera focus and exposure': '正在标定相机对焦和曝光',
+  'Optimizing camera image quality': '正在优化相机成像质量',
   'Installation reference saved independently of calibration.':
     '安装参考已独立保存，不受重标定结果影响。',
   'Update Installation Teaching': '更新安装示教',

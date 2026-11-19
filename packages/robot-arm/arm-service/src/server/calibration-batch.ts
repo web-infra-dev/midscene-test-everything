@@ -1029,7 +1029,7 @@ export class CalibrationBatch {
     await this.update(() => {
       const row = state.items[state.currentIndex];
       row.status = 'preparing';
-      row.note = 'Calibrating camera focus and exposure';
+      row.note = 'Optimizing camera image quality';
     });
     this.check(signal);
     await this.devices.calibrateCameraImaging(cameraId);
