@@ -301,6 +301,7 @@ export class TwinStream {
     };
     res.on('close', remove);
     res.on('error', remove);
+    this.pumpSamples();
     void this.pumpState();
     this.start();
   }

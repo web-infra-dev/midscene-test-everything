@@ -114,8 +114,8 @@ export type TwinViewPreset = 'default' | 'camera' | 'screen';
 export interface TwinStage {
   setJoints: (values: number[]) => void;
   /** Align the modeled flange with a stationary controller measurement. */
-  alignToPose: (positionMm: { x: number; y: number; z: number }) => void;
-  setViewPreset: (preset: TwinViewPreset) => void;
+  alignToPose: (positionMm: { x: number; y: number; z: number }) => boolean;
+  setViewPreset: (preset: TwinViewPreset, animate?: boolean) => void;
   markScreenTexture: (id: string) => void;
   setActive: (active: boolean) => void;
   resetView: () => void;
@@ -601,8 +601,9 @@ export async function mountTwinStage(
   const home = visual.homeJointDegrees ?? new Array(6).fill(0);
   const targetJoints = home.map((value) => value * DEG);
   const currentJoints = [...targetJoints];
-  let active = true;
+  let active = false;
   let aligned = false;
+  let alignmentGoal: THREE.Vector3 | undefined;
 
   const resolveAngle = (name: string, visited = new Set<string>()): number => {
     if (visited.has(name)) return 0;
@@ -644,6 +645,19 @@ export async function mountTwinStage(
     ),
   );
   const worldToOverview = overviewRotation.clone().invert();
+  const placeView = (
+    position: THREE.Vector3,
+    target: THREE.Vector3,
+    animate: boolean,
+  ) => {
+    if (animate) viewGoal = { position, target };
+    else {
+      viewGoal = undefined;
+      camera.position.copy(position);
+      controls.target.copy(target);
+      controls.update();
+    }
+  };
   const frameOverview = (animate: boolean) => {
     const halfHeight = Math.tan((DEFAULT_FOV * DEG) / 2) * OVERVIEW_FILL;
     const halfWidth = halfHeight * camera.aspect;
@@ -693,13 +707,7 @@ export async function mountTwinStage(
     const target = center.clone().applyQuaternion(overviewRotation);
     const position = center.setZ(cameraZ).applyQuaternion(overviewRotation);
     controls.maxDistance = Math.max(2.6, position.distanceTo(target));
-    if (animate) {
-      viewGoal = { position, target };
-    } else {
-      camera.position.copy(position);
-      controls.target.copy(target);
-      controls.update();
-    }
+    placeView(position, target, animate);
   };
 
   const resize = (initial = false) => {
@@ -728,7 +736,7 @@ export async function mountTwinStage(
   resize(true);
 
   let last = performance.now();
-  const applyViewPreset = (preset: TwinViewPreset) => {
+  const applyViewPreset = (preset: TwinViewPreset, animate = true) => {
     autoFrame = false;
     viewGoal = undefined;
     if (preset === 'camera' && cameraProp) {
@@ -766,13 +774,14 @@ export async function mountTwinStage(
       const target = centers
         .reduce((sum, point) => sum.add(point), new THREE.Vector3())
         .multiplyScalar(1 / centers.length);
-      viewGoal = {
+      placeView(
+        target.clone().add(new THREE.Vector3(0, 0.45, 0.02)),
         target,
-        position: target.clone().add(new THREE.Vector3(0, 0.45, 0.02)),
-      };
+        animate,
+      );
     } else {
       autoFrame = true;
-      frameOverview(true);
+      frameOverview(animate);
     }
     camera.updateProjectionMatrix();
   };
@@ -782,6 +791,14 @@ export async function mountTwinStage(
     const dt = Math.min((now - last) / 1000, 0.1);
     last = now;
     const ease = 1 - Math.exp(-dt * 18);
+    if (alignmentGoal) {
+      robotRoot.position.lerp(alignmentGoal, ease);
+      if (robotRoot.position.distanceToSquared(alignmentGoal) < 1e-8) {
+        robotRoot.position.copy(alignmentGoal);
+        alignmentGoal = undefined;
+      }
+      grid.position.y = robotRoot.position.y;
+    }
     for (let index = 0; index < currentJoints.length; index += 1) {
       const goal = targetJoints[index] ?? 0;
       currentJoints[index] += (goal - currentJoints[index]) * ease;
@@ -811,32 +828,44 @@ export async function mountTwinStage(
         const value = values[index];
         if (Number.isFinite(value)) targetJoints[index] = value * DEG;
       }
+      if (!active) {
+        currentJoints.splice(0, currentJoints.length, ...targetJoints);
+        applyJoints();
+      }
     },
     alignToPose(positionMm) {
-      if (aligned || !mount) return;
+      if (aligned || !mount) return aligned;
       // Fit using the received joint angles, before any display interpolation.
-      for (let i = 0; i < currentJoints.length; i++)
-        currentJoints[i] = targetJoints[i];
+      const displayedJoints = active ? [...currentJoints] : undefined;
+      currentJoints.splice(0, currentJoints.length, ...targetJoints);
       applyJoints();
       const measured = toWorld(positionMm);
       const current = mount.localToWorld(
         new THREE.Vector3(...mountOffsetMm).multiplyScalar(0.001),
       );
       const delta = measured.sub(current);
-      if (!Number.isFinite(delta.length()) || delta.length() > 0.6) return;
+      if (displayedJoints) {
+        currentJoints.splice(0, currentJoints.length, ...displayedJoints);
+        applyJoints();
+      }
+      if (!Number.isFinite(delta.length()) || delta.length() > 0.6)
+        return false;
       // The URDF base frame and the controller's Base frame differ by a constant
       // mount offset. Align once from an idle measured pose; re-applying the
       // correction while the arm moves would make the base chase the tool.
-      robotRoot.position.add(delta);
-      robotRoot.updateMatrixWorld(true);
-      // The measured base is the table; keep the reference grid on it rather
-      // than on the calibrated screen plane.
-      grid.position.y = robotRoot.position.y;
-      if (autoFrame) frameOverview(true);
+      if (active) {
+        // A late measurement can correct the model without moving the camera.
+        alignmentGoal = robotRoot.position.clone().add(delta);
+      } else {
+        robotRoot.position.add(delta);
+        robotRoot.updateMatrixWorld(true);
+        grid.position.y = robotRoot.position.y;
+      }
       aligned = true;
+      return true;
     },
-    setViewPreset(preset) {
-      applyViewPreset(preset);
+    setViewPreset(preset, animate) {
+      applyViewPreset(preset, animate);
     },
     markScreenTexture(id) {
       const texture = screenTextures.get(id);

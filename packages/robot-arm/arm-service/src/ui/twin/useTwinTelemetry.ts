@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import type {
   TwinMotionMessage,
   TwinStateMessage,
@@ -7,8 +7,18 @@ import type { TwinStage } from './engine';
 
 /** Subscribe after the meshes are ready so the initial joint sample is applied. */
 export function useTwinTelemetry(stage: TwinStage | undefined) {
+  const [readyStage, setReadyStage] = useState<TwinStage>();
   useEffect(() => {
     if (!stage) return;
+    let ready = false;
+    const reveal = () => {
+      if (ready) return;
+      ready = true;
+      clearTimeout(fallback);
+      setReadyStage(stage);
+    };
+    // Keep the preview usable if the controller is moving or feedback is late.
+    const fallback = setTimeout(reveal, 2500);
     let hasFreshJoints = false;
     const source = new EventSource('/api/twin/stream');
     source.onopen = () => {
@@ -33,9 +43,10 @@ export function useTwinTelemetry(stage: TwinStage | undefined) {
           data.connected &&
           !data.stale &&
           !data.moving &&
-          hasFreshJoints
+          hasFreshJoints &&
+          stage.alignToPose(data.pose.positionMm)
         )
-          stage.alignToPose(data.pose.positionMm);
+          reveal();
       } catch {
         // Ignore a malformed state message.
       }
@@ -43,9 +54,11 @@ export function useTwinTelemetry(stage: TwinStage | undefined) {
     source.addEventListener('sample', sample as EventListener);
     source.addEventListener('state', state as EventListener);
     return () => {
+      clearTimeout(fallback);
       source.removeEventListener('sample', sample as EventListener);
       source.removeEventListener('state', state as EventListener);
       source.close();
     };
   }, [stage]);
+  return Boolean(stage && readyStage === stage);
 }

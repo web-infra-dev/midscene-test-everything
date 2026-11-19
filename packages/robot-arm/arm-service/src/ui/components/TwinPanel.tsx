@@ -1,6 +1,6 @@
 import { Alert, Button, Empty, Spin, Typography } from 'antd';
 import { Box } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type {
   TwinBlockedReason,
   TwinSceneSnapshot,
@@ -160,6 +160,7 @@ function TwinViewport({
   const [stage, setStage] = useState<TwinStage>();
   const [stageError, setStageError] = useState<string>();
   const [progress, setProgress] = useState<{ loaded: number; total: number }>();
+  const shownStage = useRef<TwinStage>();
   const canvases = useMemo(
     () => createScreenCanvases(scene.screens),
     [scene.screens],
@@ -199,18 +200,37 @@ function TwinViewport({
     };
   }, [scene, canvases]);
 
-  useTwinTelemetry(stage);
+  const ready = useTwinTelemetry(stage);
   useScreenTextures(scene.screens, canvases, stage);
-  useEffect(() => stage?.setViewPreset(viewPreset), [viewPreset, stage]);
+  useLayoutEffect(() => {
+    if (!stage || !ready) return;
+    const shown = shownStage.current === stage;
+    stage.setViewPreset(viewPreset, shown);
+    if (!shown) {
+      stage.setActive(true);
+      shownStage.current = stage;
+    }
+  }, [viewPreset, stage, ready]);
 
   return (
-    <div className="twin-stage">
-      <canvas ref={canvasRef} />
-      {progress && (
+    <div className="twin-stage" aria-busy={!ready && !stageError}>
+      <canvas
+        ref={canvasRef}
+        style={{ visibility: ready ? 'visible' : 'hidden' }}
+      />
+      {!ready && !stageError && (
         <div className="twin-progress">
-          {zh
-            ? `加载模型 ${progress.loaded}/${progress.total}`
-            : `Loading model ${progress.loaded}/${progress.total}`}
+          {progress
+            ? zh
+              ? `加载模型 ${progress.loaded}/${progress.total}`
+              : `Loading model ${progress.loaded}/${progress.total}`
+            : stage
+              ? zh
+                ? '正在对齐机械臂姿态…'
+                : 'Aligning the arm pose…'
+              : zh
+                ? '加载模型…'
+                : 'Loading model…'}
         </div>
       )}
       {stageError && <div className="twin-progress is-error">{stageError}</div>}
