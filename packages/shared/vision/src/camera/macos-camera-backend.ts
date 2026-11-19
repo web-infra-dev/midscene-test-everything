@@ -227,22 +227,18 @@ export class MacosCameraBackend implements CameraBackend {
   async openHardwareControl(
     deviceId: string,
   ): Promise<CameraHardwareControl | undefined> {
-    const device = await this.cachedDevice(deviceId);
+    // The bundled macOS helper captures video. Numeric camera controls require
+    // an explicitly configured helper that implements the control protocol.
+    if (!this.helperPath) return undefined;
+
+    if (!this.deviceCache.has(deviceId)) await this.listDevices();
+    const device = this.deviceCache.get(deviceId);
     if (!device) return undefined;
     const control = new MacosCameraHardwareControl(deviceId, device.uid, () =>
-      this.controlExecutable(),
+      this.getHelper(),
     );
     await control.open();
     return control;
-  }
-
-  private async cachedDevice(deviceId: string) {
-    let device = this.deviceCache.get(deviceId);
-    if (!device) {
-      await this.listDevices();
-      device = this.deviceCache.get(deviceId);
-    }
-    return device;
   }
 
   private getCameraApp(): Promise<string> {
@@ -255,17 +251,6 @@ export class MacosCameraBackend implements CameraBackend {
     return this.appPromise;
   }
 
-  private async controlExecutable(): Promise<string> {
-    if (this.cameraAppDirectory && !this.helperPath)
-      return join(
-        await this.getCameraApp(),
-        'Contents',
-        'MacOS',
-        'MidsceneCamera',
-      );
-    return this.getHelper();
-  }
-
   private getHelper(): Promise<string> {
     if (this.helperPath) {
       if (!existsSync(this.helperPath)) {
@@ -276,7 +261,10 @@ export class MacosCameraBackend implements CameraBackend {
       }
       return Promise.resolve(this.helperPath);
     }
-    this.helperPromise ??= this.compileHelper();
+    this.helperPromise ??= this.compileHelper().catch((error) => {
+      this.helperPromise = undefined;
+      throw error;
+    });
     return this.helperPromise;
   }
 

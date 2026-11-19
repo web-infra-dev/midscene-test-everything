@@ -23,6 +23,8 @@ export class RemoteSessionManager implements PlaygroundSessionManager {
   private opening = false;
   private generation = 0;
 
+  constructor(private readonly scope = '') {}
+
   get sessionEnded() {
     return this.device?.sessionEnded ?? false;
   }
@@ -75,7 +77,7 @@ export class RemoteSessionManager implements PlaygroundSessionManager {
         displayName: profile.name,
         preview:
           profile.preview === 'mjpeg'
-            ? createMjpegPreviewDescriptor()
+            ? createMjpegPreviewDescriptor({ mjpegPath: `${this.scope}/mjpeg` })
             : createScreenshotPreviewDescriptor(),
         platformId: 'open-device',
       };
@@ -94,15 +96,19 @@ export class RemoteSessionManager implements PlaygroundSessionManager {
   }
 }
 
+export function prepareUniversalDevicePlatform(scope = '') {
+  return {
+    platformId: 'open-device',
+    title: 'Midscene Universal Device',
+    sessionManager: new RemoteSessionManager(scope),
+    preview: createScreenshotPreviewDescriptor(),
+  };
+}
+
 export const universalDevicePlatform = definePlaygroundPlatform({
   id: 'open-device',
   title: 'Midscene Universal Device',
   async prepare() {
-    return {
-      platformId: 'open-device',
-      title: 'Midscene Universal Device',
-      sessionManager: new RemoteSessionManager(),
-      preview: createScreenshotPreviewDescriptor(),
-    };
+    return prepareUniversalDevicePlatform();
   },
 });

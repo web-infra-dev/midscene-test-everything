@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { onTestFinished, test } from '@rstest/core';
 import { launchUniversalDevicePlayground } from '../dist/index.js';
 
-test('Playground discovers, claims, previews and releases one device from the service', async () => {
+test('Playground tabs independently claim, preview, control and release devices', async () => {
   // The service is built alongside the Playground, but is not its runtime dependency.
   const serviceModule = new URL(
     '../../ios-airlink/dist/server.js',
@@ -26,17 +26,26 @@ test('Playground discovers, claims, previews and releases one device from the se
   onTestFinished(() => rm(directory, { recursive: true, force: true }));
   const store = new DeviceConfigStore(directory);
   const peer = { id: 'peer', name: 'Test iPhone', reports: [1, 2, 3] };
+  const otherPeer = { ...peer, id: 'other-peer', name: 'Other iPhone' };
   const profile = {
     id: 'phone-1',
     name: peer.name,
     screen: { source: 'usb', deviceId: 'usb' },
     bluetoothPeerId: peer.id,
   };
+  const otherProfile = {
+    ...profile,
+    id: 'phone-2',
+    name: otherPeer.name,
+    screen: { source: 'usb', deviceId: 'other-usb' },
+    bluetoothPeerId: otherPeer.id,
+  };
   await store.save(profile);
+  await store.save(otherProfile);
   const token = 'test-token';
   const calls: unknown[] = [];
-  const jpeg = Buffer.from('simulated frame');
-  const liveJpeg = Buffer.from('live frame');
+  const screenshot = (id: string) => Buffer.from(`screenshot ${id}`);
+  const liveFrame = (id: string) => Buffer.from(`live frame ${id}`);
   let previewReaders = 0;
   let closePreview!: () => void;
   const previewClosed = new Promise<void>((resolve) => {
@@ -50,25 +59,27 @@ test('Playground discovers, claims, previews and releases one device from the se
           listeners.add(listener);
           return () => listeners.delete(listener);
         },
-        listPeers: async () => [peer],
+        listPeers: async () => [peer, otherPeer],
       },
-      open: async () => ({
+      open: async ({ id }: { id: string }) => ({
         openPreview: () => {
           previewReaders++;
           return {
-            getFrame: async () => ({ jpeg: liveJpeg, sequence: 1 }),
-            close: async () => closePreview(),
+            getFrame: async () => ({ jpeg: liveFrame(id), sequence: 1 }),
+            close: async () => {
+              if (id === profile.id) closePreview();
+            },
           };
         },
         screenshot: async () => ({
-          jpeg,
+          jpeg: screenshot(id),
           width: 200,
           height: 400,
           sequence: 1,
           receivedAt: Date.now(),
         }),
         execute: async (action: unknown) => {
-          calls.push(action);
+          calls.push({ id, action });
         },
         close: async () => {},
       }),
@@ -77,6 +88,7 @@ test('Playground discovers, claims, previews and releases one device from the se
     store,
   );
   const workspace = await workspaces.create();
+  const otherWorkspace = await workspaces.create();
   const service = await runServer(0, { accessToken: token, workspaces });
   onTestFinished(() => service.close());
   const playground = await launchUniversalDevicePlayground({
@@ -87,7 +99,8 @@ test('Playground discovers, claims, previews and releases one device from the se
   onTestFinished(() => playground.close());
   const origin = `http://127.0.0.1:${playground.port}`;
   const host = `http://127.0.0.1:${service.port}`;
-  const setup = await (await fetch(origin)).text();
+  const page = await fetch(origin);
+  const setup = await page.text();
   const connectionBundle = setup.match(
     /src="(\/open-device\/ui\/[^"]*\/connect\.[^"]+\.js)"/,
   )?.[1];
@@ -113,92 +126,115 @@ test('Playground discovers, claims, previews and releases one device from the se
       headers: { 'Content-Type': 'application/json', ...headers },
       body: JSON.stringify(body),
     });
-  const device = await post(
-    host,
-    `${workspace.apiBase}/session`,
-    { id: profile.id, source: 'saved' },
-    { 'X-Midscene-Playground': 'setup' },
-  );
-  assert.equal(device.status, 200, await device.text());
-  const input = { host, token, deviceId: 'phone-1' };
-  const auth = { Authorization: `Bearer ${token}` };
-  const list = async () =>
+  for (const [apiBase, id] of [
+    [workspace.apiBase, profile.id],
+    [otherWorkspace.apiBase, otherProfile.id],
+  ]) {
+    const device = await post(
+      host,
+      `${apiBase}/session`,
+      { id, source: 'saved' },
+      {
+        'X-Midscene-Playground': 'setup',
+      },
+    );
+    assert.equal(device.status, 200, await device.text());
+  }
+  const deviceRoute = (id: string, connection: string) =>
+    `/devices/${id}/${connection.repeat(32)}`;
+  const leftRoute = deviceRoute(profile.id, 'a');
+  const rightRoute = deviceRoute(otherProfile.id, 'b');
+  const connect = (deviceId: string, route: string) =>
+    post(origin, `${route}/session`, { host, token, deviceId });
+  const list = async (): Promise<{ id: string; status: string }[]> =>
     (await (await post(origin, '/open-device/devices', { host, token })).json())
       .devices;
-  assert.equal((await list())[0].status, 'available');
-  const connected = await post(origin, '/session', input);
-  assert.equal(connected.status, 200, await connected.text());
-  assert.equal((await list())[0].status, 'busy');
-  const info = await (await fetch(`${origin}/runtime-info`)).json();
-  assert.equal(info.preview.kind, 'mjpeg');
-  const live = await fetch(`${origin}/mjpeg`, {
-    signal: AbortSignal.timeout(5000),
-  });
-  assert.equal(live.status, 200);
-  assert.match(
-    live.headers.get('content-type') ?? '',
-    /^multipart\/x-mixed-replace; boundary=/,
-  );
-  const reader = live.body!.getReader();
-  let data = Buffer.alloc(0);
-  while (!data.includes(liveJpeg)) {
-    const chunk = await reader.read();
-    assert.equal(chunk.done, false);
-    data = Buffer.concat([data, Buffer.from(chunk.value!)]);
+  assert.ok((await list()).every(({ status }) => status === 'available'));
+  for (const connected of await Promise.all([
+    connect(profile.id, leftRoute),
+    connect(otherProfile.id, rightRoute),
+  ])) {
+    assert.equal(connected.status, 200, await connected.text());
   }
-  assert.match(data.toString(), /Content-Type: image\/jpeg/);
-  const second = await fetch(`${origin}/mjpeg`, {
-    signal: AbortSignal.timeout(5000),
-  });
-  const secondReader = second.body!.getReader();
-  assert.match(
-    Buffer.from((await secondReader.read()).value!).toString(),
-    /live frame/,
+  assert.ok((await list()).every(({ status }) => status === 'busy'));
+  assert.equal((await fetch(origin + leftRoute)).status, 200);
+  assert.equal(
+    (await (await fetch(`${origin}/session`)).json()).connected,
+    false,
   );
+  const info = await (await fetch(`${origin}${leftRoute}/runtime-info`)).json();
+  assert.equal(info.preview.kind, 'mjpeg');
+  assert.equal(info.preview.mjpegPath, `${leftRoute}/mjpeg`);
+  async function readLive(id: string, route: string) {
+    const live = await fetch(`${origin}${route}/mjpeg`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    assert.equal(live.status, 200);
+    assert.match(
+      live.headers.get('content-type') ?? '',
+      /^multipart\/x-mixed-replace; boundary=/,
+    );
+    const reader = live.body!.getReader();
+    let data = Buffer.alloc(0);
+    while (!data.includes(liveFrame(id))) {
+      const chunk = await reader.read();
+      assert.equal(chunk.done, false);
+      data = Buffer.concat([data, Buffer.from(chunk.value!)]);
+    }
+    assert.match(data.toString(), /Content-Type: image\/jpeg/);
+    return reader;
+  }
+  const [reader, otherReader] = await Promise.all([
+    readLive(profile.id, leftRoute),
+    readLive(otherProfile.id, rightRoute),
+  ]);
+  const secondReader = await readLive(profile.id, leftRoute);
   await secondReader.cancel();
-  assert.equal(previewReaders, 1);
+  assert.equal(previewReaders, 2);
 
-  const duplicate = await post(
-    host,
-    '/api/v1/sessions',
-    { deviceId: 'phone-1' },
-    auth,
-  );
-  assert.equal(duplicate.status, 409);
+  const duplicate = await connect(profile.id, deviceRoute(profile.id, 'c'));
+  assert.equal(duplicate.ok, false);
   const removal = await fetch(host + workspace.apiBase, {
     method: 'DELETE',
     headers: { 'X-Midscene-Playground': 'workspace' },
   });
   assert.equal(removal.status, 409);
-  const preview = await fetch(`${origin}/screenshot`);
+  const preview = await fetch(`${origin}${rightRoute}/screenshot`);
   assert.equal(preview.status, 200);
-  assert.match((await preview.json()).screenshot, /^data:image\/jpeg;base64,/);
-  const tap = await post(origin, '/interact', {
-    actionType: 'Tap',
-    x: 20,
-    y: 30,
-  });
-  assert.equal(tap.status, 200, await tap.text());
-  assert.deepEqual(calls, [{ type: 'tap', point: { x: 20, y: 30 } }]);
   assert.equal(
-    (await fetch(`${origin}/session`, { method: 'DELETE' })).status,
-    200,
+    (await preview.json()).screenshot,
+    `data:image/jpeg;base64,${screenshot(otherProfile.id).toString('base64')}`,
   );
+  const tap = (route: string) =>
+    post(origin, `${route}/interact`, { actionType: 'Tap', x: 20, y: 30 });
+  assert.equal((await tap(leftRoute)).status, 200);
+  const disconnect = (route: string) =>
+    fetch(`${origin}${route}/session`, { method: 'DELETE' });
+  assert.equal((await disconnect(leftRoute)).status, 200);
   await previewClosed;
   await reader.cancel().catch(() => {});
-  assert.equal((await list())[0].status, 'available');
-
-  assert.equal((await post(origin, '/session', input)).status, 200);
-  const status = async () =>
-    (await (await fetch(`${origin}/open-device/session-status`)).json()).ended;
-  assert.equal(await status(), false);
-  for (const notify of listeners) notify({ hosts: [] });
-  const interrupted = await fetch(`${origin}/screenshot`);
-  assert.equal(interrupted.ok, false);
-  assert.equal(await status(), true);
   assert.equal(
-    (await fetch(`${origin}/session`, { method: 'DELETE' })).status,
-    200,
+    (await list()).find(({ id }) => id === profile.id)?.status,
+    'available',
   );
-  assert.equal(await status(), false);
+  assert.equal((await tap(rightRoute)).status, 200);
+  assert.deepEqual(
+    calls,
+    [profile, otherProfile].map(({ id }) => ({
+      id,
+      action: { type: 'tap', point: { x: 20, y: 30 } },
+    })),
+  );
+  await otherReader.cancel();
+
+  assert.equal((await connect(profile.id, leftRoute)).status, 200);
+  const status = async (route: string) =>
+    (await (await fetch(`${origin}${route}/open-device/session-status`)).json())
+      .ended;
+  for (const notify of listeners) notify({ hosts: [otherPeer] });
+  const interrupted = await fetch(`${origin}${leftRoute}/screenshot`);
+  assert.equal(interrupted.ok, false);
+  assert.equal(await status(leftRoute), true);
+  assert.equal(await status(rightRoute), false);
+  assert.equal((await disconnect(rightRoute)).status, 200);
 });

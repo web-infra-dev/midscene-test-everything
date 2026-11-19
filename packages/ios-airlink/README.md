@@ -30,14 +30,16 @@ Traditional iOS automation tools (such as Appium / WebDriverAgent) typically req
 ## 🔌 Architecture
 
 ```text
-┌────────────────────┐                    ┌─────────────────────────┐                                   ┌────────┐
-│                    │ <-- Screenshots -- │ Universal Device (HTTP) │                                   │        │
-│                    │ ---- Actions ----> │                         │                                   │        │
-│ Midscene GUI Agent │                    ├─────────────────────────┤ <-- USB ------------------------- │ iPhone │
-│                    │                    │                         │ <-- AirPlay --------------------- │        │
-│                    │                    │    iOS AirLink (Mac)    │ <-- Camera (Perspective) -------- │        │
-│                    │                    │                         │ --------- Bluetooth HID --------> │        │
-└────────────────────┘                    └─────────────────────────┘                                   └────────┘
+ Midscene GUI Agent / Codex / Claude Code / Cursor
+               ▲    │
+   Screenshots │    │ Actions
+               │    ▼
+┌──────────────────────────┐                                                        ┌────────┐
+│ Universal Device (HTTP)  │                                                        │        │
+├──────────────────────────┤ <-- Screen: USB | AirPlay | Camera (Perspective) ----- │ iPhone │
+│    iOS AirLink (Mac)     │                                                        │        │
+│                          │ ------------------- Bluetooth HID -------------------> │        │
+└──────────────────────────┘                                                        └────────┘
 ```
 
 - **Screen capture:** Supports USB, AirPlay, and external cameras (USB only carries video).
