@@ -220,7 +220,16 @@
   gap: 12px;
 }
 .robot-calibration-batch-queue {
-  padding: 16px 0;
+  min-width: 0;
+  padding: 8px 0;
+  overflow-wrap: anywhere;
+
+  > ol {
+    display: grid;
+    gap: 8px;
+    padding-inline-start: 22px;
+    margin-block: 8px 12px;
+  }
 }
 .phone-connect-dialog .robot-device-phone-link {
   display: flex;
@@ -418,7 +427,7 @@
 }
 .guided-calibration-layout {
   display: grid;
-  grid-template-columns: minmax(330px, 460px) minmax(280px, 1fr);
+  grid-template-columns: minmax(0, clamp(300px, 36%, 440px)) minmax(0, 1fr);
   gap: var(--guided-inset);
   max-width: var(--guided-max-width);
   margin: 0 auto;
@@ -462,6 +471,14 @@
 }
 .guided-camera {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+.is-screen-calibration .guided-camera {
+  position: sticky;
+  top: 0;
+}
+.is-screen-calibration .guided-calibration-flow {
   gap: 12px;
 }
 .guided-camera .ant-tabs-nav {
@@ -488,6 +505,11 @@
   min-height: 160px;
   object-fit: contain;
 }
+.is-screen-calibration .calibration-preview,
+.is-screen-calibration .robot-setup-illustration {
+  max-height: min(58dvh, 560px);
+  min-height: 0;
+}
 .guided-calibration .robot-teaching-camera {
   position: static;
 }
@@ -511,6 +533,9 @@
   .guided-camera {
     grid-row: 1;
     gap: 6px;
+  }
+  .is-screen-calibration .guided-camera {
+    position: static;
   }
   .guided-camera .robot-setup-illustration,
   .guided-camera .calibration-preview {

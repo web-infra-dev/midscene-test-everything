@@ -120,6 +120,22 @@ const calibrationZh: Record<string, string> = {
 
   'Exploration progress': '探索进度',
   'Direction probe {0} / {1}': '方向探点 {0} / {1}',
+  'Finding the reference contact': '寻找参考接触点',
+  'Height sweep {0} / {1}': '短滑测高 {0} / {1}',
+  'Slide sample {0} / {1}': '滑动采点 {0} / {1}',
+  'Short sweeps at different heights establish stable contact':
+    '在不同高度短距离滑动，确定稳定触发的范围',
+  'Sliding and checking touch at the endpoint': '滑向采样点，停稳后确认触摸',
+  'Touch lost. Lifting and retrying from inside the screen':
+    '触摸中断，抬笔后从屏幕内侧重新滑入',
+  'Numbered points are planned. Green marks recorded touches and the ring marks the current target.':
+    '编号是计划点，绿点是实测触点，外圈是当前目标。',
+  'Measured contact height range: {0} mm': '实测触发高度范围 {0} mm',
+  'Checking screen boundaries': '正在验证屏幕边界',
+  'Hover boundary check {0} / {1}': '边界悬空验证 {0} / {1}',
+  'Contact boundary check {0} / {1}': '边界接触验证 {0} / {1}',
+  'Reference position illustration': '参考位示意图',
+  Pending: '待开始',
   'Grid point {0} / {1}': '网格采样点 {0} / {1}',
   'Stopped at this point': '已在此点停止',
   'Measuring this point within the safe range': '正在安全范围内精测当前点高度',
@@ -182,7 +198,8 @@ const calibrationZh: Record<string, string> = {
   'Confirm the screen area before continuing.':
     '请先确认屏幕范围，再继续标定。',
   'Calibrate {0}': '标定 {0}',
-  'Calibrate multiple screens': '批量标定多个屏幕',
+  'Calibrate multiple screens': '多屏连续标定',
+  'More options': '更多选项',
   'Cancel Calibration': '取消本次标定',
   'Cancel Positioning': '取消位置记录',
   'Press Depth': '按压深度',

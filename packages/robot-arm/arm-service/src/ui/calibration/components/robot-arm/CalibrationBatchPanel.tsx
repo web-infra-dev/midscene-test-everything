@@ -123,7 +123,7 @@ export const CalibrationBatchPanel = forwardRef<
   const [previewPlan, setPreviewPlan] = useState<CalibrationBatchPlan>();
   const [deletedCalibrations, setDeletedCalibrations] = useState<string[]>([]);
   const [samplingMode, setSamplingMode] =
-    useState<CalibrationBatchSamplingMode>('standard');
+    useState<CalibrationBatchSamplingMode>('slide');
   const [horizontalConfirmed, setHorizontalConfirmed] = useState(false);
   const [manualAcceptance, setManualAcceptance] = useState(false);
   const [corridorConfirmed, setCorridorConfirmed] = useState(false);
@@ -221,7 +221,7 @@ export const CalibrationBatchPanel = forwardRef<
       setPlan(next);
       speakCalibration('batchClearance', 2);
       setHorizontalConfirmed(false);
-      setSamplingMode('standard');
+      setSamplingMode('slide');
       setManualAcceptance(false);
       setCorridorConfirmed(false);
     });
@@ -423,12 +423,8 @@ export const CalibrationBatchPanel = forwardRef<
                 <Tag>{t(itemLabels[item.status] ?? item.status)}</Tag>
                 {index === batch.currentIndex &&
                   item.status === 'exploring' &&
-                  item.progress && (
-                    <div>
-                      {t(item.progress.message ?? item.progress.phase)}
-                      {item.progress.total > 1 &&
-                        ` ${item.progress.index}/${item.progress.total}`}
-                    </div>
+                  item.progress?.message && (
+                    <div>{t(item.progress.message)}</div>
                   )}
                 {index === batch.currentIndex &&
                   item.status.startsWith('awaiting-') &&
@@ -743,7 +739,7 @@ export const CalibrationBatchPanel = forwardRef<
         }
         onCancel={() => setPlan(undefined)}
         open={Boolean(plan)}
-        title={t('Start automatic calibration')}
+        title={t('Calibrate multiple screens')}
       >
         <Space direction="vertical" size={12} style={{ width: '100%' }}>
           <Typography.Text>{t('Calibration Order')}</Typography.Text>
@@ -776,17 +772,23 @@ export const CalibrationBatchPanel = forwardRef<
               );
             })}
           </ol>
-          <Radio.Group
-            aria-label={t('Sampling mode')}
-            value={samplingMode}
-            onChange={(event) => {
-              setSamplingMode(event.target.value);
-              setHorizontalConfirmed(false);
-            }}
-          >
-            <Radio.Button value="standard">{t('Regular')}</Radio.Button>
-            <Radio.Button value="slide">{t('Fast')}</Radio.Button>
-          </Radio.Group>
+          <details>
+            <summary>
+              {t('Sampling mode')} ·{' '}
+              {t(samplingMode === 'slide' ? 'Fast' : 'Regular')}
+            </summary>
+            <Radio.Group
+              aria-label={t('Sampling mode')}
+              value={samplingMode}
+              onChange={(event) => {
+                setSamplingMode(event.target.value);
+                setHorizontalConfirmed(false);
+              }}
+            >
+              <Radio.Button value="slide">{t('Fast')}</Radio.Button>
+              <Radio.Button value="standard">{t('Regular')}</Radio.Button>
+            </Radio.Group>
+          </details>
           <Checkbox
             checked={horizontalConfirmed}
             onChange={(event) => setHorizontalConfirmed(event.target.checked)}

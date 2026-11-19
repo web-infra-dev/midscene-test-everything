@@ -20,6 +20,7 @@ import {
   App,
   Button,
   ConfigProvider,
+  Dropdown,
   Modal,
   Select,
   Space,
@@ -821,6 +822,12 @@ function GuidedContent({
     step === 3 && batchActive,
     'batch',
   );
+  const previewSession = batchRunning ? progress.session : controller.session;
+  const hideReferenceMarker =
+    step === 3 &&
+    previewSession?.stage === 'collecting' &&
+    (previewSession.automaticPhase === 'height' ||
+      previewSession.automaticPhase === 'grid');
   const cancelSingle = async () => {
     autoOpened.current = selectedId;
     const opening = startingSingle.current;
@@ -1297,13 +1304,17 @@ function GuidedContent({
     screenCount: screenOptions.length,
     soleScreen,
   });
-  const batchAction = savedScreens.length > 1 && (
+  const multipleScreens = savedScreens.length > 1;
+  const batchAction = multipleScreens && (
     <Button
+      type="primary"
       disabled={
+        closing ||
         !config?.ready ||
         !hasCorrection ||
         !config.installationTaught ||
         outlineBlocked ||
+        controller.busy ||
         singleBusy
       }
       onClick={() => batchPanel.current?.open()}
@@ -1311,6 +1322,17 @@ function GuidedContent({
       {t('Calibrate multiple screens')}
     </Button>
   );
+  const singleActionDisabled =
+    !config?.ready ||
+    !hasCorrection ||
+    !config.installationTaught ||
+    singleQueued;
+  const singleActionLabel = t('Calibrate {0}', [selected?.name ?? selectedId]);
+  const openSingleCalibration = () => {
+    if (outlineBlocked || !controller.setup.mapping)
+      void checkCameraBeforeCalibration();
+    else void startSingle().catch((cause) => setError(String(cause)));
+  };
 
   return (
     <main className="calibration-page is-embedded guided-calibration">
@@ -1356,7 +1378,9 @@ function GuidedContent({
         </div>
       </header>
       <div className="calibration-shell-body">
-        <div className="guided-calibration-layout">
+        <div
+          className={`guided-calibration-layout${step === 3 ? ' is-screen-calibration' : ''}`}
+        >
           <div
             className="guided-calibration-flow"
             ref={flow}
@@ -1754,6 +1778,7 @@ function GuidedContent({
                         cameraCheckRequired={outlineBlocked}
                         prepareFromTeaching
                         screenName={selected?.name}
+                        collapseSamplingMode={multipleScreens}
                         readyToCapture={config.ready && !outlineBlocked}
                         readyToStart={config.ready && !outlineBlocked}
                         onActivated={refresh}
@@ -1775,27 +1800,38 @@ function GuidedContent({
                         >
                           {t('Previous Step')}
                         </Button>
-                        <Button
-                          type="primary"
-                          loading={singleQueued}
-                          disabled={
-                            !config.ready ||
-                            !hasCorrection ||
-                            !config.installationTaught ||
-                            singleQueued
-                          }
-                          onClick={() => {
-                            if (outlineBlocked || !controller.setup.mapping)
-                              void checkCameraBeforeCalibration();
-                            else
-                              void startSingle().catch((cause) =>
-                                setError(String(cause)),
-                              );
-                          }}
-                        >
-                          {t('Calibrate {0}', [selected?.name ?? selectedId])}
-                        </Button>
-                        {batchAction}
+                        {multipleScreens ? (
+                          <>
+                            {batchAction}
+                            <Dropdown
+                              trigger={['click']}
+                              disabled={singleQueued}
+                              menu={{
+                                items: [
+                                  {
+                                    key: 'single',
+                                    label: singleActionLabel,
+                                    disabled: singleActionDisabled,
+                                    onClick: openSingleCalibration,
+                                  },
+                                ],
+                              }}
+                            >
+                              <Button loading={singleQueued}>
+                                {t('More options')}
+                              </Button>
+                            </Dropdown>
+                          </>
+                        ) : (
+                          <Button
+                            type="primary"
+                            loading={singleQueued}
+                            disabled={singleActionDisabled}
+                            onClick={openSingleCalibration}
+                          >
+                            {singleActionLabel}
+                          </Button>
+                        )}
                         {savedScreens.length > 0 &&
                           savedScreens.every((screen) =>
                             states.some(
@@ -1850,7 +1886,16 @@ function GuidedContent({
                             data-testid="calibration-live-camera"
                             alt={camera.name}
                           />
-                          <ScreenOutlines outlines={asideOutlines} />
+                          <ScreenOutlines
+                            outlines={
+                              hideReferenceMarker
+                                ? asideOutlines.map((outline) => ({
+                                    ...outline,
+                                    previewPositions: undefined,
+                                  }))
+                                : asideOutlines
+                            }
+                          />
                         </div>
                         {step === 1 && (
                           <Typography.Text type="secondary">
@@ -1873,7 +1918,11 @@ function GuidedContent({
                   },
                   {
                     key: 'illustration',
-                    label: t('Setup illustration'),
+                    label: t(
+                      step === 3
+                        ? 'Reference position illustration'
+                        : 'Setup illustration',
+                    ),
                     forceRender: true,
                     children:
                       step === 2 ? (

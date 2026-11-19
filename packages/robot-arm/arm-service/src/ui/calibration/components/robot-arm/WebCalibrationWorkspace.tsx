@@ -18,6 +18,7 @@ export function WebCalibrationWorkspace({
   readyToStart = true,
   cameraCheckRequired = false,
   prepareFromTeaching = false,
+  collapseSamplingMode = false,
   screenName,
   showSessionCancel = true,
   footer,
@@ -40,6 +41,7 @@ export function WebCalibrationWorkspace({
   readyToStart?: boolean;
   cameraCheckRequired?: boolean;
   prepareFromTeaching?: boolean;
+  collapseSamplingMode?: boolean;
   screenName?: string;
   showSessionCancel?: boolean;
   footer: HTMLElement | null;
@@ -59,6 +61,19 @@ export function WebCalibrationWorkspace({
   const s = completedAttempt && session?.stage !== 'completed' ? null : session;
   const [mode, setMode] = useState<'slide' | 'standard'>('slide');
   const [confirmed, setConfirmed] = useState(false);
+  const samplingModeSelector = (
+    <Radio.Group
+      aria-label={t('Sampling mode')}
+      value={mode}
+      onChange={(event) => {
+        setMode(event.target.value);
+        setConfirmed(false);
+      }}
+    >
+      <Radio.Button value="slide">{t('Fast')}</Radio.Button>
+      <Radio.Button value="standard">{t('Regular')}</Radio.Button>
+    </Radio.Group>
+  );
   const [saveConfirmed, setSaveConfirmed] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [finishFailed, setFinishFailed] = useState(false);
@@ -588,16 +603,17 @@ export function WebCalibrationWorkspace({
               )}
               {stage === 'ready' && s?.referencePosition && s.teachingId && (
                 <>
-                  <Radio.Group
-                    value={mode}
-                    onChange={(e) => {
-                      setMode(e.target.value);
-                      setConfirmed(false);
-                    }}
-                  >
-                    <Radio.Button value="slide">{t('Fast')}</Radio.Button>
-                    <Radio.Button value="standard">{t('Regular')}</Radio.Button>
-                  </Radio.Group>
+                  {collapseSamplingMode ? (
+                    <details>
+                      <summary>
+                        {t('Sampling mode')} ·{' '}
+                        {t(mode === 'slide' ? 'Fast' : 'Regular')}
+                      </summary>
+                      {samplingModeSelector}
+                    </details>
+                  ) : (
+                    samplingModeSelector
+                  )}
                   <Typography.Paragraph>
                     {t(
                       'Sampling and fitting are followed by automatic hover and contact boundary verification. Record the Safe Position afterwards, then review and save.',
