@@ -77,7 +77,6 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.version == 'canary' && github.ref == 'refs/heads/main' && github.repository == 'web-infra-dev/midscene-test-everything'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    environment: npm
     permissions:
       contents: read
       id-token: write
@@ -107,7 +106,6 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'web-infra-dev/midscene-test-everything'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    environment: npm
     permissions:
       contents: write
       id-token: write
