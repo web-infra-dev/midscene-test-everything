@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 
 export async function findReleasePackages(root) {
   // Run one at a time so pnpm's dependency order is preserved in stdout.
-  const directories = execFileSync(
+  const output = execFileSync(
     'pnpm',
     [
       '--recursive',
@@ -13,12 +13,15 @@ export async function findReleasePackages(root) {
       'exec',
       'node',
       '-p',
-      'process.cwd()',
+      '"PKG_DIR:" + process.cwd()',
     ],
     { cwd: root, encoding: 'utf8' },
-  )
+  );
+  const directories = output
     .trimEnd()
     .split(/\r?\n/)
+    .filter((line) => line.startsWith('PKG_DIR:'))
+    .map((line) => line.slice('PKG_DIR:'.length))
     .filter((directory) => directory && directory !== resolve(root));
 
   const packages = await Promise.all(
