@@ -12,7 +12,7 @@ import type {
 } from '../src/contracts.js';
 import { fixture, pose } from './fixtures.js';
 
-async function setup() {
+async function setup(initial = pose(100, -50, 80)) {
   const f = await fixture();
   const teaching: InstallationTeaching = {
     id: 'mount',
@@ -43,7 +43,7 @@ async function setup() {
     stage: 'observation',
     auto: { observationRecorded: false },
   } as CalibrationSession;
-  let actual = pose(100, -50, 80);
+  let actual = initial;
   const preflight = rstest.fn(
     async (_targets: Parameters<CalibrationHost['preflight']>[0]) => {},
   );
@@ -103,6 +103,35 @@ it('tries the next exit after occlusion and replans from the measured current po
       f.move.mock.calls[1][0],
     );
     expect(f.session.auto?.cameraVisibility?.clear).toBe(true);
+  } finally {
+    await f.cleanup();
+  }
+});
+it('moves to a candidate during a debug search even when the starting pose is already clear', async () => {
+  const start = pose(100, -125, 80);
+  const target = pose(100, -180, 100);
+  const f = await setup(start);
+  try {
+    f.session.auto!.batchParking = {
+      pose: target,
+      obstacles: [],
+      complete: true,
+    };
+    const verify = rstest.fn(async () => ({
+      clear: true,
+      checkedAt: new Date().toISOString(),
+      screens: [],
+    }));
+    f.host.verifyCameraVisibility = verify;
+    expect(await avoidCamera(f.host, f.session, f.ctx)).toBe(true);
+    expect(verify).toHaveBeenCalledWith(start);
+    expect(f.move).not.toHaveBeenCalled();
+
+    verify.mockClear();
+    const debug = { ...f.session, requireTravel: true };
+    expect(await avoidCamera(f.host, debug, f.ctx)).toBe(true);
+    expect(f.move.mock.calls.at(-1)?.[0]).toEqual(target);
+    expect(verify.mock.calls).toEqual([[target]]);
   } finally {
     await f.cleanup();
   }

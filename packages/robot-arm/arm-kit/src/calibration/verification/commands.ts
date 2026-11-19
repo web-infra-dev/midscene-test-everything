@@ -30,7 +30,9 @@ import { returnToObservation } from './safe-position.js';
 import { resetCalibrationVerification } from './session-state.js';
 
 export interface CalibrationHost {
-  verifyCameraVisibility?(): Promise<ScreenVisibilityEvidence>;
+  verifyCameraVisibility?(
+    pose: CartesianPose,
+  ): Promise<ScreenVisibilityEvidence>;
   progress?(s: CalibrationSession): void;
   adapter: RobotDriverBoundary;
   profileStore: ProfileStore;
@@ -154,13 +156,13 @@ export async function applyCalibrationCommand(
         );
       assertBatchParking(s, ctx, pose);
       if (this.verifyCameraVisibility) {
-        const visibility = await this.verifyCameraVisibility();
+        const visibility = await this.verifyCameraVisibility(pose);
         await this.stable(pose, ctx);
         this.check();
         if (!visibility.clear)
           throw new RobotArmError(
             'CAMERA_OCCLUDED',
-            'The camera view of one or more screens is still blocked.',
+            'The camera could not verify every screen. Check the live view for glare or obstructions.',
             409,
           );
         if (s.auto) s.auto.cameraVisibility = visibility;

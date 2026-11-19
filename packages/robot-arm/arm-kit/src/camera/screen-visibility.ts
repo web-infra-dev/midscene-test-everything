@@ -3,7 +3,11 @@ import {
   CALIBRATION_PHONE_POLICY,
   type CalibrationPageLayout,
 } from '../assisted-contracts.js';
-import { RobotArmError, type ScreenVisibilityEvidence } from '../contracts.js';
+import {
+  RobotArmError,
+  type ScreenVisibilityEvidence,
+  type ScreenVisibilityProbePattern,
+} from '../contracts.js';
 import {
   applyHomography,
   computeHomography,
@@ -26,6 +30,7 @@ function visibilityViewport(
   rows: number,
   rowPosition: (row: number) => number,
   response: (point: { x: number; y: number }) => number,
+  offsetPattern: boolean,
 ) {
   const width = layout ? Math.min(1, layout.width / layout.screen.width) : 1;
   const height = layout ? Math.min(1, layout.height / layout.screen.height) : 1;
@@ -49,18 +54,31 @@ function visibilityViewport(
 
   // Browser dimensions constrain the crop. Use the signed grid to locate
   // that viewport within the screen when the browser omits its screen origin.
+  const probes = offsetPattern
+    ? [
+        [0.25, 0.25],
+        [0.25, 0.75],
+        [0.75, 0.25],
+        [0.75, 0.75],
+      ]
+    : [
+        [0.08, 0.08],
+        [0.5, 0.5],
+        [0.92, 0.92],
+      ];
   let bestScore = -1;
   for (const x of xs) {
     for (const y of ys) {
       let score = 0;
       for (let row = 0; row < rows; row++) {
         for (let column = 0; column < columns; column++) {
-          const sign = (row + column) % 2 === 0 ? 1 : -1;
-          for (const offset of [0.08, 0.5, 0.92]) {
+          const baseSign = (row + column) % 2 === 0 ? 1 : -1;
+          for (const [dx, dy] of probes) {
+            const sign = dx < 0.5 === dy < 0.5 ? baseSign : -baseSign;
             if (
               response({
-                x: x + ((column + offset) / columns) * width,
-                y: y + rowPosition(row + offset) * height,
+                x: x + ((column + dx) / columns) * width,
+                y: y + rowPosition(row + dy) * height,
               }) === sign
             )
               score++;
@@ -76,6 +94,39 @@ function visibilityViewport(
   return best;
 }
 
+/** Count connected misses so isolated noise does not add up to an obstruction. */
+function largestUnresponsiveRegion(mask: Uint8Array, columns: number) {
+  const rows = mask.length / columns;
+  let largest = 0;
+  for (let index = 0; index < mask.length; index++) {
+    if (!mask[index]) continue;
+    const region = [index];
+    mask[index] = 0;
+    for (let next = 0; next < region.length; next++) {
+      const x = region[next] % columns;
+      const y = Math.floor(region[next] / columns);
+      for (
+        let row = Math.max(0, y - 1);
+        row <= Math.min(rows - 1, y + 1);
+        row++
+      ) {
+        for (
+          let column = Math.max(0, x - 1);
+          column <= Math.min(columns - 1, x + 1);
+          column++
+        ) {
+          const neighbor = row * columns + column;
+          if (!mask[neighbor]) continue;
+          mask[neighbor] = 0;
+          region.push(neighbor);
+        }
+      }
+    }
+    largest = Math.max(largest, region.length);
+  }
+  return largest;
+}
+
 /**
  * Three acknowledged, fresh views show checkerboard, inverse, checkerboard.
  * A stationary foreground object cannot reproduce the signed colour response.
@@ -83,7 +134,10 @@ function visibilityViewport(
 export async function measureScreenVisibility(
   frames: readonly Buffer[],
   screens: readonly VisibilityScreen[],
-  options?: { includeUndetected?: boolean },
+  options?: {
+    includeUndetected?: boolean;
+    pattern?: ScreenVisibilityProbePattern;
+  },
 ): Promise<ScreenVisibilityEvidence> {
   if (frames.length !== 3 || !screens.length)
     throw new RobotArmError(
@@ -112,6 +166,8 @@ export async function measureScreenVisibility(
       'Camera dimensions changed during screen visibility verification.',
     );
   const { columns, rows } = CALIBRATION_PHONE_POLICY.visibilityPattern;
+  const pattern = options?.pattern ?? 'checkerboard';
+  const offsetPattern = pattern === 'offset-contrast';
   const results = screens.map((screen) => {
     if (
       screen.sourceWidth !== width ||
@@ -148,7 +204,7 @@ export async function measureScreenVisibility(
           'A screen visibility sample is outside the camera frame.',
         );
       const offset = (py * width + px) * channels;
-      // The blue tile has a greater blue-to-red difference than the pale tile.
+      // The blue tile has a greater blue-to-red difference than the other tile.
       // Compare chroma across phases to reject brightness-only changes.
       const blueMinusRed = decoded.map(
         ({ data }) => data[offset + 2] - data[offset],
@@ -187,18 +243,34 @@ export async function measureScreenVisibility(
       rows,
       rowPosition,
       response,
+      offsetPattern,
     );
     let visible = 0;
+    let matchedCenters = 0;
+    let sampledCenters = 0;
     const samplesPerSide = 6;
+    const isCenter = (sample: number) =>
+      offsetPattern
+        ? sample === 1 || sample === 4
+        : sample === 2 || sample === 3;
     const samplesPerTile = samplesPerSide ** 2;
     const sampleColumns = columns * samplesPerSide;
     const sampleRows = rows * samplesPerSide;
     const detected = new Uint8Array(sampleColumns * sampleRows);
+    const unresponsive = new Uint8Array(detected.length);
+    // Exclude the outline and its rounded corners from the occlusion mask.
+    const margin = samplesPerSide / 2;
+    const right = sampleColumns - margin;
+    const bottom = sampleRows - margin;
     for (let row = 0; row < rows; row++) {
       for (let column = 0; column < columns; column++) {
-        const sign = (row + column) % 2 === 0 ? 1 : -1;
+        const baseSign = (row + column) % 2 === 0 ? 1 : -1;
         for (let y = 0; y < samplesPerSide; y++) {
           for (let x = 0; x < samplesPerSide; x++) {
+            const sign =
+              offsetPattern && x < samplesPerSide / 2 !== y < samplesPerSide / 2
+                ? -baseSign
+                : baseSign;
             const sampleColumn = column * samplesPerSide + x;
             const sampleRow = row * samplesPerSide + y;
             const polarity = response({
@@ -213,20 +285,31 @@ export async function measureScreenVisibility(
             // A small outline error can put a sample near a tile boundary
             // into the neighboring tile. Still require the expected checkerboard
             // polarity at tile centers and a repeatable inversion everywhere.
-            const center = x >= 2 && x < 4 && y >= 2 && y < 4;
+            const center = isCenter(x) && isCenter(y);
+            if (center) {
+              sampledCenters++;
+              if (polarity === sign) matchedCenters++;
+            }
+            const index = sampleRow * sampleColumns + sampleColumn;
             if (polarity === sign || (!center && polarity === -sign)) {
-              detected[sampleRow * sampleColumns + sampleColumn] = 1;
+              detected[index] = 1;
               visible++;
             }
+            // Wrong polarity still means this pixel followed the colour change.
+            // Use polarity to validate the pattern, and absence of a response
+            // to identify the silhouette of a stationary object.
+            if (
+              polarity === 0 &&
+              sampleColumn >= margin &&
+              sampleColumn < right &&
+              sampleRow >= margin &&
+              sampleRow < bottom
+            )
+              unresponsive[index] = 1;
           }
         }
       }
     }
-    // The fitted outline can include bezel and rounded corners. Slide full
-    // tile-sized windows inside the margin so edge regions have equal weight.
-    const margin = samplesPerSide / 2;
-    const right = sampleColumns - margin;
-    const bottom = sampleRows - margin;
     let interiorVisible = 0;
     for (let y = margin; y < bottom; y++) {
       for (let x = margin; x < right; x++) {
@@ -248,12 +331,28 @@ export async function measureScreenVisibility(
         );
       }
     }
+    const visibleFraction = visible / detected.length;
+    const interiorVisibleFraction =
+      interiorVisible / ((right - margin) * (bottom - margin));
+    const largestRegion = largestUnresponsiveRegion(
+      unresponsive,
+      sampleColumns,
+    );
+    // A small spot can be a display artefact. A connected gap can also be a
+    // narrow pen spanning several tiles, even with high coverage in each tile.
+    const clear =
+      visibleFraction >= 0.85 &&
+      interiorVisibleFraction >= 0.95 &&
+      largestRegion < 8 &&
+      // A cached page or a broad camera-wide color shift cannot confirm this pattern.
+      (!offsetPattern || matchedCenters / sampledCenters >= 0.8);
     return {
       id: screen.id,
-      visibleFraction: visible / detected.length,
-      interiorVisibleFraction:
-        interiorVisible / ((right - margin) * (bottom - margin)),
+      visibleFraction,
+      interiorVisibleFraction,
       minimumTileFraction,
+      largestUnresponsiveRegion: largestRegion,
+      clear,
     };
   });
   if (
@@ -266,13 +365,9 @@ export async function measureScreenVisibility(
       409,
     );
   return {
-    clear: results.every(
-      (screen) =>
-        screen.visibleFraction >= 0.85 &&
-        screen.interiorVisibleFraction >= 0.95 &&
-        screen.minimumTileFraction >= 0.85,
-    ),
+    clear: results.every((screen) => screen.clear),
     checkedAt: new Date().toISOString(),
+    pattern,
     screens: results,
   };
 }

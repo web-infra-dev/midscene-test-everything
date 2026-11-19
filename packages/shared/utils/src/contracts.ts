@@ -995,14 +995,20 @@ export interface RobotActionAuditStatus {
   maxBytes: number;
 }
 /** Active verification of an already fitted phone coordinate frame. */
+export type ScreenVisibilityProbePattern = 'checkerboard' | 'offset-contrast';
+
 export interface ScreenVisibilityEvidence {
   clear: boolean;
   checkedAt: string;
+  pattern?: ScreenVisibilityProbePattern;
   screens: Array<{
     id: string;
     visibleFraction: number;
     interiorVisibleFraction?: number;
     minimumTileFraction: number;
+    /** Largest connected group of samples that did not follow the colour change. */
+    largestUnresponsiveRegion?: number;
+    clear?: boolean;
   }>;
 }
 

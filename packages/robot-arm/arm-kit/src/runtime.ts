@@ -3595,8 +3595,9 @@ export class RobotArmRuntime extends RobotKernel {
     ) => Promise<ScreenVisibilityEvidence>,
     guard: () => void,
     confirmPages: () => Promise<void>,
-    operatorConfirmed = false,
+    options: { operatorConfirmed?: boolean; requireTravel?: boolean } = {},
   ): Promise<{ pose: CartesianPose; visibility: SharedParkingEvidence }> {
+    const { operatorConfirmed, requireTravel } = options;
     const profile = this.profileStore.getCalibration(calibrationId);
     const ctx = this.context(binding);
     ctx.minimumTravelTipZMm = Math.max(
@@ -3626,6 +3627,7 @@ export class RobotArmRuntime extends RobotKernel {
       const state: CameraAvoidanceState = {
         candidate: structuredClone(profile),
         stage: 'verification',
+        requireTravel,
         auto: { batchParking: parking },
       };
       if (operatorConfirmed) {
@@ -3655,6 +3657,7 @@ export class RobotArmRuntime extends RobotKernel {
           visibility: { operatorConfirmedAt: new Date().toISOString() },
         };
       }
+      const auditId = this.operation?.requestId ?? randomUUID();
       const found = await avoidCamera(
         {
           profileStore: this.profileStore,
@@ -3676,17 +3679,31 @@ export class RobotArmRuntime extends RobotKernel {
           },
           move: (pose, _context, speed, acceleration) => {
             check();
-            return host.move(pose, { speed, acceleration });
+            return host.move(pose, {
+              speed,
+              acceleration,
+              beforeSubmit: check,
+            });
           },
           stable: (pose) =>
             this.motionExecutor
               .stable(pose, 5000, check, (ms) => this.hold(ms))
               .then(() => undefined),
-          verifyCameraVisibility: async () => {
+          verifyCameraVisibility: async (pose) => {
             check();
-            const evidence = await verifyVisibility(host.signal);
-            check();
-            return evidence;
+            const detail = { stage: 'shared-parking-visibility', pose };
+            try {
+              const evidence = await verifyVisibility(host.signal);
+              check();
+              this.audit('calibration', auditId, 'completed', {
+                ...detail,
+                evidence,
+              });
+              return evidence;
+            } catch (error) {
+              this.audit('calibration', auditId, 'failed', detail, error);
+              throw error;
+            }
           },
         },
         state,
@@ -3699,17 +3716,9 @@ export class RobotArmRuntime extends RobotKernel {
           'The arm reached a candidate Safe Position, but the camera could not verify every screen.',
           409,
           {
-            screens: state.auto.cameraVisibility.screens.map((screen) => ({
-              id: screen.id,
-              percent: Math.floor(
-                100 *
-                  Math.min(
-                    screen.visibleFraction,
-                    screen.interiorVisibleFraction ?? screen.visibleFraction,
-                    screen.minimumTileFraction,
-                  ),
-              ),
-            })),
+            screens: state.auto.cameraVisibility.screens
+              .filter((screen) => screen.clear !== true)
+              .map(({ id }) => ({ id })),
           },
         );
       if (!found || !state.auto?.cameraVisibility?.clear)

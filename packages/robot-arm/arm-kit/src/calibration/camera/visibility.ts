@@ -4,12 +4,15 @@ import {
   type VisibilityScreen,
   measureScreenVisibility,
 } from '../../camera/screen-visibility.js';
-import { RobotArmError } from '../../contracts.js';
+import {
+  RobotArmError,
+  type ScreenVisibilityProbePattern,
+} from '../../contracts.js';
 import { sameLayout } from '../phone/session.js';
 
 export interface VisibilityPhone extends VisibilityScreen {
   name?: string;
-  show(phase: 0 | 1): string;
+  show(phase: 0 | 1, pattern?: ScreenVisibilityProbePattern): string;
   observation(id: string): CalibrationPageUpdate | undefined;
   clear(id: string): void;
 }
@@ -79,7 +82,7 @@ export async function verifyScreenVisibility(
         );
     }
   };
-  const capture = async () => {
+  const capture = async (pattern: ScreenVisibilityProbePattern) => {
     const frames: Buffer[] = [];
     for (const phase of [0, 1, 0] as const) {
       signal.throwIfAborted();
@@ -87,7 +90,7 @@ export async function verifyScreenVisibility(
       for (const phone of phones) {
         const previous = requests.get(phone);
         if (previous) phone.clear(previous);
-        requests.set(phone, phone.show(phase));
+        requests.set(phone, phone.show(phase, pattern));
       }
       const deadline = performance.now() + 4000;
       while ([...requests].some(([phone, id]) => !phone.observation(id))) {
@@ -117,14 +120,18 @@ export async function verifyScreenVisibility(
         layout: identities.get(phone)!.layout,
         firstRowHeight: identities.get(phone)!.visibilityFirstRowHeight,
       })),
-      options,
+      {
+        pattern,
+        includeUndetected:
+          pattern === 'checkerboard' || options?.includeUndetected,
+      },
     );
     assertCurrent();
     return result;
   };
   try {
-    const result = await capture();
-    return result.clear ? result : await capture();
+    const result = await capture('checkerboard');
+    return result.clear ? result : await capture('offset-contrast');
   } finally {
     for (const [phone, id] of requests) phone.clear(id);
   }

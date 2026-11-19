@@ -24,6 +24,7 @@ import { atTravelHeight } from './travel-height.js';
 export interface CameraAvoidanceState {
   candidate?: CalibrationSession['candidate'];
   stage: CalibrationSession['stage'];
+  requireTravel?: boolean;
   auto?: Pick<
     NonNullable<CalibrationSession['auto']>,
     | 'batchParking'
@@ -157,7 +158,11 @@ export async function avoidCamera(
     cameraBoundaryExcessMm(contactPoint(pose, ctx.tool.offsetMm), teaching),
   ];
   const startSide = cameraSide(start);
-  if (parking && startSide.every((distance) => distance <= -20)) {
+  if (
+    parking &&
+    !s.requireTravel &&
+    startSide.every((distance) => distance <= -20)
+  ) {
     let canVerifyHere = false;
     try {
       assertBatchParking(s, ctx, start);
@@ -166,7 +171,7 @@ export async function avoidCamera(
       host.check();
     }
     if (canVerifyHere && host.verifyCameraVisibility) {
-      const visibility = await host.verifyCameraVisibility();
+      const visibility = await host.verifyCameraVisibility(start);
       await host.stable(start, ctx);
       host.check();
       s.auto.cameraVisibility = visibility;
@@ -279,7 +284,7 @@ export async function avoidCamera(
       if (host.verifyCameraVisibility) {
         s.auto.checkingVisibility = true;
         progress?.();
-        const visibility = await host.verifyCameraVisibility();
+        const visibility = await host.verifyCameraVisibility(measured);
         await host.stable(measured, ctx);
         host.check();
         s.auto.cameraVisibility = visibility;

@@ -221,9 +221,13 @@ function GuidedContent({
   }>();
   const [applying, setApplying] = useState(false);
   const [batch, setBatch] = useState<CalibrationBatchState | null>();
-  const batchActive = Boolean(
+  const batchRunning = Boolean(
     batch && ['running', 'waiting', 'stopping'].includes(batch.status),
   );
+  const batchActive =
+    batchRunning ||
+    batch?.sharedParkingDebug?.status === 'running' ||
+    batch?.sharedParkingDebug?.status === 'stopping';
   const [single, setSingle] = useState<SingleStatus & { screenId: string }>();
   const lease = single?.screenId === selectedId ? single : undefined;
   const singleActive =
@@ -722,7 +726,7 @@ function GuidedContent({
     () => ({ id: cameraId, deviceId: cameraId }),
     [cameraId],
   );
-  const activeId = batchActive && current ? current.deviceId : selectedId;
+  const activeId = batchRunning && current ? current.deviceId : selectedId;
   useEffect(() => onScreenChange?.(activeId), [activeId, onScreenChange]);
   const activeScreen = screens.find((screen) => screen.id === activeId);
   const activeConfig = config?.deviceId === activeId ? config : undefined;
@@ -825,7 +829,7 @@ function GuidedContent({
     addingScreen.current?.abort();
     setClosing(true);
     try {
-      if (batchActive && batch)
+      if (batch && batch.cameraId === batchClient.cameraId)
         await batchClient.calibrationBatchCommand(batch.id, {
           revision: batch.revision,
           action: 'stop',
@@ -1395,10 +1399,8 @@ function GuidedContent({
                   api={batchClient}
                   cameraId={cameraId}
                   screens={states}
-                  debugDisabled={
-                    outlineBlocked || controller.busy || singleBusy
-                  }
                   disabled={
+                    closing ||
                     !config?.ready ||
                     !config.installationTaught ||
                     outlineBlocked ||
@@ -1676,7 +1678,7 @@ function GuidedContent({
                         message={t('Waiting for the Controller queue')}
                       />
                     )}
-                    {batchActive && current && (
+                    {batchRunning && current && (
                       <ActiveBatchScreen controller={progress} />
                     )}
                     {!batchActive &&

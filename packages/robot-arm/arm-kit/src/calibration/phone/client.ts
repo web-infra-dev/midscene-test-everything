@@ -570,11 +570,18 @@ export function mountCalibrationPhonePage(
           ? `max(calc(100% / ${rows}), calc(2 * env(safe-area-inset-top, 0px))) repeat(${rows - 1},1fr)`
           : `repeat(${rows},1fr)`;
       if (probe) {
+        const offset = probe.pattern === 'offset-contrast';
+        const { colors, contrastColors } = policy.visibilityPattern;
         visibilityTiles.forEach((tile, index) => {
           const column = index % policy.visibilityPattern.columns;
           const row = Math.floor(index / policy.visibilityPattern.columns);
-          tile.style.background =
-            policy.visibilityPattern.colors[(column + row + probe.phase) % 2];
+          const parity = (column + row + probe.phase) % 2;
+          const base = contrastColors[parity];
+          const alternate = contrastColors[1 - parity];
+          // Adjacent tiles meet in the same color, moving the boundaries by half a tile.
+          tile.style.background = offset
+            ? `conic-gradient(from 90deg, ${base} 0deg 90deg, ${alternate} 90deg 180deg, ${base} 180deg 270deg, ${alternate} 270deg 360deg)`
+            : colors[parity];
         });
       }
     }

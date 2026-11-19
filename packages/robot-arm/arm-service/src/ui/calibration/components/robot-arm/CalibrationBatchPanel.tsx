@@ -5,7 +5,6 @@ import type {
   CalibrationBatchState,
   WorkstationScreenState,
 } from '@midscene/robotics-shared/assisted-contracts';
-import type { ScreenVisibilityEvidence } from '@midscene/robotics-shared/contracts';
 import {
   Alert,
   Button,
@@ -105,43 +104,20 @@ export const CalibrationBatchPanel = forwardRef<
     /** Screens of the selected camera, already fetched by the workspace. */
     screens: readonly WorkstationScreenState[];
     disabled: boolean;
-    debugDisabled: boolean;
     onChanged?: () => void | Promise<void>;
     onActiveChange?: (active: boolean) => void;
   }
 >(function CalibrationBatchPanel(
-  {
-    api,
-    cameraId,
-    screens,
-    disabled,
-    debugDisabled,
-    onChanged,
-    onActiveChange,
-  },
+  { api, cameraId, screens, disabled, onChanged, onActiveChange },
   ref,
 ) {
   const [batch, setBatch] = useState<CalibrationBatchState | null>();
   const [startedHere, setStartedHere] = useState(false);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string>();
-  const [visibility, setVisibility] = useState<{
-    api: RobotArmApi;
-    result?: ScreenVisibilityEvidence;
-    error?: string;
-  }>();
-  const visibilityRequest = useRef<AbortController>();
-  const currentVisibility = visibility?.api === api ? visibility : undefined;
-  const debugging = Boolean(
-    currentVisibility && !currentVisibility.result && !currentVisibility.error,
-  );
-  useEffect(
-    () => () => {
-      visibilityRequest.current?.abort();
-      visibilityRequest.current = undefined;
-    },
-    [api],
-  );
+  const debug =
+    batch?.cameraId === cameraId ? batch?.sharedParkingDebug : undefined;
+  const debugging = debug?.status === 'running' || debug?.status === 'stopping';
   const [plan, setPlan] = useState<CalibrationBatchPlan>();
   const [previewPlan, setPreviewPlan] = useState<CalibrationBatchPlan>();
   const [deletedCalibrations, setDeletedCalibrations] = useState<string[]>([]);
@@ -154,7 +130,7 @@ export const CalibrationBatchPanel = forwardRef<
   latest.current = { onChanged, onActiveChange };
   const signature = useRef('');
   const mounted = useRef(true);
-  const busyBatch = Boolean(batch && active(batch));
+  const busyBatch = active(batch) || debugging;
   useEffect(() => {
     mounted.current = true;
     let disposed = false;
@@ -168,9 +144,13 @@ export const CalibrationBatchPanel = forwardRef<
         if (disposed) return;
         announce(result);
         setBatch(result);
-        latest.current.onActiveChange?.(active(result));
+        latest.current.onActiveChange?.(
+          active(result) ||
+            result?.sharedParkingDebug?.status === 'running' ||
+            result?.sharedParkingDebug?.status === 'stopping',
+        );
         const current = result?.items[result.currentIndex];
-        const next = `${result?.id}:${current?.screenProfileId}:${current?.calibrationProfileId}:${result?.status}`;
+        const next = `${result?.id}:${current?.screenProfileId}:${current?.calibrationProfileId}:${result?.status}:${result?.sharedParkingDebug?.status}`;
         if (signature.current !== next) {
           signature.current = next;
           await latest.current.onChanged?.();
@@ -230,22 +210,6 @@ export const CalibrationBatchPanel = forwardRef<
       if (mounted.current) setError(describeCause(cause));
     } finally {
       if (mounted.current) setWorking(false);
-    }
-  };
-  const debugVisibility = async () => {
-    if (visibilityRequest.current) return;
-    const request = new AbortController();
-    visibilityRequest.current = request;
-    setVisibility({ api });
-    try {
-      const result = await api.debugScreenVisibility(request.signal);
-      if (!request.signal.aborted) setVisibility({ api, result });
-    } catch (cause) {
-      if (!request.signal.aborted)
-        setVisibility({ api, error: describeCause(cause) });
-    } finally {
-      if (visibilityRequest.current === request)
-        visibilityRequest.current = undefined;
     }
   };
   const openPlan = () =>
@@ -590,7 +554,8 @@ export const CalibrationBatchPanel = forwardRef<
                   </Button>
                 </>
               )}
-            {(!isActive || row?.status === 'awaiting-boundary-review') &&
+            {!debugging &&
+              (!isActive || row?.status === 'awaiting-boundary-review') &&
               batch.status !== 'completed' && (
                 <>
                   <Button
@@ -641,36 +606,80 @@ export const CalibrationBatchPanel = forwardRef<
         )}
       <details>
         <summary>{t('Advanced debugging')}</summary>
-        <Button
-          disabled={
-            debugDisabled || working || isActive || !cameraId || !screens.length
-          }
-          loading={debugging}
-          onClick={() => void debugVisibility()}
-          size="small"
-          type="link"
+        <Popconfirm
+          title={t('Confirm the motion area is clear. The robot will move.')}
+          okText={t('Start search')}
+          cancelText={t('Cancel')}
+          onConfirm={() => command('debug-shared-parking')}
         >
-          {t('Debug screen visibility')}
-        </Button>
+          <Button
+            disabled={
+              disabled ||
+              working ||
+              busyBatch ||
+              !parkingOnly ||
+              batch?.cameraId !== cameraId
+            }
+            size="small"
+            type="link"
+          >
+            {t('Debug shared Safe Position search')}
+          </Button>
+        </Popconfirm>
+        {debugging && (
+          <Space wrap>
+            <output>
+              {t(
+                debug.status === 'stopping'
+                  ? 'Stopping'
+                  : 'Checking phone pages and finding the shared Safe Position',
+              )}
+            </output>
+            <Button
+              danger
+              size="small"
+              disabled={debug.status === 'stopping'}
+              onClick={() => command('stop')}
+            >
+              {t('Stop search')}
+            </Button>
+          </Space>
+        )}
         {batch?.visibilityMissingScreens?.length ? (
           <Typography.Paragraph type="secondary">
-            {t('Last Safe Position check')} ·{' '}
+            {t('Unverified screens in last Safe Position check')} ·{' '}
             {batch.visibilityMissingScreens.join(' · ')}
           </Typography.Paragraph>
         ) : null}
-        {currentVisibility?.error && (
-          <Alert
-            type="error"
-            message={calibrationErrorText(currentVisibility.error)}
-          />
+        {debug?.error && (
+          <Alert type="error" message={calibrationErrorText(debug.error)} />
         )}
-        {currentVisibility?.result && (
+        {debug?.status === 'stopped' && <output>{t('Stopped')}</output>}
+        {debug?.status === 'completed' && debug.pose && (
+          <Typography.Paragraph type="success">
+            {t('Found shared Safe Position: X {0} mm / Y {1} mm / Z {2} mm', [
+              debug.pose.positionMm.x.toFixed(1),
+              debug.pose.positionMm.y.toFixed(1),
+              debug.pose.positionMm.z.toFixed(1),
+            ])}
+          </Typography.Paragraph>
+        )}
+        {debug && !debugging && batch?.status === 'completed' && (
+          <Button
+            disabled={working || disabled}
+            onClick={() => command('retry')}
+            size="small"
+          >
+            {t('Retry parking')}
+          </Button>
+        )}
+        {debug?.visibility && !debugging && (
           <div aria-live="polite">
             <Typography.Text
-              type={currentVisibility.result.clear ? 'success' : 'warning'}
+              type={debug.visibility.clear ? 'success' : 'warning'}
             >
               {t(
-                currentVisibility.result.clear
+                debug.visibility.clear
                   ? 'Screen visibility passed'
                   : 'Screen visibility did not pass',
               )}
@@ -680,7 +689,7 @@ export const CalibrationBatchPanel = forwardRef<
               rowKey="id"
               pagination={false}
               scroll={{ x: 'max-content' }}
-              dataSource={currentVisibility.result.screens}
+              dataSource={debug.visibility.screens}
               columns={[
                 {
                   title: t('Screen name'),
@@ -699,9 +708,9 @@ export const CalibrationBatchPanel = forwardRef<
                   render: visibilityPercent,
                 },
                 {
-                  title: t('Lowest local coverage'),
-                  dataIndex: 'minimumTileFraction',
-                  render: visibilityPercent,
+                  title: t('Largest unresponsive region (samples)'),
+                  dataIndex: 'largestUnresponsiveRegion',
+                  render: (samples: number | undefined) => samples ?? '—',
                 },
               ]}
             />

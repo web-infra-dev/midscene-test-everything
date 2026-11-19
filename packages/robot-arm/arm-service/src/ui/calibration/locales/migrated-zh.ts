@@ -14,13 +14,22 @@ const teachingBoundaryZh: Record<string, string> = {
   'Finish calibration and return': '完成标定并返回',
   'Shared Safe Position pending': '共用安全位待确认',
   'Advanced debugging': '高级调试',
-  'Debug screen visibility': '调试可见性',
-  'Last Safe Position check': '最近一次安全位检测',
+  'Debug shared Safe Position search': '调试自动寻找共用安全位置',
+  'Confirm the motion area is clear. The robot will move.':
+    '机械臂将移动，请确认运动区域畅通。',
+  'Start search': '开始搜索',
+  'Stop search': '停止搜索',
+  'Found shared Safe Position: X {0} mm / Y {1} mm / Z {2} mm':
+    '找到共用安全位置 · X {0} mm / Y {1} mm / Z {2} mm',
+  'Finish the batch screen calibrations before debugging the shared Safe Position.':
+    '请先完成批量屏幕标定，再调试共用安全位。',
+  'Unverified screens in last Safe Position check':
+    '上次安全位检测未确认的屏幕',
   'Screen visibility passed': '屏幕可见性检测通过',
   'Screen visibility did not pass': '屏幕可见性检测未通过',
   'Whole screen': '整屏',
   'Screen interior': '屏内',
-  'Lowest local coverage': '最低局部检出率',
+  'Largest unresponsive region (samples)': '最大连续无响应区（采样点）',
   'Confirm current shared Safe Position': '人工确认当前共用安全位',
   'Confirm the arm is stationary, clear of the camera and all screens, and does not block any screen in the live view.':
     '请确认机械臂已静止，与相机和所有屏幕保持安全距离，且实时画面中没有遮挡任何屏幕。',
@@ -74,14 +83,14 @@ const teachingBoundaryZh: Record<string, string> = {
     '请保持所有已配对的手机标定页在前台全屏显示。',
   'A camera visibility check is required before recording the shared Safe Position.':
     '记录共用安全位前需确认相机能看清各屏。',
-  'The camera view of one or more screens is still blocked.':
-    '相机画面中仍有屏幕被遮挡。',
+  'The camera could not verify every screen. Check the live view for glare or obstructions.':
+    '相机未能确认所有屏幕可见。请检查实时画面中是否有反光或遮挡。',
   'No reachable camera-clear Safe Position was found within the bounded search.':
     '在限定范围内未找到相机视野清晰且可达的安全位。',
   'The arm reached a candidate Safe Position, but the camera could not verify every screen.':
     '机械臂已到达候选安全位，但相机未能确认所有屏幕清晰可见。',
-  'Automatic camera avoidance could not clear every screen. Review the camera view or record a Safe Position manually.':
-    '自动避让后仍有屏幕被遮挡，请检查相机画面或手动记录安全位。',
+  'The camera could not verify every screen after automatic parking. Check the live view or record a Safe Position manually.':
+    '自动避让后，相机仍未能确认所有屏幕可见。请检查实时画面或手动记录安全位。',
   'The screen visibility pattern could not be verified. Check the camera view and paired phone pages.':
     '无法识别屏幕显示的可见性图案，请检查相机画面和已配对的手机页面。',
   'The paired phones did not acknowledge the visibility pattern. Keep every page visible and fullscreen.':

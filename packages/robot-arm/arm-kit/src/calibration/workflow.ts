@@ -22,6 +22,7 @@ import {
   type CalibrationProfile,
   type CartesianPose,
   RobotArmError,
+  type ScreenVisibilityProbePattern,
   isRobotArmError,
   semanticJson,
 } from '../contracts.js';
@@ -636,7 +637,7 @@ export class CalibrationWorkflow {
   }
   private visibilityProbe?: CalibrationPageReply['visibilityProbe'];
   private visibilityContext?: CalibrationPageUpdate;
-  showVisibilityProbe(phase: 0 | 1) {
+  showVisibilityProbe(phase: 0 | 1, pattern?: ScreenVisibilityProbePattern) {
     if (this.visibilityProbe)
       throw new RobotArmError(
         'BUSY',
@@ -646,7 +647,7 @@ export class CalibrationWorkflow {
     if (this.phone.presence() !== 'connected') this.phone.assertConnected();
     this.visibilityContext = structuredClone(this.phone.update!);
     const id = randomUUID();
-    this.visibilityProbe = { id, phase };
+    this.visibilityProbe = { id, phase, pattern };
     this.options.onPhoneObservation?.(undefined);
     this.changed();
     return id;
@@ -2175,7 +2176,7 @@ export class CalibrationWorkflow {
       if (s.teachingId)
         s.error =
           s.calibration.auto?.cameraVisibility?.clear === false
-            ? 'Automatic camera avoidance could not clear every screen. Review the camera view or record a Safe Position manually.'
+            ? 'The camera could not verify every screen after automatic parking. Check the live view or record a Safe Position manually.'
             : 'No reachable camera-clear Safe Position was found within the bounded search.';
     }
     this.changed();
@@ -2561,7 +2562,7 @@ export class CalibrationWorkflow {
             points: pageOrderedQuad(correction.points, correction.rotation),
             sourceWidth: correction.sourceWidth,
             sourceHeight: correction.sourceHeight,
-            show: (phase) => this.showVisibilityProbe(phase),
+            show: (phase, pattern) => this.showVisibilityProbe(phase, pattern),
             observation: (id) => this.visibilityObservation(id),
             clear: (id) => this.clearVisibilityProbe(id),
           },

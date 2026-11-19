@@ -8,6 +8,7 @@ import type {
   MotionSpeed,
   ProfileBinding,
   ScreenMotionSettings,
+  ScreenVisibilityProbePattern,
   Vector3,
   VisionBinding,
 } from './contracts.js';
@@ -22,6 +23,7 @@ export const CALIBRATION_PHONE_POLICY = {
     columns: 8,
     rows: 12,
     colors: ['#9ec5ff', '#f6f8fb'],
+    contrastColors: ['#245ba3', '#963f24'],
   },
   heartbeatMs: 750,
   stepAcknowledgementMs: 5000,
@@ -288,7 +290,11 @@ export interface CalibrationPageUpdate {
 export interface CalibrationPageReply {
   /** Briefly identify the phone selected in Playground. */
   selectionHint?: true;
-  visibilityProbe?: { id: string; phase: 0 | 1 };
+  visibilityProbe?: {
+    id: string;
+    phase: 0 | 1;
+    pattern?: ScreenVisibilityProbePattern;
+  };
   /** Same-camera transition from camera-only preview to a paired Device. */
   pairingToken?: string;
   insetMarkers?: boolean;
@@ -626,6 +632,13 @@ export interface CalibrationBatchState {
   usesSharedSafePosition?: true;
   /** Live while the batch searches for the shared Safe Position automatically. */
   automaticSharedParking?: true;
+  /** Transient result of the Advanced Debugging motion, scoped to this batch. */
+  sharedParkingDebug?: {
+    status: 'running' | 'stopping' | 'stopped' | 'completed' | 'failed';
+    pose?: CartesianPose;
+    visibility?: import('./contracts.js').ScreenVisibilityEvidence;
+    error?: string;
+  };
   sharedSafePosition?: CartesianPose;
   sharedSafePositionVerified?: boolean;
   sharedVisibility?: import('./contracts.js').ScreenVisibilityEvidence;
@@ -721,6 +734,7 @@ export interface CalibrationBatchCommand {
     | 'accept'
     | 'record-safe-position'
     | 'confirm-shared-parking'
+    | 'debug-shared-parking'
     | 'enter-drag'
     | 'exit-drag';
 }
