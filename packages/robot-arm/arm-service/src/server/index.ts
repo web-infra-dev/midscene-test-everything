@@ -145,13 +145,32 @@ export async function startPlaygroundHost({
 }: HostOptions) {
   const markerPreviews = new Map<string, MarkerPreview>();
   const wifiInterfaces = await discoverWifiInterfaces();
-  const phoneLinks = (token: string) =>
-    phoneAddresses({ wifiInterfaces, controllerHost: host }).map(
-      ({ address, name }) => ({
-        name,
-        url: `http://${address}:${(server.address() as AddressInfo).port}/phone-calibration?token=${token}`,
-      }),
-    );
+  const phoneAddressCacheMs = 5_000;
+  let phoneAddressCache:
+    | {
+        controllerHost: string | undefined;
+        expiresAt: number;
+        addresses: ReturnType<typeof phoneAddresses>;
+      }
+    | undefined;
+  const phoneLinks = (token: string) => {
+    const now = performance.now();
+    if (
+      !phoneAddressCache ||
+      phoneAddressCache.controllerHost !== host ||
+      now >= phoneAddressCache.expiresAt
+    ) {
+      phoneAddressCache = {
+        controllerHost: host,
+        expiresAt: now + phoneAddressCacheMs,
+        addresses: phoneAddresses({ wifiInterfaces, controllerHost: host }),
+      };
+    }
+    return phoneAddressCache.addresses.map(({ address, name }) => ({
+      name,
+      url: `http://${address}:${(server.address() as AddressInfo).port}/phone-calibration?token=${token}`,
+    }));
+  };
   const cameraManager = new CameraSessionManager();
   const pendingPerspectives = new PreviewPerspectives(cameraManager);
   const previewScreens = new Map<string, string>();

@@ -264,24 +264,16 @@ export class RobotArmRuntime extends RobotKernel {
     }
     const operationId = this.operation!.requestId;
     const signal = this.abort!.signal;
+    const teachingInput = input.cameraId
+      ? { ...input, cameraId: input.cameraId }
+      : undefined;
     const initialTeaching =
-      input.cameraId &&
-      this.profileStore.installationTeaching({
-        ...input,
-        cameraId: input.cameraId,
-      });
+      teachingInput && this.profileStore.installationTeaching(teachingInput);
     const check = () => {
       if (
-        input.cameraId &&
-        (initialTeaching ||
-          this.profileStore.installationTeaching({
-            ...input,
-            cameraId: input.cameraId,
-          })) &&
-        this.profileStore.installationTeaching({
-          ...input,
-          cameraId: input.cameraId,
-        })?.id !== (initialTeaching || undefined)?.id
+        teachingInput &&
+        this.profileStore.installationTeaching(teachingInput)?.id !==
+          initialTeaching?.id
       )
         throw new RobotArmError(
           'CALIBRATION_INVALID',

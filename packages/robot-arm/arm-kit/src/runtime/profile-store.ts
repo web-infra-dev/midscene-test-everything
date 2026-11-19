@@ -796,7 +796,7 @@ export class ProfileStore {
   }) {
     const robot = this.getRobot(input.robotProfileId);
     const tool = this.getTool(input.toolProfileId);
-    return this.list().installationTeachings?.find(
+    const teaching = this.data.installationTeachings?.find(
       (t) =>
         t.robotProfileId === robot.id &&
         t.toolProfileId === tool.id &&
@@ -805,6 +805,7 @@ export class ProfileStore {
         t.toolGeometryRevision === tool.geometryRevision &&
         t.corridorConfirmed === true,
     );
+    return teaching && structuredClone(teaching);
   }
   saveInstallationTeaching(
     teaching: import('../contracts.js').InstallationTeaching,
