@@ -79,7 +79,7 @@ jobs:
             exit 0
           fi
           if [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
-            if ! git log "${BEFORE}..${AFTER}" --format=%s | grep -qx "chore(release): v${current_version}"; then
+            if ! git log "${BEFORE}..${AFTER}" --format=%s | grep -Eq "^chore\(release\): v${current_version//./\\.}( \(#[0-9]+\))?$"; then
               echo "should_publish=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
