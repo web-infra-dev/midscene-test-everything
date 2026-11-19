@@ -65,7 +65,8 @@ export class AutomaticCapture {
   private invalid?: string;
   private contactSeen = false;
   private challenge?: string;
-  private phase: 'local' | 'grid' = 'local';
+  private phase: 'local' | 'height' | 'grid' = 'local';
+  private heightTotal = 0;
   private gridPoints: WebPoint[] = [];
   private index = 0;
   private operation?: CalibrationPointProgress['operation'];
@@ -85,7 +86,12 @@ export class AutomaticCapture {
         ? {
             mode: this.mode,
             index: this.index + 1,
-            total: this.phase === 'local' ? 3 : this.gridPoints.length,
+            total:
+              this.phase === 'local'
+                ? 3
+                : this.phase === 'height'
+                  ? this.heightTotal
+                  : this.gridPoints.length,
             target: this.target,
             operation: this.operation,
             targets: this.phase === 'grid' ? this.gridPoints : undefined,
@@ -190,8 +196,10 @@ export class AutomaticCapture {
       point: { x: this.layout.width / 2, y: this.layout.height / 2 },
     };
     this.phase = 'local';
+    this.heightTotal = 0;
     this.gridPoints = [];
     this.index = 0;
+    this.operation = undefined;
     this.changed();
     const first = performance.now();
     while (!this.latest) {
@@ -325,12 +333,17 @@ export class AutomaticCapture {
           this.index = Math.max(0, progress.index - 1);
           if (progress.gridTargets)
             this.gridPoints = progress.gridTargets.map(({ css }) => css);
-          this.target = {
-            id: randomUUID(),
-            point: this.gridPoints[this.index],
-          };
+          if (progress.operation !== 'recover')
+            this.target = {
+              id: randomUUID(),
+              point: this.gridPoints[this.index],
+            };
         } else if (progress.phase === 'probe') {
           this.index = this.localPoints.length;
+        } else if (progress.phase === 'height') {
+          this.phase = 'height';
+          this.index = progress.index - 1;
+          this.heightTotal = progress.total;
         }
         this.contactSeen = Boolean(progress.touching);
         if (progress.operation) this.operation = progress.operation;
@@ -353,7 +366,7 @@ export class AutomaticCapture {
           settleMs,
           allowBriefContactGaps,
         ) => {
-          if (purpose !== 'preflight')
+          if (purpose !== 'preflight' && this.operation !== 'recover')
             this.operation =
               purpose === 'search-limit' || purpose === 'coarse-search'
                 ? 'search'

@@ -94,7 +94,6 @@ describe('first-time automatic exploration', () => {
       let actualPose = pose(100, -50, startZ);
       const finishedSampling = false;
       let missedSlide = false;
-      let restartPressZ: number | undefined;
       let refining = false;
       let lowestZ = Number.POSITIVE_INFINITY;
       const isFast = !mode.startsWith('standard') && mode !== 'safety-floor';
@@ -159,13 +158,12 @@ describe('first-time automatic exploration', () => {
             screen = null;
           }
           if (
-            mode === 'fast-adaptive-slide' &&
-            missedSlide &&
-            purpose === 'press' &&
-            screen &&
-            restartPressZ === undefined
+            mode === 'fast-corner-slide' &&
+            purpose === 'slide' &&
+            session.auto?.progress?.phase === 'grid' &&
+            session.auto.progress.index === 1
           )
-            restartPressZ = contact?.z;
+            screen = null;
           if (
             mode === 'press-recovers' &&
             !missedPress &&
@@ -315,7 +313,6 @@ describe('first-time automatic exploration', () => {
           // keeping both contacts above the downward safety limit.
           if (mode === 'fast-tilt-audit')
             tiltOffset = 0.04 * Math.abs(point.x - 100);
-          // The old retry raised the pen between the restart and inset.
           if (mode === 'fast-adaptive-slide')
             tiltOffset = -0.007 * (point.x - 100) + 0.006 * (point.y + 50);
           touching =
@@ -327,14 +324,6 @@ describe('first-time automatic exploration', () => {
             touching = true;
           if (mode === 'repress-missing' && repressing) touching = false;
           if (mode === 'fast-no-touch' && point.x < 50) touching = false;
-          if (
-            mode === 'fast-corner-slide' &&
-            point.x < 21 &&
-            point.y > -15 &&
-            (!previousHeld ||
-              Math.hypot(point.x - previous.x, point.y - previous.y) < 0.2)
-          )
-            touching = false;
           if (mode === 'fast-local-recovery' && point.x < 50)
             touching = inside && point.z <= activationZ - 0.75;
           // A remote point that only touches at the floor would need a final
@@ -459,7 +448,9 @@ describe('first-time automatic exploration', () => {
         ).toBe(result.quality.total);
         for (const sample of session.auto?.collectedSamples ?? [])
           expect(sample.zSource).toBe(
-            sample.method === 'stepped' ? 'measured' : 'predicted',
+            sample.method === 'stepped' || sample.heightIntervalMm
+              ? 'measured'
+              : 'predicted',
           );
         if (!isFast) {
           expect(predictedFit).toHaveLength(0);
@@ -528,7 +519,14 @@ describe('first-time automatic exploration', () => {
             .filter((sample) => sample.role === role)
             .map((sample) => sample.method);
         if (slides) {
-          expect(methodsOf('fit')).toEqual(Array(4).fill('slide'));
+          expect(methodsOf('fit')).toEqual([
+            mode === 'fast-adaptive-slide' || mode === 'fast-corner-slide'
+              ? 'stepped'
+              : 'slide',
+            'slide',
+            'slide',
+            'slide',
+          ]);
           expect(methodsOf('validation')).toEqual(Array(2).fill('slide'));
           expect(methodsOf('probe').slice(3)).toEqual(['slide', 'slide']);
           for (const probe of collection.probes.slice(3)) {
@@ -579,19 +577,14 @@ describe('first-time automatic exploration', () => {
               );
           }
         }
-        if (mode === 'fast-adaptive-slide') {
-          expect(missedSlide).toBe(true);
-          const [inset] = collection.grid;
-          expect(inset.screen.x).toBeGreaterThan(inset.target.screen.x);
-          expect(restartPressZ).toBeDefined();
-          expect(inset.pressedZ).toBeCloseTo(restartPressZ!, 5);
-          expect(session.auto?.fastAdaptation?.searchSteps).toBe(0);
-        }
-        if (mode === 'fast-corner-slide') {
+        if (mode === 'fast-adaptive-slide' || mode === 'fast-corner-slide') {
           const [corner] = collection.grid;
           expect(corner.screen.x).toBeCloseTo(corner.target.screen.x);
           expect(corner.screen.y).toBeCloseTo(corner.target.screen.y);
-          expect(corner.zSource).toBe('predicted');
+          expect(corner.zSource).toBe('measured');
+          const [touchedZ, clearZ] = corner.heightIntervalMm!;
+          expect(clearZ).toBeGreaterThan(touchedZ);
+          expect(clearZ - touchedZ).toBeLessThanOrEqual(0.251);
         }
         if (mode === 'press-recovers') expect(missedPress).toBe(true);
         expect(f.store.getScreen(f.screen.id)).toEqual(f.screen);

@@ -61,9 +61,9 @@ export function assertSameScreenPage(
     );
 }
 export interface AutoCalibrationProgress {
-  phase: 'preflight' | 'probe' | 'search' | 'grid';
+  phase: 'preflight' | 'probe' | 'search' | 'height' | 'grid';
   gridTargets?: readonly ScreenCalibTarget[];
-  operation?: 'travel' | 'slide';
+  operation?: 'travel' | 'slide' | 'recover';
   index: number;
   total: number;
   message?: string;

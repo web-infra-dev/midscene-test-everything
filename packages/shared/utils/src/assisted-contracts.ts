@@ -321,7 +321,7 @@ export interface CalibrationPageReply {
     | 'completed'
     | 'interrupted';
   capture?: CalibrationPointProgress;
-  automaticPhase?: 'local' | 'grid';
+  automaticPhase?: 'local' | 'height' | 'grid';
   error?: string;
   anchors: WebPoint[];
   target?: { id: string; point: WebPoint };
@@ -457,7 +457,7 @@ export interface AssistedCalibrationState {
   capture?: CalibrationPointProgress;
   layout?: CalibrationPageLayout;
   mapping?: WebCalibrationMapping;
-  automaticPhase?: 'local' | 'grid';
+  automaticPhase?: 'local' | 'height' | 'grid';
   samples: number;
   /** Travel to the reference before probing or after a sampling/fit check. */
   referenceTravel?: 'approach' | 'return';

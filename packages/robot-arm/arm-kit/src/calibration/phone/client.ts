@@ -38,7 +38,10 @@ export function mountCalibrationPhonePage(
     position:
       'Record a calibration reference position above the screen on your computer.',
     slide: 'Sliding to the next sample. Do not touch the phone.',
-    recover: 'Touch lost at this point. Recovering within the bounded range.',
+    recover:
+      'Touch lost. The robot will lift and retry from inside the screen.',
+    heightSweep:
+      'Measuring contact height with short sweeps. Do not touch the phone.',
     release: 'Lifting to confirm touch release.',
     search: 'Finding screen contact in bounded steps.',
     refine: 'Refining the contact height.',
@@ -719,16 +722,26 @@ export function mountCalibrationPhonePage(
           ? 'recorded'
           : capture?.heightSearch?.precision
             ? 'refine'
-            : capture?.operation
-              ? capture.operation
-              : capture?.waitingReason
-                ? capture.waitingReason
-                : capture?.phase === 'holding'
-                  ? 'hold'
-                  : stages[next.view],
+            : capture && next.automaticPhase === 'height'
+              ? 'heightSweep'
+              : capture?.operation
+                ? capture.operation
+                : capture?.waitingReason
+                  ? capture.waitingReason
+                  : capture?.phase === 'holding'
+                    ? 'hold'
+                    : stages[next.view],
       );
+    const samplingStage =
+      next.automaticPhase === 'height'
+        ? 'Height sweep'
+        : next.automaticPhase === 'local'
+          ? 'Reference and direction'
+          : capture?.mode === 'slide'
+            ? 'Slide sample'
+            : 'Grid point';
     connection.textContent = capture
-      ? `${capture.mode === 'slide' ? 'Fast' : capture.mode === 'fast' ? 'Fast probing' : 'Regular'} · ${next.automaticPhase === 'local' ? 'Direction probe' : 'Grid point'} ${capture.index} / ${capture.total}`
+      ? `${samplingStage} ${capture.index} / ${capture.total}`
       : '';
     errorDetail.textContent = '';
     if (next.view === 'capture-failed' || next.view === 'interrupted') {
