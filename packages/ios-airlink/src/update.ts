@@ -3,10 +3,10 @@ import { mkdir, rm, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { styleText } from 'node:util';
 import { activateRelease, installedVersion } from './launch-agent.js';
-import { latestRelease, stageRelease } from './npm-release.js';
+import { latestRelease, releaseTag, stageRelease } from './npm-release.js';
 import { directory } from './settings.js';
 
-function isNewer(candidate: string, installed: string) {
+function isNewerStableVersion(candidate: string, installed: string) {
   const next = candidate.split('.').map(BigInt);
   const current = installed.split('.').map(BigInt);
   for (let index = 0; index < next.length; index++) {
@@ -17,15 +17,21 @@ function isNewer(candidate: string, installed: string) {
 
 export async function update(options: { check?: boolean }) {
   const current = await installedVersion();
-  const release = await latestRelease();
-  const { version } = release;
   const installed = current.running ?? current.installed;
+  const tag = installed && releaseTag(installed);
   console.log(`  Running    ${current.running ?? 'unavailable'}`);
   console.log(`  Installed  ${current.installed ?? 'unknown'}`);
-  console.log(`  Available  ${version}`);
-  if (!installed || !/^\d+\.\d+\.\d+$/.test(installed))
+  if (!installed || !tag)
     throw new Error('Cannot determine the installed version.');
-  if (!isNewer(version, installed)) {
+
+  const release = await latestRelease(tag);
+  const { version } = release;
+  console.log(`  Available  ${version}`);
+  const newer =
+    tag === 'canary'
+      ? version > installed
+      : isNewerStableVersion(version, installed);
+  if (!newer) {
     console.log('✓ No newer release is available.');
     return;
   }

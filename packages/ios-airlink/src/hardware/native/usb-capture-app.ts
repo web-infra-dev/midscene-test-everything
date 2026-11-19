@@ -10,6 +10,14 @@ import { directory } from '../../settings.js';
 const exec = promisify(execFile);
 const native = new URL('../../../native/', import.meta.url);
 const appName = 'Midscene iOS AirLink Capture.app';
+export const captureBuildFiles = [
+  'usb-capture.swift',
+  'USBIdentity.swift',
+  'USBDiscovery.swift',
+  'capture-app.plist',
+  'capture-entitlements.plist',
+  'build-capture-app.sh',
+] as const;
 let building: Promise<string> | undefined;
 
 async function resolveApp() {
@@ -22,23 +30,8 @@ async function resolveApp() {
   )
     return bundled;
 
-  const manifest = JSON.parse(
-    await readFile(new URL('../../../package.json', import.meta.url), 'utf8'),
-  );
-  if (!manifest.private)
-    throw new Error(
-      'The iOS AirLink release is missing its signed capture app.',
-    );
-
   const hash = createHash('sha256').update(process.arch);
-  for (const file of [
-    'usb-capture.swift',
-    'USBIdentity.swift',
-    'USBDiscovery.swift',
-    'capture-app.plist',
-    'capture-entitlements.plist',
-    'build-capture-app.sh',
-  ]) {
+  for (const file of captureBuildFiles) {
     hash.update(await readFile(new URL(file, native)));
   }
   const root = join(directory, 'native', hash.digest('hex').slice(0, 20));
@@ -51,6 +44,12 @@ async function resolveApp() {
     )
   )
     return app;
+  await exec('/usr/bin/xcrun', ['--find', 'swiftc']).catch((cause) => {
+    throw new Error(
+      'USB capture requires Xcode Command Line Tools. Install them with xcode-select --install.',
+      { cause },
+    );
+  });
   const stage = await mkdtemp(join(root, 'build-'));
   try {
     const candidate = join(stage, appName);
@@ -77,7 +76,7 @@ async function resolveApp() {
   }
 }
 
-function prepareUSBCaptureApp() {
+export function prepareUSBCaptureApp() {
   building ??= resolveApp().catch((error) => {
     building = undefined;
     throw error;

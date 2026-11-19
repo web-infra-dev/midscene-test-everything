@@ -45,10 +45,10 @@ Traditional iOS automation tools (such as Appium / WebDriverAgent) typically req
 
 ## 📋 Prerequisites
 
-- **Hardware:** A Mac (macOS) with Bluetooth on, and an iPhone you can unlock.
+- **Hardware:** A Mac running macOS 14 or later with Bluetooth on, and an iPhone you can unlock.
 - **Node.js:** `20.19+` (20.x), `22.12+` (22.x), or `24+` (`node --version`).
-- **Xcode Command Line Tools:** Used to compile native helpers (`xcode-select -p`, or `xcode-select --install` if missing).
-- **macOS permissions:** Allow Bluetooth and Camera/capture prompts when macOS asks on first run.
+- **Xcode Command Line Tools:** AirLink builds and caches native helpers on first use. Run `xcode-select --install` if the tools are missing.
+- **macOS permissions:** Allow Bluetooth and camera access when macOS prompts you. For USB capture, grant camera access to **Midscene iOS AirLink Capture**.
 
 Choose a screen source for your scenario and prepare the corresponding setup:
 
@@ -77,8 +77,11 @@ See the [upstream macOS guide](https://github.com/FDH2/UxPlay) for additional bu
 ### 1. Start the Service
 
 ```sh
-npx @midscene/ios-airlink install
+npm install --global @midscene/ios-airlink
+ios-airlink install
 ```
+
+Keep the installed package or checkout in place while the login service uses it. Run `ios-airlink update` to download and switch to a newer npm release.
 
 Open the **Manage** URL printed in the terminal (default `http://localhost:5801/`) and click **Add Device**.
 

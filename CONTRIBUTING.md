@@ -42,24 +42,12 @@ Keep the root READMEs focused on the project overview and quick start. Update bo
 
 Open a pull request against `main` from a branch for your change. Use scoped Conventional Commits for commit messages, for example `fix(ios-airlink): handle a disconnected device`. Summarize what changed and complete the [PR checklist](./.github/pull_request_template.md) with the checks you ran.
 
-## Publishing to npm
+## Releasing
 
-Version `0.0.0` is reserved for empty placeholders. Before the first stable release,
-give all nine packages under `packages/` a stable version above `0.0.0` and
-merge the version changes into `main`. For later releases, bump the packages
-that changed, including consumers that need updated `workspace:*` dependencies.
+Run the **Release** workflow on `main` and choose `patch` for compatible fixes, `minor` for compatible features, or `major` for breaking changes. The workflow bumps the root and all non-private workspace packages to the same version and opens a release pull request against `main`.
 
-Run **Actions → Publish npm packages → Run workflow** on `main`. The workflow
-builds and tests the workspace, then pnpm publishes unpublished versions with
-the `latest` tag when you select `stable`.
+Merging the release pull request triggers npm publishing to the `latest` tag via Trusted Publishing (OIDC) and creates a `vX.Y.Z` tag with a draft GitHub Release. Review the draft and publish it from GitHub.
 
-Select `prepatch` to publish all packages under the `beta` tag. The runner
-increments each package’s patch version and appends `-beta.<run number>`
-before building and packing. For example, a package at `0.0.0` becomes
-`0.0.1-beta.1` on workflow run 1. The versions in Git stay at their stable
-base. To resume an interrupted release with the same versions, rerun the
-original workflow run.
+Choose `canary` to publish `0.0.0-canary-<YYYYMMDDHHMMSS>` using a UTC timestamp directly to npm's `canary` tag without opening a pull request or creating a Git tag. Install a preview with `npm install <package>@canary`. AirLink's updater follows the channel of the installed service.
 
-Each npm package must authorize the GitHub Actions trusted publisher for
-`web-infra-dev/midscene-test-everything`, workflow `release.yml`, with direct
-publishing allowed and the environment field empty.
+Allow GitHub Actions to create pull requests in repository settings for the release PR workflow.

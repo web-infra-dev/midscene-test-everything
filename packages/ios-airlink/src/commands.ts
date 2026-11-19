@@ -16,7 +16,7 @@ import {
 } from './settings.js';
 
 import { fileURLToPath } from 'node:url';
-import { cliVersion, stageRelease } from './npm-release.js';
+import { cliVersion } from './npm-release.js';
 import { update } from './update.js';
 
 const program = new Command()
@@ -33,21 +33,18 @@ program
   .description('Register and start the macOS login service')
   .option('--port <port>', 'Listen port (default: 5801)', parsePort)
   .action(async ({ port }: { port?: number }) => {
-    const version = await cliVersion();
-    const runningPort = await install(port, defaultPort, async () => {
-      if (!version)
-        return {
-          entry: fileURLToPath(new URL('./service-entry.js', import.meta.url)),
-          version,
-        };
-      console.log(`  › Installing ${version} from npm`);
-      return { ...(await stageRelease(version)), version };
-    });
+    const entry = fileURLToPath(new URL('./service-entry.js', import.meta.url));
+    const runningPort = await install(
+      port,
+      defaultPort,
+      entry,
+      await cliVersion(),
+    );
     printRunningService(runningPort);
   });
 program
   .command('update')
-  .description('Update the installed service to the latest npm release')
+  .description('Update the installed service within its npm release channel')
   .option('--check', 'Show the available version without installing it')
   .action(update);
 program

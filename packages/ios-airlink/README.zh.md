@@ -45,10 +45,10 @@
 
 ## 📋 环境要求
 
-- **硬件**：一台开启蓝牙的 Mac（仅支持 macOS），以及一台可解锁的 iPhone。
+- **硬件**：一台运行 macOS 14 或更高版本且已开启蓝牙的 Mac，以及一台可解锁的 iPhone。
 - **Node.js**：`20.19+`（20.x）、`22.12+`（22.x）或 `24+`（通过 `node --version` 检查）。
-- **Xcode Command Line Tools**：用于编译原生组件（通过 `xcode-select -p` 检查，缺失时运行 `xcode-select --install`）。
-- **系统权限**：首次运行时，按 macOS 弹窗提示允许蓝牙和相机/采集权限。
+- **Xcode Command Line Tools**：AirLink 首次用到原生组件时会在本机编译并缓存。缺少工具时，运行 `xcode-select --install`。
+- **系统权限**：按 macOS 弹窗提示允许访问蓝牙和相机。使用 USB 采集时，请为 **Midscene iOS AirLink Capture** 授予相机权限。
 
 可以根据测试场景灵活选择画面来源，并准备对应环境：
 
@@ -77,8 +77,11 @@ command -v uxplay
 ### 1. 启动服务
 
 ```sh
-npx @midscene/ios-airlink install
+npm install --global @midscene/ios-airlink
+ios-airlink install
 ```
+
+登录服务使用当前安装的包或源码目录，请保留该目录。运行 `ios-airlink update` 可下载并切换到新的 npm 版本。
 
 打开终端输出里 **Manage** 对应的地址（默认 `http://localhost:5801/`），点击 **添加设备（Add Device）**。
 
