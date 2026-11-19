@@ -2,17 +2,6 @@ name: Release
 
 on:
   workflow_dispatch:
-    inputs:
-      version:
-        description: Release type
-        type: choice
-        required: true
-        default: patch
-        options:
-          - patch
-          - minor
-          - major
-          - canary
   push:
     branches:
       - main
@@ -26,55 +15,13 @@ defaults:
     shell: bash
 
 concurrency:
-  group: release-${{ github.event_name == 'push' && 'stable' || inputs.version == 'canary' && 'canary' || 'pr' }}
+  group: release-${{ github.event_name == 'push' && 'stable' || 'canary' }}
   cancel-in-progress: false
 
 jobs:
-  prepare_pr:
-    name: Open release PR
-    if: github.event_name == 'workflow_dispatch' && inputs.version != 'canary' && github.ref == 'refs/heads/main' && github.repository == 'web-infra-dev/midscene-test-everything'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
-
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
-        with:
-          node-version: '24'
-          package-manager-cache: false
-
-      - run: pnpm install --frozen-lockfile
-        env:
-          HUSKY: '0'
-
-      - name: Bump version and open PR
-        env:
-          GH_TOKEN: ${{ github.token }}
-          INCREMENT: ${{ inputs.version }}
-          HUSKY: '0'
-        run: |
-          version="$(node scripts/bump-release-version.mjs "$INCREMENT")"
-          branch="release/v${version}"
-          gh auth setup-git --hostname github.com
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git checkout -b "$branch"
-          git add -u -- package.json ':(glob)**/package.json'
-          git commit -m "chore(release): v${version}"
-          git push origin "HEAD:refs/heads/${branch}"
-          pr_url="$(gh pr create --base main --head "$branch" --title "chore(release): v${version}" --body "Release \`v${version}\`. Merging this PR publishes the workspace packages to npm and creates a draft GitHub Release.")"
-          echo "Opened release PR: ${pr_url}" >> "$GITHUB_STEP_SUMMARY"
-
   canary:
     name: Publish canary release
-    if: github.event_name == 'workflow_dispatch' && inputs.version == 'canary' && github.ref == 'refs/heads/main' && github.repository == 'web-infra-dev/midscene-test-everything'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository == 'web-infra-dev/midscene-test-everything'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:

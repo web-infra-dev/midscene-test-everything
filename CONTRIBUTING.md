@@ -44,10 +44,8 @@ Open a pull request against `main` from a branch for your change. Use scoped Con
 
 ## Releasing
 
-Run the **Release** workflow on `main` and choose `patch` for compatible fixes, `minor` for compatible features, or `major` for breaking changes. The workflow bumps the root and all non-private workspace packages to the same version and opens a release pull request against `main`.
+From an up-to-date `main` checkout, run `pnpm release:pr patch` (or `minor` / `major`). The script bumps the root and all non-private workspace packages to the same version, commits `chore(release): vX.Y.Z` on `release/vX.Y.Z`, and opens a release pull request against `main`.
 
 Merging the release pull request triggers npm publishing to the `latest` tag via Trusted Publishing (OIDC) and creates a `vX.Y.Z` tag with a draft GitHub Release. Review the draft and publish it from GitHub.
 
-Choose `canary` to publish `0.0.0-canary-<YYYYMMDDHHMMSS>` using a UTC timestamp directly to npm's `canary` tag without opening a pull request or creating a Git tag. Install a preview with `npm install <package>@canary`. AirLink's updater follows the channel of the installed service.
-
-Allow GitHub Actions to create pull requests in repository settings for the release PR workflow.
+Run the **Release** workflow on `main` to publish `0.0.0-canary-<YYYYMMDDHHMMSS>` using a UTC timestamp directly to npm's `canary` tag without modifying `main` or creating a Git tag. Install a preview with `npm install <package>@canary`. AirLink's updater follows the channel of the installed service.
