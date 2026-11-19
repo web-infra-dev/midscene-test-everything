@@ -55,5 +55,7 @@ try {
   ).trim();
   console.log(`Opened release PR: ${prUrl}`);
 } catch {
-  console.log(`Pushed ${branch}. Open a PR targeting main with title "${title}".`);
+  console.log(
+    `Pushed ${branch}. Open a PR targeting main with title "${title}".`,
+  );
 }
