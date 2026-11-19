@@ -767,7 +767,7 @@ export class CalibrationWorkflow {
     if (this.supportsImagingPattern()) this.imagingRequest = request;
     this.imagingStatus = {
       state: 'exposure',
-      message: 'Waiting for the phone focus and exposure pattern',
+      message: 'Waiting for the phone camera imaging pattern',
       updatedAt: Date.now(),
     };
     this.changed();
@@ -775,7 +775,7 @@ export class CalibrationWorkflow {
       if (!this.supportsImagingPattern())
         throw new RobotArmError(
           'PHONE_PAGE_OUTDATED',
-          'Reload the phone calibration page before measuring focus and exposure.',
+          'Reload the phone calibration page before tuning the camera image.',
           409,
         );
       await this.options.onImagingPattern?.(request);
@@ -1116,7 +1116,7 @@ export class CalibrationWorkflow {
       this.imagingStatus = this.options.vision.imagingStatus?.() ?? {
         state: 'released',
         message:
-          'Focus and exposure are released until the new mapping is ready',
+          'Camera imaging controls are released until the new mapping is ready',
         updatedAt: Date.now(),
       };
       this.mappingCheck = undefined;

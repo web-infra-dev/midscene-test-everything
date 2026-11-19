@@ -10,6 +10,7 @@ export interface ScreenPageSelectionLike {
   cameraId?: string;
   screenId?: string;
   visible?: boolean;
+  mode?: string;
 }
 
 /** Released phones wait for Add Screen or manual pairing when detection reopens. */
@@ -40,6 +41,33 @@ export function selectableScreens<T extends ScreenSelectionLike>(
   cameraId: string,
 ): T[] {
   return screens.filter((screen) => screen.cameraId === cameraId);
+}
+
+/**
+ * Keep the chosen calibration screen while its page is connected. If the
+ * operator releases it and another page remains online, continue on that page
+ * instead of leaving every per-screen step blocked by the disconnected one.
+ */
+export function connectedCalibrationScreenId(
+  screens: readonly ScreenSelectionLike[],
+  cameraId: string,
+  pages: readonly ScreenPageSelectionLike[],
+  selectedId: string,
+) {
+  const online = new Set(
+    pages.flatMap((page) =>
+      page.cameraId === cameraId &&
+      page.screenId &&
+      page.visible !== false &&
+      page.mode !== 'waiting'
+        ? [page.screenId]
+        : [],
+    ),
+  );
+  if (online.has(selectedId)) return selectedId;
+  return screens.find(
+    (screen) => screen.cameraId === cameraId && online.has(screen.id),
+  )?.id;
 }
 
 /**

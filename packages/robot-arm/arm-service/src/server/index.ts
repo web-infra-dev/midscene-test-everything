@@ -808,7 +808,11 @@ export async function startPlaygroundHost({
         if (req.method !== 'POST')
           return send(405, { error: 'Method not allowed' });
         const input = await readBody(req, 16384);
-        if (!['list', 'displays', 'status'].includes(input.action))
+        if (
+          !['list', 'displays', 'status', 'discard-added-screen'].includes(
+            input.action,
+          )
+        )
           devices.assertBatchIdle();
         return send(
           200,
@@ -873,8 +877,9 @@ export async function startPlaygroundHost({
       }
       if (url.pathname === '/api/screens') {
         if (!devices) return send(409, { error: 'Connect the arm first' });
-        if (req.method === 'GET')
+        if (req.method === 'GET') {
           return send(200, { screens: devices.screens(true) });
+        }
         if (req.method === 'POST') {
           const input = await readBody(req, 16384);
           if (screenControl?.busy)

@@ -26,7 +26,7 @@ export interface CameraMappingScreen {
 
 type ChecklistEntry = {
   title: string;
-  detail: string;
+  detail?: string;
   done: boolean;
   action?: ReactNode;
 };
@@ -145,7 +145,6 @@ export function CameraMappingStep({
     },
     {
       title: t('Calibration Screen'),
-      detail: screen?.name ?? t('Select a screen for calibration'),
       done: Boolean(screen),
       action: (
         <Space size={4} wrap>
@@ -255,7 +254,11 @@ export function CameraMappingStep({
             </span>
             <div className="camera-checklist-text">
               <Typography.Text strong>{entry.title}</Typography.Text>
-              <Typography.Text type="secondary">{entry.detail}</Typography.Text>
+              {entry.detail && (
+                <Typography.Text type="secondary">
+                  {entry.detail}
+                </Typography.Text>
+              )}
             </div>
             <div className="camera-checklist-action">{entry.action}</div>
           </li>

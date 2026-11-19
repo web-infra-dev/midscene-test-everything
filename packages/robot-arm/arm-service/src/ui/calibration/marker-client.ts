@@ -104,13 +104,6 @@ export class RobotVisionClient {
       name,
     });
   }
-  removeMarkerCalibrationTarget(id: string, targetId: string, token: string) {
-    return this.request<MarkerCalibrationSession>('remove', {
-      id,
-      token,
-      targetId,
-    });
-  }
   detectMarkerCalibration(
     id: string,
     token: string,
@@ -214,17 +207,16 @@ export class ScreenCalibClient {
     return this.request<void>('delete-screen-page', { cameraId, id });
   }
   discardAddedScreen(cameraId: string, id: string) {
-    return this.request<void>('delete-screen', {
+    return this.request<void>('discard-added-screen', {
       cameraId,
       id,
-      onlyIfEmpty: true,
     });
   }
   deletePerspective(cameraId: string, id: string) {
     return this.request<void>('delete-perspective', { cameraId, id });
   }
-  clearCameraPerspectives(cameraId: string) {
-    return this.request<void>('clear-perspectives', { cameraId });
+  clearCameraPerspectives(cameraId: string, screenIds?: string[]) {
+    return this.request<void>('clear-perspectives', { cameraId, screenIds });
   }
   renameScreen(cameraId: string, id: string, name: string) {
     return this.request<void>('rename-screen', { cameraId, id, name });

@@ -683,6 +683,7 @@ export class ProfileStore {
       name?: string;
       pageKey?: string;
       markerSlot?: number;
+      pending?: boolean;
       archived?: boolean;
     },
   ) {
@@ -742,7 +743,12 @@ export class ProfileStore {
       draft.calibrationBatch = structuredClone(state);
     });
   }
-  saveScreenTarget(input: { id: string; cameraId: string; name: string }) {
+  saveScreenTarget(input: {
+    id: string;
+    cameraId: string;
+    name: string;
+    pending?: boolean;
+  }) {
     if (
       !input.id ||
       !input.cameraId ||
@@ -774,7 +780,12 @@ export class ProfileStore {
         // Persist identity only. Callers may pass a full screen DTO (with a
         // live correction snapshot); that snapshot must never outlive the
         // camera's applied perspective.
-        { id: input.id, cameraId: input.cameraId, name: input.name.trim() },
+        {
+          id: input.id,
+          cameraId: input.cameraId,
+          name: input.name.trim(),
+          ...(input.pending === true ? { pending: true } : {}),
+        },
       ];
     });
   }

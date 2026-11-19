@@ -40,6 +40,26 @@ export interface CameraEntry extends CameraScreen {
     error?: string;
   };
 }
+
+export function cameraScreenNeedsCalibration(screen: CameraScreen) {
+  return screen.hasCorrection !== true;
+}
+
+export function selectCameraScreen(
+  screens: readonly CameraScreen[],
+  preferredIds: readonly (string | undefined)[],
+) {
+  const calibrated = screens.filter(
+    (screen) => !cameraScreenNeedsCalibration(screen),
+  );
+  const candidates = calibrated.length > 0 ? calibrated : screens;
+  for (const id of preferredIds) {
+    const screen = candidates.find((candidate) => candidate.id === id);
+    if (screen) return screen;
+  }
+  return candidates[0];
+}
+
 export function cameraStateLabel(camera: CameraEntry) {
   switch (camera.stream?.state) {
     case 'running':

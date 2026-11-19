@@ -74,7 +74,13 @@ it('lists every camera-mapping requirement for the selected screen', () => {
     }),
   );
   expect(html).toContain('camera-checklist-list');
-  expect(html).toContain('Screen A');
+  const screenEntry = html
+    .split('<li')
+    .find((entry) => entry.includes(t('Calibration Screen')));
+  const screenEntryText = screenEntry?.match(
+    /camera-checklist-text[\s\S]*?<\/div>/,
+  )?.[0];
+  expect(screenEntryText).not.toContain('Screen A');
   // The page and the mapping itself are still missing.
   expect(pendingCount(html)).toBe(2);
   expect(html).not.toContain('相机映射已确认');

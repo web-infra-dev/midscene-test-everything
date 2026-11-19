@@ -169,7 +169,8 @@ export async function start() {
 export async function install(
   requestedPort: number | undefined,
   defaultPort: number,
-  resolveEntry: () => Promise<{ entry: string; version?: string }>,
+  entry: string,
+  version: string,
 ) {
   const existing = await installedPort();
   if (existing !== undefined) {
@@ -182,7 +183,6 @@ export async function install(
 
   const port = requestedPort ?? defaultPort;
   await checkPort(port);
-  const { entry, version } = await resolveEntry();
   await ensureToken();
   await mkdir(launchAgents, { recursive: true });
   await writeFile(plist, launchAgent(port, entry), { mode: 0o600, flag: 'wx' });

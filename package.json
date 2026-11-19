@@ -23,12 +23,14 @@
     "lint:staged": "lint-staged",
     "dev:playground": "pnpm --filter @midscene/universal-device-playground start",
     "ios-airlink:release": "node packages/ios-airlink/scripts/package-release.mjs",
-    "ios-airlink": "pnpm --filter @midscene/ios-airlink start"
+    "ios-airlink": "pnpm --filter @midscene/ios-airlink start",
+    "release:pr": "node scripts/prepare-release-pr.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "1.9.4",
     "@commitlint/cli": "19.8.0",
     "@commitlint/config-conventional": "19.8.0",
+    "bumpp": "11.1.0",
     "husky": "9.1.7",
     "lint-staged": "15.5.2",
     "nx": "22.1.3",

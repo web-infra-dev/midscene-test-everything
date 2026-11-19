@@ -13,6 +13,8 @@ const calibrationZh: Record<string, string> = {
     '轮廓与手机屏幕不符。仍要应用吗？',
   Apply: '应用',
   Cancel: '取消',
+  Save: '保存',
+  'Screen name saved': '屏幕名称已保存',
   'Perspective applied': '已应用透视',
   'Perspective not applied': '尚未应用透视',
   'Clear Perspective': '清除透视',
@@ -2365,6 +2367,8 @@ export const zh: Record<string, string> = {
     '已自动锁定焦距，曝光正在自动监测。',
   'Finish camera mapping to calibrate focus and exposure automatically.':
     '完成相机映射后将自动标定焦距和曝光。',
+  'Could not calibrate the camera image.': '无法校准相机画面。',
+  'Timed out while calibrating the camera image.': '校准相机画面超时。',
   'Clear Applied Perspective': '清除当前透视（保留屏幕）',
   'Calibrating camera focus and exposure': '正在校准相机对焦与曝光',
   ...setupZh,

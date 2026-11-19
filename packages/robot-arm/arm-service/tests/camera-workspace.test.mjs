@@ -361,8 +361,9 @@ test('marker capture follows its phone from preview into only the matching scree
         screens.find((s) => s.id === id).correction,
         edit.correction,
       );
+      // An Add Screen target stays out of camera lists until its mapping commits.
       assert.equal(
-        screens.find((s) => s.id === sibling.id).hasSavedPerspective,
+        screens.some((s) => s.id === sibling.id),
         false,
       );
       // Pair a second phone to the sibling once. Next time it previews this
@@ -548,4 +549,4 @@ test('marker capture follows its phone from preview into only the matching scree
       mapped?.socket.close();
     }
   });
-});
+}, 10_000);

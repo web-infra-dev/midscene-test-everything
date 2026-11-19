@@ -79,10 +79,16 @@ import {
   markerRequest,
 } from './marker-client';
 import { hasMultipleCalibrationTargets } from './multi-screen-review';
+import { selectOnlineCalibrationScreens } from './online-calibration-screens';
 import { rawCameraPreviewUrl } from './preview-url';
+import {
+  shouldHideSelectedScreenOutline,
+  shouldShowScreenOutlines,
+} from './screen-outline-visibility';
 import { shouldShowScreenPicker } from './screen-picker';
 import {
   calibrationTargetsAfterPairing,
+  connectedCalibrationScreenId,
   needsPhoneConnectionBeforeAddScreen,
   selectableScreens,
 } from './screen-selection';
@@ -206,6 +212,8 @@ function GuidedContent({
   );
   /** Add Screen opened the marker session for explicit target IDs. */
   const [markerAdd, setMarkerAdd] = useState(false);
+  const [detectionScreensOverride, setDetectionScreensOverride] =
+    useState<ReadonlyArray<{ id: string; name: string; pageKey?: string }>>();
   /** The manual corner editor, handed over from a failed marker pass. */
   const [perspectiveEditor, setPerspectiveEditor] = useState(false);
   const [retryId, setRetryId] = useState<string>();
@@ -337,17 +345,23 @@ function GuidedContent({
    * marker slot. The first pass starts empty and adds one target per phone page
    * in scan order, so a fresh two-screen setup detects both in one pass.
    */
-  const markerScreens = screens.filter(
+  const allMarkerScreens = screens.filter(
     (screen) =>
       screen.cameraId === cameraId &&
       (screen.hasCorrection || screen.markerSlot !== undefined),
   );
-  const markerScreensKey = markerScreens
+  const markerScreens = selectOnlineCalibrationScreens(
+    allMarkerScreens,
+    cameraId,
+    phoneReadiness.connection?.devices,
+  );
+  const detectionScreens = detectionScreensOverride ?? markerScreens;
+  const markerScreensKey = detectionScreens
     .map((screen) => `${screen.id}:${screen.name}:${screen.pageKey}`)
     .join('|');
   const existing = useMemo(
     () =>
-      markerScreens.map((screen) => ({
+      detectionScreens.map((screen) => ({
         id: screen.id,
         name: screen.name,
         pageKey: screen.pageKey,
@@ -385,6 +399,16 @@ function GuidedContent({
     },
     [requestScreen],
   );
+  const connectedScreenId = connectedCalibrationScreenId(
+    knownScreens,
+    cameraId,
+    phoneReadiness.connection?.devices ?? [],
+    selectedId,
+  );
+  useEffect(() => {
+    if (connectedScreenId && connectedScreenId !== selectedId)
+      selectScreen(connectedScreenId);
+  }, [connectedScreenId, selectScreen, selectedId]);
   const currentStep = useRef(step);
   currentStep.current = step;
   const reportedSingleFailure = useRef<string>();
@@ -745,35 +769,45 @@ function GuidedContent({
    * Every screen with a saved perspective is drawn on the live preview at
    * once; the selected one carries the freshest correction and the verdict.
    */
-  const asideOutlines = knownScreens.flatMap((entry) => {
-    const quad =
-      activeConfig && entry.id === activeId
-        ? activeConfig.correction
-        : entry.correction;
-    if (
-      !quad ||
-      (step === 1 &&
-        (awaitingOriginTap || Boolean(markerOpen)) &&
-        entry.id === selectedId)
-    )
-      return [];
-    return [
-      {
-        id: entry.id,
-        name: entry.name,
-        correction: quad,
-        previewPositions:
-          entry.id === activeId && !outlineBlocked
-            ? activeConfig
-              ? activeConfig.previewPositions
-              : entry.previewPositions
-            : undefined,
-        active: entry.id === activeId,
-        validity:
-          entry.id === activeId ? perspective.summary?.state : undefined,
-      },
-    ];
-  });
+  const asideOutlines = shouldShowScreenOutlines(
+    controller.setup.imaging,
+    applying,
+  )
+    ? knownScreens.flatMap((entry) => {
+        const quad =
+          activeConfig && entry.id === activeId
+            ? activeConfig.correction
+            : entry.correction;
+        if (
+          !quad ||
+          shouldHideSelectedScreenOutline({
+            awaitingOriginTap,
+            markerAdd,
+            markerOpen,
+            screenId: entry.id,
+            selectedId,
+            step,
+          })
+        )
+          return [];
+        return [
+          {
+            id: entry.id,
+            name: entry.name,
+            correction: quad,
+            previewPositions:
+              entry.id === activeId && !outlineBlocked
+                ? activeConfig
+                  ? activeConfig.previewPositions
+                  : entry.previewPositions
+                : undefined,
+            active: entry.id === activeId,
+            validity:
+              entry.id === activeId ? perspective.summary?.state : undefined,
+          },
+        ];
+      })
+    : [];
   const progressClient = useMemo(
     () =>
       createCalibrationClient({
@@ -862,12 +896,10 @@ function GuidedContent({
         return;
       if (imaging?.state === 'error')
         throw new Error(
-          imaging.message ?? 'Could not calibrate camera focus and exposure.',
+          imaging.message ?? 'Could not calibrate the camera image.',
         );
       if (Date.now() >= deadline)
-        throw new Error(
-          'Timed out while calibrating camera focus and exposure.',
-        );
+        throw new Error('Timed out while calibrating the camera image.');
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }, [client]);
@@ -933,6 +965,7 @@ function GuidedContent({
         pendingAddedScreen.current = undefined;
         await refresh();
         if (currentBase.current !== base) return;
+        setMarkerOpen(false);
         setReview(undefined);
         setReviewOpen(false);
       } catch (cause) {
@@ -1046,6 +1079,7 @@ function GuidedContent({
       setMarkerOpen(false);
       setFirstScreenCalibrationForConnection(false);
       setMarkerAdd(false);
+      setDetectionScreensOverride(undefined);
       setRetryId(undefined);
       // A completed detection hands the target to review. Cancelling a retry
       // also leaves that review available to apply the previous result.
@@ -1492,6 +1526,7 @@ function GuidedContent({
                       onClose={markerClosed}
                       onDetected={detected}
                       onSessionCreated={setMarkerSession}
+                      onTargetRenamed={() => refresh()}
                       existingScreenNames={screens
                         .filter((s) => s.cameraId === cameraId)
                         .map((s) => s.name)}
@@ -1546,13 +1581,24 @@ function GuidedContent({
                       }}
                       onPair={() => setPhonesOpen(true)}
                       onDetect={() => {
-                        if (!knownScreens.length) {
-                          openScreenPairing();
-                          return;
-                        }
                         void (async () => {
                           try {
-                            await pageClient.clearCameraPerspectives(cameraId);
+                            const listed = await pageClient.listScreenDevices();
+                            const onlineScreens =
+                              selectOnlineCalibrationScreens(
+                                allMarkerScreens,
+                                cameraId,
+                                listed.devices,
+                              );
+                            if (!onlineScreens.length) {
+                              openScreenPairing();
+                              return;
+                            }
+                            setDetectionScreensOverride(onlineScreens);
+                            await pageClient.clearCameraPerspectives(
+                              cameraId,
+                              onlineScreens.map((screen) => screen.id),
+                            );
                             await refresh();
                             setError(undefined);
                             setMappingError(undefined);
@@ -1561,6 +1607,7 @@ function GuidedContent({
                             setMarkerAdd(false);
                             setMarkerOpen(true);
                           } catch (cause) {
+                            setDetectionScreensOverride(undefined);
                             setError(
                               cause instanceof Error
                                 ? cause.message

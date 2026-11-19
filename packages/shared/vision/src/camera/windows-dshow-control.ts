@@ -178,10 +178,14 @@ public static class MidsceneDshowControl {
     Dictionary<string, object> exposure = Read(camera, 4, "exposure");
     Dictionary<string, object> focus = Read(camera, 6, "focus");
     Dictionary<string, object> brightness = ReadAmp(amp, 0, "brightness");
+    Dictionary<string, object> contrast = ReadAmp(amp, 1, "contrast");
+    Dictionary<string, object> whiteBalance = ReadAmp(amp, 7, "whiteBalance");
     Dictionary<string, object> gain = ReadAmp(amp, 9, "gain");
     if (exposure != null) controls["exposure"] = exposure;
     if (focus != null) controls["focus"] = focus;
     if (brightness != null) controls["brightness"] = brightness;
+    if (contrast != null) controls["contrast"] = contrast;
+    if (whiteBalance != null) controls["whiteBalance"] = whiteBalance;
     if (gain != null) controls["gain"] = gain;
     return controls;
   }
@@ -189,9 +193,13 @@ public static class MidsceneDshowControl {
   public static void Set(int index, string name, int value, string mode) {
     int flags = mode == "auto" ? 1 : 2;
     int hr;
-    if (name == "gain" || name == "brightness") {
+    if (name == "gain" || name == "brightness" || name == "contrast" || name == "whiteBalance") {
       IAMVideoProcAmp amp = (IAMVideoProcAmp)Filter(index);
-      hr = amp.Set(name == "gain" ? 9 : 0, value, flags);
+      int property =
+        name == "gain" ? 9 :
+        name == "brightness" ? 0 :
+        name == "contrast" ? 1 : 7;
+      hr = amp.Set(property, value, flags);
     } else {
       IAMCameraControl camera = (IAMCameraControl)Filter(index);
       int property = name == "exposure" ? 4 : name == "focus" ? 6 : -1;

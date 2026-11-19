@@ -16,6 +16,8 @@ import {
   exposureTargetDirection,
   measureExposure,
   measureFocus,
+  measureTone,
+  measureWhiteBalance,
 } from '../src/camera/imaging-metrics.js';
 import {
   CameraImagingController,
@@ -75,6 +77,28 @@ class FakeCameraControl implements CameraHardwareControl {
       supportsAuto: false,
       supportsManual: true,
     },
+    contrast: {
+      property: 'contrast',
+      value: 128,
+      mode: 'manual',
+      min: 0,
+      max: 255,
+      step: 1,
+      default: 128,
+      supportsAuto: false,
+      supportsManual: true,
+    },
+    whiteBalance: {
+      property: 'whiteBalance',
+      value: 4000,
+      mode: 'auto',
+      min: 2000,
+      max: 6500,
+      step: 1,
+      default: 4000,
+      supportsAuto: true,
+      supportsManual: true,
+    },
   };
 
   async read() {
@@ -93,7 +117,84 @@ class FakeCameraControl implements CameraHardwareControl {
   async close() {}
 }
 
+async function calibrationPattern(warm = false) {
+  const levels = [245, 221, 184, 143, 103, 65, 23].map((value) => ({
+    r: warm ? Math.min(255, value * 1.12) : value,
+    g: value,
+    b: warm ? value * 0.82 : value,
+  }));
+  const strips = levels
+    .map(
+      ({ r, g, b }, index) =>
+        `<rect x="${Math.floor((index * 400) / 7)}" y="584" width="${Math.ceil(
+          400 / 7,
+        )}" height="192" fill="rgb(${Math.round(r)},${Math.round(g)},${Math.round(
+          b,
+        )})"/>`,
+    )
+    .join('');
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="800"><rect width="400" height="800" fill="#cfcfcf"/><rect y="144" width="400" height="416" fill="url(#checker)"/><defs><pattern id="checker" width="16" height="16" patternUnits="userSpaceOnUse"><rect width="8" height="8" fill="black"/><rect x="8" y="8" width="8" height="8" fill="black"/></pattern></defs>${strips}</svg>`;
+  return sharp(Buffer.from(svg)).jpeg({ quality: 100 }).toBuffer();
+}
+
 describe('camera imaging', () => {
+  it('rejects neutral patches with a clipped colour channel', async () => {
+    const strips = Array.from({ length: 7 }, (_, index) => {
+      const offset = index * 2;
+      return `<rect x="${Math.floor((index * 400) / 7)}" y="584" width="${Math.ceil(
+        400 / 7,
+      )}" height="192" fill="rgb(${220 + offset},245,255)"/>`;
+    }).join('');
+    const jpeg = await sharp(
+      Buffer.from(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="800"><rect width="400" height="800" fill="#cfcfcf"/>${strips}</svg>`,
+      ),
+    )
+      .jpeg({ quality: 100 })
+      .toBuffer();
+    const correction: CameraCorrection = {
+      points: {
+        topLeft: { x: 0, y: 0 },
+        topRight: { x: 399, y: 0 },
+        bottomRight: { x: 399, y: 799 },
+        bottomLeft: { x: 0, y: 799 },
+      },
+      sourceWidth: 400,
+      sourceHeight: 800,
+      rotation: 0,
+    };
+
+    await expect(
+      measureWhiteBalance(jpeg, [{ screenId: 'screen', correction }]),
+    ).resolves.toBeUndefined();
+  });
+
+  it('measures neutral white balance and a monotonic seven-step tone chart', async () => {
+    const correction: CameraCorrection = {
+      points: {
+        topLeft: { x: 0, y: 0 },
+        topRight: { x: 399, y: 0 },
+        bottomRight: { x: 399, y: 799 },
+        bottomLeft: { x: 0, y: 799 },
+      },
+      sourceWidth: 400,
+      sourceHeight: 800,
+      rotation: 0,
+    };
+    const screens = [{ screenId: 'screen', correction }];
+    const neutral = await calibrationPattern(false);
+    const warm = await calibrationPattern(true);
+
+    const neutralBalance = await measureWhiteBalance(neutral, screens);
+    const warmBalance = await measureWhiteBalance(warm, screens);
+    const tone = await measureTone(neutral, screens);
+
+    expect(neutralBalance?.score).toBeLessThan(
+      warmBalance?.score ?? Number.POSITIVE_INFINITY,
+    );
+    expect(tone).toMatchObject({ monotonic: true });
+    expect(tone?.spread).toBeGreaterThan(150);
+  });
   it.each(['no control bridge', 'fixed focus', 'bridge failure'] as const)(
     'distinguishes %s from supported imaging',
     async (scenario) => {
@@ -330,13 +431,7 @@ describe('camera imaging', () => {
 
   it('retries the control bridge and keeps a locked focus during exposure changes', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'camera-imaging-'));
-    const svg =
-      '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="800">' +
-      '<rect width="400" height="800" fill="white"/>' +
-      '<rect y="100" width="400" height="600" fill="black"/>' +
-      '<text x="20" y="60" font-size="30" fill="black">FOCUS 0123456789</text>' +
-      '</svg>';
-    const jpeg = await sharp(Buffer.from(svg)).jpeg({ quality: 90 }).toBuffer();
+    const jpeg = await calibrationPattern();
     const darkJpeg = await sharp({
       create: {
         width: 400,
@@ -397,6 +492,8 @@ describe('camera imaging', () => {
       expect(control.values.focus.mode).toBe('manual');
       expect(control.values.exposure.mode).toBe('manual');
       expect(control.values.brightness.mode).toBe('manual');
+      expect(control.values.contrast.mode).toBe('manual');
+      expect(control.values.whiteBalance.mode).toBe('manual');
       expect(control.values.gain.mode).toBe('manual');
       expect(
         control.setCalls.some(
@@ -482,6 +579,8 @@ describe('camera imaging', () => {
       expect(control.values.focus.mode).toBe('auto');
       expect(control.values.exposure.mode).toBe('auto');
       expect(control.values.brightness.mode).toBe('manual');
+      expect(control.values.contrast.mode).toBe('manual');
+      expect(control.values.whiteBalance.mode).toBe('auto');
       expect(control.values.gain.mode).toBe('manual');
 
       currentJpeg = jpeg;
@@ -490,10 +589,136 @@ describe('camera imaging', () => {
       expect(control.values.focus.mode).toBe('manual');
       expect(control.values.exposure.mode).toBe('manual');
       expect(control.values.brightness.mode).toBe('manual');
+      expect(control.values.contrast.mode).toBe('manual');
+      expect(control.values.whiteBalance.mode).toBe('manual');
       expect(control.values.gain.mode).toBe('manual');
       expect(
         (imaging as unknown as { monitor?: unknown }).monitor,
       ).toBeUndefined();
+    } finally {
+      await imaging.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('calibrates an AVFoundation-style camera without Windows tone controls', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'camera-imaging-'));
+    const jpeg = await calibrationPattern();
+    const correction: CameraCorrection = {
+      points: {
+        topLeft: { x: 0, y: 0 },
+        topRight: { x: 399, y: 0 },
+        bottomRight: { x: 399, y: 799 },
+        bottomLeft: { x: 0, y: 799 },
+      },
+      sourceWidth: 400,
+      sourceHeight: 800,
+      rotation: 0,
+    };
+    const stream = {
+      getInfo: () => ({
+        state: 'running',
+        width: 400,
+        height: 800,
+        fps: 30,
+        frameId: 1,
+        hasFrame: true,
+        actualFps: 30,
+      }),
+      getFrame: async () => ({
+        id: 1,
+        capturedAt: Date.now(),
+        jpeg,
+      }),
+    };
+    const control = new FakeCameraControl();
+    control.values = {
+      focus: {
+        property: 'focus',
+        value: 0.35,
+        mode: 'auto',
+        min: 0,
+        max: 1,
+        step: 0.01,
+        default: 0.35,
+        supportsAuto: true,
+        supportsManual: true,
+      },
+      exposure: {
+        property: 'exposure',
+        value: -6,
+        mode: 'auto',
+        min: -12,
+        max: -1,
+        step: 1,
+        default: -6,
+        supportsAuto: true,
+        supportsManual: true,
+      },
+      gain: {
+        property: 'gain',
+        value: 100,
+        mode: 'auto',
+        min: 100,
+        max: 1600,
+        step: 1,
+        default: 100,
+        supportsAuto: true,
+        supportsManual: true,
+      },
+      whiteBalance: {
+        property: 'whiteBalance',
+        value: 5_000,
+        mode: 'auto',
+        min: 2_000,
+        max: 10_000,
+        step: 100,
+        default: 5_000,
+        supportsAuto: true,
+        supportsManual: true,
+      },
+      brightness: {
+        property: 'brightness',
+        value: 0,
+        mode: 'auto',
+        min: 0,
+        max: 0,
+        step: 1,
+        default: 0,
+        supportsAuto: false,
+        supportsManual: false,
+      },
+      contrast: {
+        property: 'contrast',
+        value: 0,
+        mode: 'auto',
+        min: 0,
+        max: 0,
+        step: 1,
+        default: 0,
+        supportsAuto: false,
+        supportsManual: false,
+      },
+    };
+    const imaging = new CameraImagingController(
+      { id: 'camera', name: 'macOS Camera', backend: 'avfoundation' },
+      stream as never,
+      directory,
+      control,
+    );
+    imaging.registerScreen('screen', () => correction);
+    try {
+      const status = await imaging.calibrate();
+      expect(status.state).toBe('ready');
+      expect(control.values.focus.mode).toBe('manual');
+      expect(control.values.exposure.mode).toBe('manual');
+      expect(control.values.whiteBalance.mode).toBe('manual');
+      expect(
+        control.setCalls.some(
+          (call) =>
+            call.property === 'brightness' || call.property === 'contrast',
+        ),
+      ).toBe(false);
     } finally {
       await imaging.close();
       await rm(directory, { recursive: true, force: true });
@@ -580,6 +805,250 @@ describe('camera imaging', () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+  it('invalidates a persisted v5 profile with clipped white balance', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'camera-imaging-'));
+    const control = new FakeCameraControl();
+    const correction: CameraCorrection = {
+      points: {
+        topLeft: { x: 0, y: 0 },
+        topRight: { x: 399, y: 0 },
+        bottomRight: { x: 399, y: 799 },
+        bottomLeft: { x: 0, y: 799 },
+      },
+      sourceWidth: 400,
+      sourceHeight: 800,
+      rotation: 0,
+    };
+    const screenId = 'screen';
+    const fingerprint = createHash('sha256')
+      .update(JSON.stringify([screenId, correction]))
+      .digest('hex');
+    await writeFile(
+      cameraImagingFile(directory, control.deviceId),
+      JSON.stringify({
+        version: 5,
+        cameraId: control.deviceId,
+        rois: [{ screenId, fingerprint }],
+        focus: { value: 45, score: 1 },
+        exposure: { value: -8 },
+        whiteBalance: { value: 2000 },
+        brightness: { value: 120 },
+        contrast: { value: 160 },
+        calibratedAt: new Date().toISOString(),
+      }),
+    );
+    const imaging = new CameraImagingController(
+      { id: control.deviceId, name: 'Camera', backend: 'dshow' },
+      { getInfo: () => ({ state: 'running', fps: 30 }) } as never,
+      directory,
+      control,
+    );
+    try {
+      await imaging.load();
+      imaging.registerScreen(screenId, () => correction);
+      await imaging.resumeStored();
+      expect(imaging.status().state).toBe('idle');
+      expect(control.setCalls).toEqual([]);
+    } finally {
+      await imaging.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('restores the full camera profile and releases it to the original modes', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'camera-imaging-'));
+    const control = new FakeCameraControl();
+    const correction: CameraCorrection = {
+      points: {
+        topLeft: { x: 0, y: 0 },
+        topRight: { x: 399, y: 0 },
+        bottomRight: { x: 399, y: 799 },
+        bottomLeft: { x: 0, y: 799 },
+      },
+      sourceWidth: 400,
+      sourceHeight: 800,
+      rotation: 0,
+    };
+    const screenId = 'screen';
+    const fingerprint = createHash('sha256')
+      .update(JSON.stringify([screenId, correction]))
+      .digest('hex');
+    const file = cameraImagingFile(directory, control.deviceId);
+    await writeFile(
+      file,
+      JSON.stringify({
+        version: 6,
+        cameraId: control.deviceId,
+        rois: [{ screenId, fingerprint }],
+        focus: { value: 45, score: 1 },
+        exposure: { value: -8 },
+        gain: { value: 16 },
+        whiteBalance: { value: 4800 },
+        brightness: { value: 132 },
+        contrast: { value: 136 },
+        original: {
+          focus: { value: 100, mode: 'auto' },
+          exposure: { value: -5, mode: 'auto' },
+          gain: { value: 0, mode: 'manual' },
+          whiteBalance: { value: 4000, mode: 'auto' },
+          brightness: { value: 128, mode: 'manual' },
+          contrast: { value: 128, mode: 'manual' },
+        },
+        calibratedAt: new Date().toISOString(),
+      }),
+    );
+    const stream = {
+      getInfo: () => ({ state: 'running', fps: 30 }),
+      getFrame: async () => ({ jpeg: Buffer.alloc(0) }),
+    };
+    const imaging = new CameraImagingController(
+      { id: control.deviceId, name: 'Camera', backend: 'dshow' },
+      stream as never,
+      directory,
+      control,
+    );
+    try {
+      await imaging.load();
+      imaging.registerScreen(screenId, () => correction);
+      await imaging.resumeStored();
+      expect(control.values).toMatchObject({
+        focus: { value: 45, mode: 'manual' },
+        exposure: { value: -8, mode: 'manual' },
+        gain: { value: 16, mode: 'manual' },
+        whiteBalance: { value: 4800, mode: 'manual' },
+        brightness: { value: 132, mode: 'manual' },
+        contrast: { value: 136, mode: 'manual' },
+      });
+
+      await imaging.releaseForCorrection();
+      expect(control.values).toMatchObject({
+        focus: { value: 100, mode: 'auto' },
+        exposure: { value: -5, mode: 'auto' },
+        gain: { value: 0, mode: 'manual' },
+        whiteBalance: { value: 4000, mode: 'auto' },
+        brightness: { value: 128, mode: 'manual' },
+        contrast: { value: 128, mode: 'manual' },
+      });
+    } finally {
+      await imaging.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('raises gain only after the frame-safe exposure range cannot reach target', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'camera-imaging-'));
+    const control = new FakeCameraControl();
+    control.values.gain = {
+      property: 'gain',
+      value: 100,
+      mode: 'manual',
+      min: 100,
+      max: 1600,
+      step: 1,
+      default: 100,
+      supportsAuto: false,
+      supportsManual: true,
+    };
+    control.values.exposure = {
+      ...control.values.exposure,
+      value: -8,
+      mode: 'manual',
+    };
+    const stream = {
+      getInfo: () => ({
+        state: 'running',
+        width: 400,
+        height: 800,
+        fps: 30,
+        frameId: 1,
+        hasFrame: true,
+        actualFps: 30,
+      }),
+      getFrame: async () => ({
+        id: 1,
+        capturedAt: Date.now(),
+        jpeg: Buffer.alloc(0),
+      }),
+    };
+    const imaging = new CameraImagingController(
+      { id: 'camera', name: 'Camera', backend: 'dshow' },
+      stream as never,
+      directory,
+      control,
+    );
+    const correction: CameraCorrection = {
+      points: {
+        topLeft: { x: 0, y: 0 },
+        topRight: { x: 399, y: 0 },
+        bottomRight: { x: 399, y: 799 },
+        bottomLeft: { x: 0, y: 799 },
+      },
+      sourceWidth: 400,
+      sourceHeight: 800,
+      rotation: 0,
+    };
+    const controller = imaging as unknown as {
+      currentCalibrationExposureReading(): Promise<{
+        selected: {
+          mean: number;
+          stddev: number;
+          brightRatio: number;
+          darkRatio: number;
+          p95: number;
+          p99: number;
+          overExposedRatio: number;
+          underExposedRatio: number;
+          hiTileRatio: number;
+          hiComponentCount: number;
+          hiComponentLargestShare: number;
+        };
+        updatedAt: number;
+      }>;
+      optimizeExposureAndGain(
+        screens: Array<{ screenId: string; correction: CameraCorrection }>,
+      ): Promise<{ value: number; gain?: number }>;
+    };
+    controller.currentCalibrationExposureReading = async () => {
+      const mean = Math.min(
+        254,
+        96 +
+          (control.values.exposure.value + 11) * 4 +
+          (control.values.gain.value - 100) * 1.35,
+      );
+      return {
+        selected: {
+          mean,
+          stddev: 8,
+          brightRatio: 0.8,
+          darkRatio: 0.05,
+          p95: Math.min(255, mean + 10),
+          p99: Math.min(255, mean + 20),
+          overExposedRatio: Math.max(0, (mean - 245) / 20),
+          underExposedRatio: Math.max(0, (175 - mean) / 175),
+          hiTileRatio: 0,
+          hiComponentCount: 0,
+          hiComponentLargestShare: 0,
+        },
+        updatedAt: Date.now(),
+      };
+    };
+    try {
+      const result = await controller.optimizeExposureAndGain([
+        { screenId: 'screen', correction },
+      ]);
+      expect(result.value).toBe(-5);
+      expect(result.gain).toBeGreaterThan(100);
+      expect(control.values.exposure).toMatchObject({
+        value: -5,
+        mode: 'manual',
+      });
+      expect(control.values.gain.mode).toBe('manual');
+    } finally {
+      await imaging.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 10_000);
 
   it('applies the service exposure direction within the safe exposure window', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'camera-imaging-'));

@@ -2,6 +2,7 @@ import { expect, it } from '@rstest/core';
 import {
   automaticMarkerPages,
   calibrationTargetsAfterPairing,
+  connectedCalibrationScreenId,
   needsPhoneConnectionBeforeAddScreen,
   selectableScreens,
 } from '../../src/ui/calibration/screen-selection';
@@ -78,6 +79,34 @@ it('starts the first pass on all visible phones paired with this camera', () => 
       screenIds: ['camera', 'right'],
     });
   }
+});
+
+it('continues on the remaining connected screen when the selected page goes home', () => {
+  const screens = [
+    { id: 'desktop', cameraId: 'camera' },
+    { id: 'phone', cameraId: 'camera' },
+  ];
+  const pages = [
+    {
+      cameraId: 'camera',
+      screenId: 'desktop',
+      visible: true,
+      mode: 'waiting',
+    },
+    {
+      cameraId: 'camera',
+      screenId: 'phone',
+      visible: true,
+      mode: 'mapping',
+    },
+  ];
+
+  expect(
+    connectedCalibrationScreenId(screens, 'camera', pages, 'desktop'),
+  ).toBe('phone');
+  expect(connectedCalibrationScreenId(screens, 'camera', pages, 'phone')).toBe(
+    'phone',
+  );
 });
 
 it('reuses the target claimed during pairing alongside a saved screen', () => {

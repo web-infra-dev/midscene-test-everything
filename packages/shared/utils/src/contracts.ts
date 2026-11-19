@@ -700,6 +700,8 @@ export interface ProfileData {
     name: string;
     pageKey?: string;
     markerSlot?: number;
+    /** Created by Add Screen but not yet bound or calibrated. */
+    pending?: boolean;
     archived?: boolean;
   }[];
   calibrationBatch?: import('./assisted-contracts.js').CalibrationBatchState;

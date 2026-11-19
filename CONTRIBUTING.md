@@ -41,3 +41,11 @@ Keep the root READMEs focused on the project overview and quick start. Update bo
 ## Pull requests
 
 Open a pull request against `main` from a branch for your change. Use scoped Conventional Commits for commit messages, for example `fix(ios-airlink): handle a disconnected device`. Summarize what changed and complete the [PR checklist](./.github/pull_request_template.md) with the checks you ran.
+
+## Releasing
+
+From an up-to-date `main` checkout, run `pnpm release:pr patch` (or `minor` / `major`). The script bumps the root and all non-private workspace packages to the same version, commits `chore(release): vX.Y.Z` on `release/vX.Y.Z`, and opens a release pull request against `main`.
+
+Merging the release pull request triggers npm publishing to the `latest` tag via Trusted Publishing (OIDC) and creates a `vX.Y.Z` tag with a draft GitHub Release. Review the draft and publish it from GitHub.
+
+Run the **Release** workflow on `main` to publish `0.0.0-canary-<YYYYMMDDHHMMSS>` using a UTC timestamp directly to npm's `canary` tag without modifying `main` or creating a Git tag. Install a preview with `npm install <package>@canary`. AirLink's updater follows the channel of the installed service.

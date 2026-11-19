@@ -1,6 +1,10 @@
 <p align="center">
   <img alt="Midscene Test Everything" width="160" src="https://github.com/user-attachments/assets/f60de3c1-dd6f-4213-97a1-85bf7c6e79e4"><br />
-  <h1 align="center">Midscene Test Everything</h1>
+</p>
+
+<h1 align="center">Midscene Test Everything</h1>
+
+<p align="center">
   <strong>If you can see it, you can test it.</strong><br />
   Drive end-to-end tests on any interface with vision models — car screens, physical phones, embedded panels, and whatever you build next.
 </p>

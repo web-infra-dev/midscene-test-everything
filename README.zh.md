@@ -1,6 +1,10 @@
 <p align="center">
   <img alt="Midscene Test Everything" width="160" src="https://github.com/user-attachments/assets/f60de3c1-dd6f-4213-97a1-85bf7c6e79e4"><br />
-  <h1 align="center">Midscene Test Everything</h1>
+</p>
+
+<h1 align="center">Midscene Test Everything</h1>
+
+<p align="center">
   <strong>看得见的界面，就能测。</strong><br />
   用视觉模型驱动任意界面的端到端测试：车机屏幕、iPhone 真机、嵌入式面板，以及你接下来要接入的任何设备。
 </p>
@@ -98,7 +102,7 @@ try {
 
 | 组件 | 用途 |
 | --- | --- |
-| [`universal-device`](./packages/universal-device/README.md) | 统一设备接口、TypeScript SDK、HTTP API、CLI 和 MCP Server |
+| [`universal-device`](./packages/universal-device/README.zh.md) | 统一设备接口、TypeScript SDK、HTTP API、CLI 和 MCP Server |
 | [`universal-device-playground`](./packages/universal-device-playground/README.md) | 在浏览器里预览设备画面并调试操作 |
 | [`arm-service`](./packages/robot-arm/arm-service/README.zh.md) | DOBOT MG400 设备服务，提供配置、校准和触屏操作 |
 | [`arm-kit`](./packages/robot-arm/arm-kit/README.zh.md) | 机械臂适配器接口，可用于接入自定义机械臂 |

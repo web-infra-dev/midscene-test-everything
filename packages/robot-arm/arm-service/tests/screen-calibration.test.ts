@@ -269,6 +269,115 @@ it('clears every perspective and mapping for one camera', async () => {
     expect(phone.targetHost.service.setup().mapping).toBeUndefined();
   }
 });
+it('keeps unselected screen perspectives when clearing only online screens', async () => {
+  const f = await fixture();
+  const phones = [await f.connect(), await f.connect()];
+  await f.render();
+  const command = {
+    cameraId: 'cam',
+    id: f.session.id,
+    token: f.session.token,
+  };
+  await f.service.markerAction({ ...command, action: 'detect' });
+  await f.service.markerAction({ ...command, action: 'apply' });
+
+  await f.service.pageAction({
+    action: 'clear-perspectives',
+    cameraId: 'cam',
+    screenIds: [phones[0]!.targetId],
+  });
+
+  expect(
+    f.devices.entries.get(phones[0]!.targetId)?.camera.getCorrection(),
+  ).toBeUndefined();
+  expect(
+    f.devices.entries.get(phones[1]!.targetId)?.camera.getCorrection(),
+  ).toBeDefined();
+  expect(phones[1]!.targetHost.service.setup().mapping).toBeDefined();
+});
+it('does not clear camera imaging when discarding an empty added screen', async () => {
+  const f = await fixture();
+  const clearCorrection = rstest.spyOn(
+    CameraSession.prototype,
+    'clearCorrection',
+  );
+  try {
+    const added = await f.devices.addScreen('cam');
+    await f.service.pageAction({
+      action: 'delete-screen',
+      cameraId: 'cam',
+      id: added.id,
+      onlyIfEmpty: true,
+    });
+    expect(clearCorrection).not.toHaveBeenCalled();
+  } finally {
+    clearCorrection.mockRestore();
+  }
+});
+it('discards an explicitly added screen without touching camera imaging', async () => {
+  const f = await fixture();
+  const clearCorrection = rstest.spyOn(
+    CameraSession.prototype,
+    'clearCorrection',
+  );
+  try {
+    const added = await f.devices.addScreen('cam');
+    await f.devices.pruneUnusedScreenTargets('cam');
+    expect(f.devices.screenTarget(added.id)?.archived).not.toBe(true);
+    const discard = {
+      action: 'discard-added-screen',
+      cameraId: 'cam',
+      id: added.id,
+    };
+    await Promise.all([
+      f.service.pageAction(discard),
+      f.service.pageAction(discard),
+    ]);
+    expect(clearCorrection).not.toHaveBeenCalled();
+    expect(f.devices.screens().some((screen) => screen.id === added.id)).toBe(
+      false,
+    );
+    expect(
+      f.store.list().screenTargets?.find((screen) => screen.id === added.id)
+        ?.archived,
+    ).toBe(true);
+  } finally {
+    clearCorrection.mockRestore();
+  }
+});
+it('keeps legacy marker-target removal idempotent without clearing imaging', async () => {
+  const f = await fixture();
+  const clearCorrection = rstest.spyOn(
+    CameraSession.prototype,
+    'clearCorrection',
+  );
+  try {
+    const added = await f.devices.addScreen('cam');
+    const session = await f.service.create('cam', undefined, [
+      f.session.targets[0]!.id,
+      added.id,
+    ]);
+    const remove = () =>
+      f.service.markerAction({
+        action: 'remove',
+        cameraId: 'cam',
+        id: session.id,
+        token: session.token,
+        targetId: added.id,
+      });
+    const first = await remove();
+    const second = await remove();
+    expect(first.targets).toHaveLength(1);
+    expect(second.targets).toHaveLength(1);
+    expect(clearCorrection).not.toHaveBeenCalled();
+    expect(
+      f.store.list().screenTargets?.find((screen) => screen.id === added.id)
+        ?.archived,
+    ).toBe(true);
+  } finally {
+    clearCorrection.mockRestore();
+  }
+});
 it('deletes a connected screen page with its perspective', async () => {
   const f = await fixture();
   const [first, second] = [await f.connect(), await f.connect()];
@@ -313,14 +422,16 @@ it('applies passing multi-screen results after marker display ends', async () =>
     expect(phone.targetHost.service.phoneObservation()).toBeDefined();
   }
 
-  const firstImagingCalibration = rstest.spyOn(
-    phones[0]!.targetHost.service,
-    'startImagingCalibration',
-  );
-  const secondImagingCalibration = rstest.spyOn(
-    phones[1]!.targetHost.service,
-    'startImagingCalibration',
-  );
+  let finishImaging!: () => void;
+  const imagingPending = new Promise<void>((resolve) => {
+    finishImaging = resolve;
+  });
+  const firstImagingCalibration = rstest
+    .spyOn(phones[0]!.targetHost.service, 'startImagingCalibration')
+    .mockReturnValue(imagingPending);
+  const secondImagingCalibration = rstest
+    .spyOn(phones[1]!.targetHost.service, 'startImagingCalibration')
+    .mockResolvedValue();
   const imagingPattern = rstest.spyOn(f.devices, 'setCameraImagingPattern');
   await expect(
     f.service.markerAction({ ...command, action: 'apply' }),
@@ -337,6 +448,7 @@ it('applies passing multi-screen results after marker display ends', async () =>
   expect(
     f.devices.entries.get(phones[1]!.targetId)?.camera.getCorrection(),
   ).toBeDefined();
+  finishImaging();
 }, 20_000);
 it('waits for the iPhone origin before projecting its full display from the markers', async () => {
   const f = await fixture();
@@ -944,6 +1056,22 @@ it('keeps paired pages at home on restart until their own calibration screen ope
   expect(host.service.status()).toBeNull();
   expect(f.adapter.movements).toHaveLength(0);
 });
+it('keeps a page home after the operator restores it and opens the screen again', async () => {
+  const f = await fixture();
+  const { page, targetId } = await f.connect();
+  await f.service.pageAction({
+    action: 'release',
+    id: page.saved.id,
+    keepBinding: true,
+  });
+  expect(page.mode).toBe('waiting');
+
+  await f.service.pageAction({ action: 'list', cameraId: 'cam' });
+  await f.service.resumeBoundPage(await f.devices.ensureHost(targetId));
+
+  expect(page.mode).toBe('waiting');
+  expect(page.host).toBeUndefined();
+});
 it('removes a forgotten phone and its perspective from saved screens and open marker sessions', async () => {
   const f = await fixture();
   const android = await f.connect();
@@ -985,6 +1113,12 @@ it('forgets a bound offline page with the camera unplugged and keeps a released 
   const legacyToken = new URL(
     f.host.service.phoneStatus().links[0].url,
   ).searchParams.get('token');
+  expect(
+    f.store
+      .list()
+      .screenTargets?.find((screen) => screen.id === released.targetId)
+      ?.pending,
+  ).toBe(false);
   await f.service.pageAction({ action: 'release', id: released.page.saved.id });
   await f.service.pageAction({
     action: 'release',
@@ -1207,8 +1341,9 @@ it('starts a marker session for the explicitly created Add Screen target', async
   const session = await f.service.create('cam', undefined, [created.id]);
   expect(session.targets.map((target) => target.id)).toEqual([created.id]);
   expect(f.devices.screens().some((screen) => screen.id === created.id)).toBe(
-    true,
+    false,
   );
+  expect(f.devices.screenTarget(created.id)).toBeDefined();
   const other = await f.devices.addScreen('cam', 'Created in another tab');
   const discard = {
     action: 'delete-screen',
@@ -1220,7 +1355,97 @@ it('starts a marker session for the explicitly created Add Screen target', async
   await f.service.pageAction(discard);
   const ids = f.devices.screens().map((screen) => screen.id);
   expect(ids).not.toContain(created.id);
-  expect(ids).toContain(other.id);
+  expect(ids).not.toContain(other.id);
+  expect(
+    f.store.list().screenTargets?.find((screen) => screen.id === other.id)
+      ?.archived,
+  ).not.toBe(true);
+});
+it('ignores abandoned empty targets when listing and numbering screens', async () => {
+  const f = await fixture();
+  await f.connect();
+  await f.connect();
+  await f.store.saveScreenTarget({
+    id: 'abandoned-3',
+    cameraId: 'cam',
+    name: 'Screen 3',
+  });
+  await f.store.saveScreenTarget({
+    id: 'abandoned-4',
+    cameraId: 'cam',
+    name: 'Screen 4',
+  });
+
+  expect(f.devices.screens().map((screen) => screen.id)).not.toContain(
+    'abandoned-3',
+  );
+  expect(f.devices.screens().map((screen) => screen.id)).not.toContain(
+    'abandoned-4',
+  );
+
+  const added = await f.devices.addScreen('cam');
+  expect(added.name).toBe('Screen 3');
+  expect(
+    f.store
+      .list()
+      .screenTargets?.filter((screen) =>
+        ['abandoned-3', 'abandoned-4'].includes(screen.id),
+      )
+      .every((screen) => screen.archived),
+  ).toBe(true);
+});
+it('keeps a refreshed Add Screen draft out of lists and reuses its number', async () => {
+  const f = await fixture();
+  await f.connect();
+  await f.connect();
+
+  const firstDraft = await f.devices.addScreen('cam');
+  expect(firstDraft.name).toBe('Screen 3');
+  expect(f.devices.screens().map((screen) => screen.id)).not.toContain(
+    firstDraft.id,
+  );
+  expect(
+    f.store.list().screenTargets?.find((screen) => screen.id === firstDraft.id)
+      ?.pending,
+  ).toBe(true);
+
+  // A workbench load discards Add Screen drafts left behind by a page reload.
+  await f.devices.pruneUnusedScreenTargets('cam', { includePending: true });
+  const replacement = await f.devices.addScreen('cam');
+  expect(replacement.name).toBe('Screen 3');
+  expect(f.devices.screens().map((screen) => screen.id)).not.toContain(
+    replacement.id,
+  );
+  expect(
+    f.store.list().screenTargets?.find((screen) => screen.id === firstDraft.id)
+      ?.archived,
+  ).toBe(true);
+  const session = await f.service.create('cam', undefined, [replacement.id]);
+  expect(session.targets.map((target) => target.id)).toEqual([replacement.id]);
+});
+it('renames a marker target and its bound page without leaving the dialog', async () => {
+  const f = await fixture();
+  const phone = await f.connect();
+  await f.service.pageAction({
+    action: 'rename-screen',
+    cameraId: 'cam',
+    id: phone.targetId,
+    name: 'Front panel',
+  });
+
+  expect(
+    f.devices.screens().find((screen) => screen.id === phone.targetId)?.name,
+  ).toBe('Front panel');
+  expect(phone.page.saved.name).toBe('Front panel');
+  const status = await f.service.markerAction({
+    action: 'status',
+    cameraId: 'cam',
+    id: f.session.id,
+    token: f.session.token,
+  });
+  expect(
+    status.targets.find((target) => target.id === phone.targetId)?.name,
+  ).toBe('Front panel');
 });
 it('assigns available names to concurrent Add Screen requests when numbers have gaps', async () => {
   const f = await fixture({ screens: false });

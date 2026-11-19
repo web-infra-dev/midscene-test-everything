@@ -1,3 +1,7 @@
+<p align="center">
+  <img alt="Midscene Test Everything" width="160" src="https://github.com/user-attachments/assets/f60de3c1-dd6f-4213-97a1-85bf7c6e79e4"><br />
+</p>
+
 # Universal Device Playground
 
 Playground lets you preview a connected device's screen and try actions in a browser.

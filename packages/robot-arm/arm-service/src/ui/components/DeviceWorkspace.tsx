@@ -34,7 +34,12 @@ import {
   cameraPreviewContext,
   cameraPreviewUrl,
 } from '../camera-preview';
-import { cameraStateLabel, useCameras } from '../cameras';
+import {
+  cameraScreenNeedsCalibration,
+  cameraStateLabel,
+  selectCameraScreen,
+  useCameras,
+} from '../cameras';
 import { useConnection } from '../connection';
 import { useViews } from '../extensions';
 import { useDeviceReadiness } from '../hooks/useDeviceReadiness';
@@ -160,11 +165,11 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
     camera.stream?.state === 'running' ? (camera.screens ?? []) : [],
   );
   const activeScreen =
-    availableScreens.find((s) => s.id === preferredScreenId) ??
-    availableScreens.find((s) => s.id === selected?.previewScreenId) ??
-    availableScreens.find((s) => s.id === selectedId) ??
-    availableScreens[0] ??
-    (!connected ? selected : undefined);
+    selectCameraScreen(availableScreens, [
+      preferredScreenId,
+      selected?.previewScreenId,
+      selectedId ?? undefined,
+    ]) ?? (!connected ? selected : undefined);
   const deviceId =
     robotReady && streamState === 'running'
       ? (activeScreen?.id ?? selectedId ?? undefined)
@@ -638,10 +643,23 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
                     setPreferredScreenId(id);
                     identifyScreen(selected.id, id);
                   }}
-                  options={availableScreens.map((s) => ({
-                    value: s.id,
-                    label: s.name,
-                  }))}
+                  options={availableScreens.map((screen) => {
+                    const uncalibrated = cameraScreenNeedsCalibration(screen);
+                    return {
+                      value: screen.id,
+                      disabled: uncalibrated,
+                      label: (
+                        <span className="camera-screen-option">
+                          <span>{screen.name}</span>
+                          {uncalibrated && (
+                            <span className="camera-screen-option-status">
+                              {t('uncalibrated')}
+                            </span>
+                          )}
+                        </span>
+                      ),
+                    };
+                  })}
                   style={{ width: 180 }}
                 />
               )}

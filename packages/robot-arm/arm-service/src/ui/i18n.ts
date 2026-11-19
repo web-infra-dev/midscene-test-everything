@@ -123,6 +123,7 @@ const messages = {
   noStream: ['暂无画面', 'No stream'],
   stopped: ['未启动', 'Stopped'],
   screen: ['屏幕', 'Screen'],
+  uncalibrated: ['未标定', 'Uncalibrated'],
   robot: ['机械臂', 'Robot'],
   skipToCamera: ['跳过，查看相机', 'Skip to cameras'],
   rawPreviewFailed: [

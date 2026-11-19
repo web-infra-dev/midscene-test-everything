@@ -1,7 +1,15 @@
 {
   "name": "@midscene/robotics-shared",
   "version": "0.0.0",
-  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/web-infra-dev/midscene-test-everything.git",
+    "directory": "packages/shared/utils"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "type": "module",
   "devDependencies": {
     "@rslib/core": "^0.18.3",

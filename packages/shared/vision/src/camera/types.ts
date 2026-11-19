@@ -26,7 +26,9 @@ export type CameraControlProperty =
   | 'exposure'
   | 'focus'
   | 'gain'
-  | 'brightness';
+  | 'brightness'
+  | 'contrast'
+  | 'whiteBalance';
 export type CameraControlMode = 'auto' | 'manual';
 
 export interface CameraControlValue {
@@ -89,7 +91,7 @@ export interface CameraBackend {
     options: ResolvedCameraStreamOptions,
     signal?: AbortSignal,
   ): Promise<CameraSource>;
-  /** Optional platform bridge for focus and exposure controls. */
+  /** Optional platform bridge for camera imaging controls. */
   openHardwareControl?(
     deviceId: string,
   ): Promise<CameraHardwareControl | undefined>;

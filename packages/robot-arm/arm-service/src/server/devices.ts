@@ -50,6 +50,8 @@ export class PlaygroundDevices {
   discoveryError?: string;
   opening = new Map<string, Promise<DeviceEntry>>();
   stopping = new Map<string, Promise<void>>();
+  /** Targets created by Add Screen stay visible until the flow commits or cancels. */
+  private readonly addedScreens = new Set<string>();
   closed = false;
   constructor(
     readonly arm: ArmController,
@@ -76,9 +78,40 @@ export class PlaygroundDevices {
     controllerRuntime(this.arm).batchTransferContext = (from, to) =>
       this.batch.transferContext(from, to);
   }
+  private get store() {
+    return controllerRuntime(this.arm).profileStore;
+  }
+  private screenHasDurableIdentity(
+    target: {
+      id: string;
+      cameraId: string;
+      pageKey?: string;
+      pending?: boolean;
+    },
+    pageTargetIds: ReadonlySet<string>,
+  ) {
+    if (
+      target.pending === false ||
+      target.id === target.cameraId ||
+      target.pageKey !== undefined ||
+      pageTargetIds.has(target.id) ||
+      this.store.calibrationMapping(target.id) ||
+      this.store.deviceBinding(target.id)
+    )
+      return true;
+    const entry = this.entries.get(target.id);
+    return Boolean(
+      entry?.camera.getCorrection() || entry?.camera.hasSavedPerspective(),
+    );
+  }
   screens(includePreviewPositions = false) {
-    const saved =
-      controllerRuntime(this.arm).profileStore.list().screenTargets ?? [];
+    const profiles = controllerRuntime(this.arm).profileStore.list();
+    const saved = profiles.screenTargets ?? [];
+    const pageTargetIds = new Set(
+      (profiles.screenPages ?? []).flatMap((page) =>
+        page.targetId ? [page.targetId] : [],
+      ),
+    );
     const defaults = [...this.entries]
       .filter(([id, e]) => id === e.cameraId && !saved.some((s) => s.id === id))
       .map(([id, e]) => ({ id, cameraId: id, name: e.camera.camera.name }));
@@ -88,7 +121,14 @@ export class PlaygroundDevices {
       name: string;
       pageKey?: string;
       markerSlot?: number;
-    }[] = [...defaults, ...saved.filter((t) => !t.archived)];
+    }[] = [
+      ...defaults,
+      ...saved.filter(
+        (target) =>
+          !target.archived &&
+          this.screenHasDurableIdentity(target, pageTargetIds),
+      ),
+    ];
     return targets.map((target) => {
       const entry = this.entries.get(target.id);
       const camera = entry?.camera;
@@ -159,6 +199,72 @@ export class PlaygroundDevices {
     const slot = this.markerSlot(id);
     return [10, 11, 12, 13, 14, 15].map((code) => code + slot * 10);
   }
+  /**
+   * Older Add Screen cancellation paths could leave an active target with no
+   * page, mapping or perspective. Those records are not screens: hide them from
+   * every list and retire them so marker slots and generated names are reused.
+   */
+  async pruneUnusedScreenTargets(
+    cameraId?: string,
+    options: { includePending?: boolean } = {},
+  ) {
+    const profiles = controllerRuntime(this.arm).profileStore.list();
+    const pageTargetIds = new Set(
+      (profiles.screenPages ?? []).flatMap((page) =>
+        page.targetId ? [page.targetId] : [],
+      ),
+    );
+    for (const target of profiles.screenTargets ?? []) {
+      if (
+        target.archived ||
+        (cameraId && target.cameraId !== cameraId) ||
+        (!options.includePending && this.addedScreens.has(target.id)) ||
+        this.screenHasDurableIdentity(target, pageTargetIds)
+      )
+        continue;
+      const persisted = await this.cameras.persistedPerspective?.(
+        target.cameraId,
+        target.id === target.cameraId ? undefined : target.id,
+      );
+      if (persisted?.correction) continue;
+      await controllerRuntime(this.arm).profileStore.archiveScreenTarget(
+        target.id,
+      );
+      this.addedScreens.delete(target.id);
+      await this.stop(target.id)?.catch(() => undefined);
+    }
+  }
+  pendingAddedScreen(id: string) {
+    this.addedScreens.add(id);
+  }
+  async commitAddedScreen(id: string) {
+    this.addedScreens.delete(id);
+    const target = this.store
+      .list()
+      .screenTargets?.find((entry) => entry.id === id && !entry.archived);
+    if (target?.pending)
+      await this.store.updateScreenTarget(id, { pending: false });
+  }
+  discardAddedScreen(id: string) {
+    this.addedScreens.delete(id);
+  }
+  screenTarget(id: string, includeArchived = false) {
+    const target = this.store
+      .list()
+      .screenTargets?.find(
+        (entry) => entry.id === id && (includeArchived || !entry.archived),
+      );
+    return target
+      ? {
+          id: target.id,
+          cameraId: target.cameraId,
+          name: target.name,
+          pageKey: target.pageKey,
+          markerSlot: target.markerSlot,
+          archived: target.archived,
+        }
+      : undefined;
+  }
   async setCameraImagingPattern(cameraId: string, request?: string) {
     const hosts = [...this.entries.values()]
       .filter((entry) => entry.cameraId === cameraId && entry.host)
@@ -173,7 +279,7 @@ export class PlaygroundDevices {
     if (!connected.length)
       throw new RobotArmError(
         'PHONE_UNAVAILABLE',
-        'Reconnect the phone calibration page before measuring focus and exposure.',
+        'Reconnect the phone calibration page before tuning the camera image.',
         409,
       );
     const richPatternHosts = connected.filter((host) =>
@@ -182,7 +288,7 @@ export class PlaygroundDevices {
     if (richPatternHosts.length !== connected.length)
       throw new RobotArmError(
         'PHONE_PAGE_OUTDATED',
-        'Reload every phone calibration page before measuring focus and exposure.',
+        'Reload every phone calibration page before tuning the camera image.',
         409,
       );
     for (const host of richPatternHosts)
@@ -202,7 +308,7 @@ export class PlaygroundDevices {
     )
       throw new RobotArmError(
         'PHONE_PAGE_OUTDATED',
-        'The phone did not display the focus and exposure pattern. Reload the calibration page and retry.',
+        'The phone did not display the camera imaging pattern. Reload the calibration page and retry.',
         409,
       );
   }
@@ -270,17 +376,55 @@ export class PlaygroundDevices {
   }
   async addScreen(cameraId: string, name?: string) {
     await this.open(cameraId);
-    const existing = this.screens().filter((t) => t.cameraId === cameraId);
+    await this.pruneUnusedScreenTargets(cameraId);
+    const store = controllerRuntime(this.arm).profileStore;
+    const durable = this.screens().filter((t) => t.cameraId === cameraId);
+    const pending = (store.list().screenTargets ?? [])
+      .filter(
+        (target) =>
+          !target.archived &&
+          target.cameraId === cameraId &&
+          this.addedScreens.has(target.id) &&
+          !durable.some((screen) => screen.id === target.id),
+      )
+      .map((target) => ({ id: target.id, name: target.name }));
+    const existing = [...durable, ...pending];
     if (existing.length >= 9) throw new Error('At most 9 screens per camera');
     const screenName = name ?? nextScreenName(existing);
+    const profiles = store.list();
+    const pageTargetIds = new Set(
+      (profiles.screenPages ?? []).flatMap((page) =>
+        page.targetId ? [page.targetId] : [],
+      ),
+    );
+    const stale = profiles.screenTargets?.find(
+      (target) =>
+        !target.archived &&
+        target.cameraId === cameraId &&
+        this.addedScreens.has(target.id) &&
+        target.name.toLocaleLowerCase('en-US') ===
+          screenName.toLocaleLowerCase('en-US') &&
+        !this.screenHasDurableIdentity(target, pageTargetIds),
+    );
+    if (stale) {
+      await store.archiveScreenTarget(stale.id);
+      this.discardAddedScreen(stale.id);
+      await this.stop(stale.id)?.catch(() => undefined);
+    }
     const id = randomUUID();
-    const store = controllerRuntime(this.arm).profileStore;
-    await store.saveScreenTarget({ id, cameraId, name: screenName });
+    await store.saveScreenTarget({
+      id,
+      cameraId,
+      name: screenName,
+      pending: true,
+    });
+    this.pendingAddedScreen(id);
     try {
       await this.ensureHost(id);
       return { id, cameraId, name: screenName };
     } catch (error) {
       try {
+        this.discardAddedScreen(id);
         await store.archiveScreenTarget(id);
       } finally {
         await this.stop(id);
@@ -297,6 +441,7 @@ export class PlaygroundDevices {
         ...previewing,
       ]);
       await Promise.allSettled([...cameraIds].map((id) => this.open(id)));
+      await this.pruneUnusedScreenTargets(undefined, { includePending: true });
       const targets =
         controllerRuntime(this.arm).profileStore.list().screenTargets ?? [];
       await Promise.allSettled(

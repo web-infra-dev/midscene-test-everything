@@ -14,6 +14,8 @@ const FOCUS_WORK_WIDTH = 1280;
 const FOCUS_SAMPLE_WIDTH = 180;
 const FOCUS_TILE_COLUMNS = 6;
 const FOCUS_TILE_ROWS = 12;
+const TONE_PATCH_WIDTH = 36;
+const TONE_PATCH_HEIGHT = 18;
 
 export interface NormalizedImageRegion {
   left: number;
@@ -29,6 +31,15 @@ export const CALIBRATION_EXPOSURE_REGION: NormalizedImageRegion = {
   right: 0.27,
   bottom: 0.95,
 };
+
+/** Interior sampling windows for the seven neutral bars in the phone pattern. */
+export const CALIBRATION_TONE_REGIONS: readonly NormalizedImageRegion[] =
+  Array.from({ length: 7 }, (_, index) => ({
+    left: (index + 0.12) / 7,
+    top: 0.73,
+    right: (index + 0.88) / 7,
+    bottom: 0.97,
+  }));
 
 export interface ImagingScreen {
   screenId: string;
@@ -71,7 +82,41 @@ export interface FocusReading {
   }>;
 }
 
+export interface WhiteBalanceReading {
+  score: number;
+  redGreenRatio: number;
+  blueGreenRatio: number;
+  screens: Array<{
+    screenId: string;
+    score: number;
+    redGreenRatio: number;
+    blueGreenRatio: number;
+    samples: number;
+  }>;
+}
+
+export interface ToneReading {
+  score: number;
+  white: number;
+  midtone: number;
+  black: number;
+  spread: number;
+  monotonic: boolean;
+  screens: Array<{
+    screenId: string;
+    score: number;
+    levels: number[];
+    monotonic: boolean;
+  }>;
+}
+
 interface GrayImage {
+  width: number;
+  height: number;
+  data: Uint8Array;
+}
+
+interface RgbImage {
   width: number;
   height: number;
   data: Uint8Array;
@@ -134,6 +179,31 @@ function sampleBilinear(image: GrayImage, x: number, y: number) {
   );
 }
 
+function sampleBilinearRgb(image: RgbImage, x: number, y: number) {
+  const left = Math.floor(x);
+  const top = Math.floor(y);
+  const dx = x - left;
+  const dy = y - top;
+  const x0 = clamp(left, 0, image.width - 1);
+  const y0 = clamp(top, 0, image.height - 1);
+  const x1 = clamp(left + 1, 0, image.width - 1);
+  const y1 = clamp(top + 1, 0, image.height - 1);
+  const at = (sampleX: number, sampleY: number, channel: number) =>
+    image.data[(sampleY * image.width + sampleX) * 3 + channel]!;
+  return [0, 1, 2].map((channel) => {
+    const a = at(x0, y0, channel);
+    const b = at(x1, y0, channel);
+    const c = at(x0, y1, channel);
+    const d = at(x1, y1, channel);
+    return (
+      a * (1 - dx) * (1 - dy) +
+      b * dx * (1 - dy) +
+      c * (1 - dx) * dy +
+      d * dx * dy
+    );
+  });
+}
+
 function scaledQuad(correction: CameraCorrection, image: GrayImage) {
   const scaleX = image.width / correction.sourceWidth;
   const scaleY = image.height / correction.sourceHeight;
@@ -179,6 +249,42 @@ function samplePerspective(
       output[y * width + x] = Math.round(
         sampleBilinear(image, point.x, point.y),
       );
+    }
+  }
+  return output;
+}
+
+function samplePerspectiveRgb(
+  image: RgbImage,
+  correction: CameraCorrection,
+  width: number,
+  height: number,
+  region: NormalizedImageRegion,
+) {
+  const quad = scaledQuad(correction, image);
+  const transform = computeHomography(
+    [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 1, y: 1 },
+      { x: 0, y: 1 },
+    ],
+    quad,
+  );
+  const output = new Uint8Array(width * height * 3);
+  const left = region.left + (region.right - region.left) * ROI_INSET;
+  const right = region.right - (region.right - region.left) * ROI_INSET;
+  const top = region.top + (region.bottom - region.top) * ROI_INSET;
+  const bottom = region.bottom - (region.bottom - region.top) * ROI_INSET;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const point = applyHomography(transform, {
+        x: left + ((x + 0.5) / width) * (right - left),
+        y: top + ((y + 0.5) / height) * (bottom - top),
+      });
+      const rgb = sampleBilinearRgb(image, point.x, point.y);
+      for (let channel = 0; channel < 3; channel += 1)
+        output[(y * width + x) * 3 + channel] = Math.round(rgb[channel]!);
     }
   }
   return output;
@@ -421,6 +527,221 @@ async function decodeExposureFrame(jpeg: Buffer): Promise<GrayImage> {
     width: info.width,
     height: info.height,
     data: new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
+  };
+}
+
+async function decodeRgbFrame(jpeg: Buffer): Promise<RgbImage> {
+  const { data, info } = await sharp(jpeg, { limitInputPixels: 16_777_216 })
+    .rotate()
+    .toColourspace('srgb')
+    .removeAlpha()
+    .resize({
+      width: 1024,
+      withoutEnlargement: true,
+      fit: 'inside',
+    })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  return {
+    width: info.width,
+    height: info.height,
+    data: new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
+  };
+}
+
+function rgbPatchMeans(pixels: Uint8Array) {
+  const totals = [0, 0, 0];
+  for (let index = 0; index < pixels.length; index += 3)
+    for (let channel = 0; channel < 3; channel += 1)
+      totals[channel] = totals[channel]! + pixels[index + channel]!;
+  const count = Math.max(1, pixels.length / 3);
+  return totals.map((total) => total / count) as [number, number, number];
+}
+
+export function exposureCalibrationScore(metrics: LumaMetrics) {
+  const targetError = Math.abs(metrics.mean - 205) / 205;
+  const highlightPenalty =
+    metrics.overExposedRatio * 40 + Math.max(0, metrics.p99 - 238) / 6;
+  const shadowPenalty =
+    metrics.underExposedRatio * 10 + Math.max(0, 165 - metrics.mean) / 70;
+  return targetError + highlightPenalty + shadowPenalty;
+}
+
+export async function measureWhiteBalance(
+  jpeg: Buffer,
+  screens: readonly ImagingScreen[],
+): Promise<WhiteBalanceReading | undefined> {
+  const source = jpegSize(jpeg);
+  const image = await decodeRgbFrame(jpeg);
+  const screenReadings = screens.flatMap((screen) => {
+    if (
+      screen.correction.sourceWidth !== source.width ||
+      screen.correction.sourceHeight !== source.height
+    )
+      return [];
+    const patches: Array<{
+      redGreenRatio: number;
+      blueGreenRatio: number;
+    }> = [];
+    for (const region of CALIBRATION_TONE_REGIONS) {
+      const [r, g, b] = rgbPatchMeans(
+        samplePerspectiveRgb(
+          image,
+          screen.correction,
+          TONE_PATCH_WIDTH,
+          TONE_PATCH_HEIGHT,
+          region,
+        ),
+      );
+      const level = (r + g + b) / 3;
+      const maxChannel = Math.max(r, g, b);
+      const minChannel = Math.min(r, g, b);
+      if (
+        level < 24 ||
+        level > 242 ||
+        maxChannel >= 248 ||
+        minChannel <= 6 ||
+        g < 18
+      )
+        continue;
+      patches.push({
+        redGreenRatio: r / g,
+        blueGreenRatio: b / g,
+      });
+    }
+    if (patches.length < 2) return [];
+    const errors = patches.map(
+      ({ redGreenRatio, blueGreenRatio }) =>
+        Math.abs(Math.log(Math.max(0.001, redGreenRatio))) +
+        Math.abs(Math.log(Math.max(0.001, blueGreenRatio))),
+    );
+    const redGreenRatio = Math.exp(
+      median(patches.map((patch) => Math.log(patch.redGreenRatio))),
+    );
+    const blueGreenRatio = Math.exp(
+      median(patches.map((patch) => Math.log(patch.blueGreenRatio))),
+    );
+    return [
+      {
+        screenId: screen.screenId,
+        score: 0.65 * median(errors) + 0.35 * Math.max(...errors),
+        redGreenRatio,
+        blueGreenRatio,
+        samples: patches.length,
+      },
+    ];
+  });
+  if (!screenReadings.length) return undefined;
+  const errors = screenReadings.map((screen) => screen.score);
+  const mean = errors.reduce((sum, value) => sum + value, 0) / errors.length;
+  return {
+    score: round(0.7 * Math.max(...errors) + 0.3 * mean, 6),
+    redGreenRatio: round(
+      screenReadings.reduce((sum, screen) => sum + screen.redGreenRatio, 0) /
+        screenReadings.length,
+      6,
+    ),
+    blueGreenRatio: round(
+      screenReadings.reduce((sum, screen) => sum + screen.blueGreenRatio, 0) /
+        screenReadings.length,
+      6,
+    ),
+    screens: screenReadings.map((screen) => ({
+      ...screen,
+      score: round(screen.score, 6),
+      redGreenRatio: round(screen.redGreenRatio, 6),
+      blueGreenRatio: round(screen.blueGreenRatio, 6),
+    })),
+  };
+}
+
+function toneScore(levels: readonly number[]) {
+  const white = levels[0] ?? 0;
+  const midtone = levels[3] ?? 0;
+  const black = levels[6] ?? 0;
+  const spread = white - black;
+  const monotonic = levels.every(
+    (value, index) => index === 0 || levels[index - 1]! >= value - 0.5,
+  );
+  const targetError = Math.abs(midtone - 140) / 140;
+  const whiteError = Math.abs(white - 220) / 220;
+  const blackError = Math.abs(black - 24) / 24;
+  const spreadError = Math.abs(spread - 196) / 196;
+  const clipping =
+    Math.max(0, white - 244) / 6 +
+    Math.max(0, 6 - black) / 6 +
+    (monotonic ? 0 : 0.5);
+  return {
+    score:
+      targetError * 0.35 +
+      whiteError * 0.2 +
+      blackError * 0.1 +
+      spreadError * 0.2 +
+      clipping,
+    white,
+    midtone,
+    black,
+    spread,
+    monotonic,
+  };
+}
+
+export async function measureTone(
+  jpeg: Buffer,
+  screens: readonly ImagingScreen[],
+): Promise<ToneReading | undefined> {
+  const source = jpegSize(jpeg);
+  const image = await decodeRgbFrame(jpeg);
+  const screenReadings = screens.flatMap((screen) => {
+    if (
+      screen.correction.sourceWidth !== source.width ||
+      screen.correction.sourceHeight !== source.height
+    )
+      return [];
+    const levels = CALIBRATION_TONE_REGIONS.map((region) => {
+      const pixels = samplePerspectiveRgb(
+        image,
+        screen.correction,
+        TONE_PATCH_WIDTH,
+        TONE_PATCH_HEIGHT,
+        region,
+      );
+      let total = 0;
+      for (let index = 0; index < pixels.length; index += 3)
+        total +=
+          0.2126 * pixels[index]! +
+          0.7152 * pixels[index + 1]! +
+          0.0722 * pixels[index + 2]!;
+      return total / Math.max(1, pixels.length / 3);
+    });
+    const reading = toneScore(levels);
+    return [
+      {
+        screenId: screen.screenId,
+        score: reading.score,
+        levels: levels.map((value) => round(value, 2)),
+        monotonic: reading.monotonic,
+      },
+    ];
+  });
+  if (!screenReadings.length) return undefined;
+  const scores = screenReadings.map((screen) => screen.score);
+  const levels = CALIBRATION_TONE_REGIONS.map((_, index) => {
+    const values = screenReadings.map((screen) => screen.levels[index] ?? 0);
+    return values.reduce((sum, value) => sum + value, 0) / values.length;
+  });
+  const combined = toneScore(levels);
+  return {
+    score: round(0.65 * Math.max(...scores) + 0.35 * combined.score, 6),
+    white: round(combined.white, 2),
+    midtone: round(combined.midtone, 2),
+    black: round(combined.black, 2),
+    spread: round(combined.spread, 2),
+    monotonic: screenReadings.every((screen) => screen.monotonic),
+    screens: screenReadings.map((screen) => ({
+      ...screen,
+      score: round(screen.score, 6),
+    })),
   };
 }
 

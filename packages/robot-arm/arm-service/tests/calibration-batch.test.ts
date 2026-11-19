@@ -63,7 +63,7 @@ async function setup() {
           prepared: true,
           phoneConnected: true,
           mapping: {},
-          imaging: { state: 'unsupported' },
+          imaging: { state: 'unsupported' as const },
         }),
         create: async () => {
           const state = {

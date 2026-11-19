@@ -21,7 +21,7 @@ import {
   Tag,
   Typography,
 } from 'antd';
-import { Copy, ExternalLink, Plus, ScanLine, Trash2 } from 'lucide-react';
+import { Copy, ExternalLink, Plus, ScanLine } from 'lucide-react';
 import {
   type ReactNode,
   useCallback,
@@ -30,6 +30,7 @@ import {
   useState,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { nextScreenName } from '../../../screen-naming';
 import { t, useLanguage } from '../i18n';
 import { RobotVisionApiError, type RobotVisionClient } from '../marker-client';
 import {
@@ -84,16 +85,6 @@ export function mergeSession(
   };
 }
 
-function nextScreenName(targets: readonly { name: string }[]): string {
-  const usedNames = new Set(
-    targets.map((target) => target.name.trim().toLocaleLowerCase('en-US')),
-  );
-  for (let index = 1; ; index += 1) {
-    const name = `Screen ${index}`;
-    if (!usedNames.has(name.toLocaleLowerCase('en-US'))) return name;
-  }
-}
-
 export function MarkerCalibrationDialog({
   variant = 'drawer',
   footerContainer,
@@ -115,6 +106,7 @@ export function MarkerCalibrationDialog({
   onDetected,
   onSessionCreated,
   onSessionCancelled,
+  onTargetRenamed,
   onTargetDisplay,
   focusTargetId,
   existingScreen,
@@ -175,6 +167,7 @@ export function MarkerCalibrationDialog({
   ) => void | Promise<void>;
   onSessionCreated?: (session: MarkerCalibrationCreateResult) => void;
   onSessionCancelled?: (sessionId: string) => void;
+  onTargetRenamed?: (targetId: string, name: string) => void | Promise<void>;
   /** Reports the calibration display bound to each target (for the hand-off). */
   onTargetDisplay?: (targetId: string, displayId: string) => void;
 }) {
@@ -205,6 +198,8 @@ export function MarkerCalibrationDialog({
   const initialScreensRef = useRef(initialScreens);
   initialScreensRef.current = initialScreens;
   const [screenName, setScreenName] = useState('');
+  const [targetNames, setTargetNames] = useState<Record<string, string>>({});
+  const [savingTargetName, setSavingTargetName] = useState<string>();
   const reservedNames = useRef(existingScreenNames);
   reservedNames.current = existingScreenNames;
   const createGeneration = useRef(0);
@@ -1260,51 +1255,60 @@ export function MarkerCalibrationDialog({
     session,
   ]);
 
-  const removeScreen = async (targetId: string) => {
-    const current = session;
-    if (!current || creating || active) return;
-    const token = current.token ?? activeToken.current;
-    if (!token) return;
-    setCreating(true);
+  const renameTarget = async (target: TargetView) => {
+    if (!stream || savingTargetName) return;
+    const name = (targetNames[target.id] ?? target.name).trim();
+    if (!name || name.length > 40) {
+      setError(t('Choose a screen name that is not already in use.'));
+      return;
+    }
+    if (
+      session?.targets.some(
+        (item) =>
+          item.id !== target.id &&
+          item.name.trim().toLocaleLowerCase('en-US') ===
+            name.toLocaleLowerCase('en-US'),
+      )
+    ) {
+      setError(t('Choose a screen name that is not already in use.'));
+      return;
+    }
+    if (name === target.name) return;
+    setSavingTargetName(target.id);
     setError(undefined);
     try {
-      const updated = await api.removeMarkerCalibrationTarget(
-        current.id,
-        targetId,
-        token,
+      await screenCalib.renameScreen(stream.id, target.id, name);
+      const current = session;
+      if (!current) return;
+      const next: SessionView = {
+        ...current,
+        targets: current.targets.map((item) =>
+          item.id === target.id ? { ...item, name } : item,
+        ),
+      };
+      setSession(next);
+      setTargetNames((values) => {
+        const updated = { ...values };
+        delete updated[target.id];
+        return updated;
+      });
+      reservedNames.current = reservedNames.current.map((item) =>
+        item === target.name ? name : item,
       );
-      autoAddedTargetFor.current = current.id;
-      if (!updated.targets.length) {
-        autoScreenCreated.current = true;
-        clearDisplays(false);
-        activeSessionId.current = undefined;
-        activeToken.current = undefined;
-        setSession(undefined);
-        onSessionCancelled?.(current.id);
-        onClose('dismissed');
-        return;
-      }
-      const removed = displaysRef.current[targetId];
-      if (removed) {
-        const remaining = { ...displaysRef.current };
-        delete remaining[targetId];
-        displaysRef.current = remaining;
-        setDisplays(remaining);
-      }
-      const nextSession = mergeSession(current, updated);
-      setSession(nextSession);
       onSessionCreated?.({
-        ...nextSession,
-        token,
-        targets: nextSession.targets.map((target) => ({
-          ...target,
-          token: target.token ?? '',
+        ...next,
+        token: current.token ?? '',
+        targets: next.targets.map((item) => ({
+          ...item,
+          token: item.token ?? '',
         })),
       });
+      await onTargetRenamed?.(target.id, name);
+      void message.success(t('Screen name saved'));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      setCreating(false);
+      setSavingTargetName(undefined);
     }
   };
 
@@ -1445,49 +1449,54 @@ export function MarkerCalibrationDialog({
             [firstExistingScreen?.name ?? ''],
           )}
         />
-        {!simplified && !focusTargetId && !existingScreensKey && (
-          <Space.Compact style={{ width: '100%' }}>
-            <Input
-              aria-label={t('Screen Name')}
-              value={screenName}
-              maxLength={120}
-              placeholder={
-                session
-                  ? nextScreenName([
-                      ...session.targets,
-                      ...reservedNames.current.map((name) => ({ name })),
-                    ])
-                  : t('Screen Name')
-              }
-              disabled={creating || active}
-              onChange={(event) => setScreenName(event.target.value)}
-              onPressEnter={() => void (session ? addScreen() : createScreen())}
-            />
-            {session ? (
-              <Button
-                disabled={
-                  !session ||
-                  session.targets.length >= MAX_MARKER_CALIBRATION_TARGETS ||
-                  creating ||
-                  active
+        {!simplified &&
+          !focusTargetId &&
+          !existingScreensKey &&
+          (!session || unassignedTargets.length === 0) && (
+            <Space.Compact style={{ width: '100%' }}>
+              <Input
+                aria-label={t('Screen Name')}
+                value={screenName}
+                maxLength={120}
+                placeholder={
+                  session
+                    ? nextScreenName([
+                        ...session.targets,
+                        ...reservedNames.current.map((name) => ({ name })),
+                      ])
+                    : t('Screen Name')
                 }
-                icon={<Plus size={16} />}
-                onClick={() => void addScreen()}
-              >
-                {t('Add Screen')}
-              </Button>
-            ) : (
-              <Button
-                type="primary"
-                loading={creating}
-                disabled={!screenName.trim()}
-                onClick={() => void createScreen()}
-              >
-                {t('Create Screen')}
-              </Button>
-            )}
-          </Space.Compact>
-        )}
+                disabled={creating || active}
+                onChange={(event) => setScreenName(event.target.value)}
+                onPressEnter={() =>
+                  void (session ? addScreen() : createScreen())
+                }
+              />
+              {session ? (
+                <Button
+                  disabled={
+                    !session ||
+                    session.targets.length >= MAX_MARKER_CALIBRATION_TARGETS ||
+                    creating ||
+                    active
+                  }
+                  icon={<Plus size={16} />}
+                  onClick={() => void addScreen()}
+                >
+                  {t('Add Screen')}
+                </Button>
+              ) : (
+                <Button
+                  type="primary"
+                  loading={creating}
+                  disabled={!screenName.trim()}
+                  onClick={() => void createScreen()}
+                >
+                  {t('Create Screen')}
+                </Button>
+              )}
+            </Space.Compact>
+          )}
         {!simplified && (
           <div>
             <Steps
@@ -1720,20 +1729,6 @@ export function MarkerCalibrationDialog({
                             ? t('Assigned to {0}', [assigned.label])
                             : t('Unassigned')}
                       </Tag>
-                      {!focusTargetId && (session?.targets.length ?? 0) > 0 ? (
-                        <Button
-                          danger
-                          disabled={creating || active}
-                          icon={<Trash2 size={14} />}
-                          aria-label={t('Remove {0}', [target.name])}
-                          title={t('Remove {0}', [target.name])}
-                          onClick={() => void removeScreen(target.id)}
-                          size="small"
-                          type="text"
-                        >
-                          {t('Remove')}
-                        </Button>
-                      ) : null}
                     </Space>
                   }
                 >
@@ -1742,6 +1737,35 @@ export function MarkerCalibrationDialog({
                     size={8}
                     style={{ width: '100%' }}
                   >
+                    {!focusTargetId ? (
+                      <Space.Compact style={{ width: '100%' }}>
+                        <Input
+                          aria-label={t('Screen Name')}
+                          maxLength={40}
+                          value={targetNames[target.id] ?? target.name}
+                          disabled={active || Boolean(savingTargetName)}
+                          onChange={(event) =>
+                            setTargetNames((values) => ({
+                              ...values,
+                              [target.id]: event.target.value,
+                            }))
+                          }
+                          onPressEnter={() => void renameTarget(target)}
+                        />
+                        <Button
+                          disabled={
+                            active ||
+                            Boolean(savingTargetName) ||
+                            (targetNames[target.id] ?? target.name).trim() ===
+                              target.name
+                          }
+                          loading={savingTargetName === target.id}
+                          onClick={() => void renameTarget(target)}
+                        >
+                          {t('Save')}
+                        </Button>
+                      </Space.Compact>
+                    ) : null}
                     {assigned ? (
                       <Button
                         size="small"

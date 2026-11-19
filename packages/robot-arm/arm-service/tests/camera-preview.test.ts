@@ -7,7 +7,12 @@ import {
   registerClientPreview,
   streamCameraPreview,
 } from '../src/server/camera-preview';
-import { type CameraEntry, useCameras } from '../src/ui/cameras';
+import {
+  type CameraEntry,
+  cameraScreenNeedsCalibration,
+  selectCameraScreen,
+  useCameras,
+} from '../src/ui/cameras';
 import { CameraRail } from '../src/ui/components/CameraRail';
 import { CameraStagePreview } from '../src/ui/components/CameraStagePreview';
 
@@ -28,6 +33,34 @@ const camera: CameraEntry = {
   name: 'USB Camera',
   stream: { state: 'running', width: 1920, height: 1080, hasFrame: true },
 };
+
+test('selects a calibrated screen while keeping an uncalibrated screen visible', () => {
+  const desktop = {
+    id: 'desktop',
+    name: 'Desktop',
+    hasCorrection: false,
+    control: { id: 'desktop', calibrationAccepted: true, ready: true },
+  };
+  const phone = {
+    id: 'phone',
+    name: 'Phone',
+    hasCorrection: true,
+    control: { id: 'phone', calibrationAccepted: false, ready: false },
+  };
+
+  assert.equal(cameraScreenNeedsCalibration(desktop), true);
+  assert.equal(cameraScreenNeedsCalibration(phone), false);
+  assert.equal(
+    selectCameraScreen([desktop, phone], ['desktop', 'phone'])?.id,
+    'phone',
+  );
+  const calibratedDesktop = { ...desktop, hasCorrection: true };
+  assert.equal(cameraScreenNeedsCalibration(calibratedDesktop), false);
+  assert.equal(
+    selectCameraScreen([calibratedDesktop, phone], ['desktop', 'phone'])?.id,
+    'desktop',
+  );
+});
 
 test('thumbnail uses the running camera preview and stops showing it when stopped', () => {
   const render = (entry: CameraEntry, selectedId = 'other') =>

@@ -4,6 +4,8 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { CameraStream } from '@midscene/robotics-vision/camera/camera-stream';
 import type {
+  CameraControlMode,
+  CameraControlProperty,
   CameraControlValue,
   CameraDevice,
   CameraHardwareControl,
@@ -15,22 +17,37 @@ import {
   CALIBRATION_EXPOSURE_REGION,
   type ImagingScreen,
   type LumaMetrics,
+  type ToneReading,
+  type WhiteBalanceReading,
   classifyExposureExtreme,
+  exposureCalibrationScore,
   exposureSeverity,
   exposureTargetDirection,
   isStructuredDarkUiHighlight,
   measureExposure,
   measureFocus,
+  measureTone,
+  measureWhiteBalance,
 } from './imaging-metrics.js';
 
 export type CameraImagingStatus = CalibrationImagingStatus;
 
+interface StoredCameraControl {
+  value: number;
+  mode: CameraControlMode;
+}
+
 interface StoredCameraImaging {
-  version: 1 | 2 | 3 | 4;
+  version: 1 | 2 | 3 | 4 | 5 | 6;
   cameraId: string;
   rois: Array<{ screenId: string; fingerprint: string }>;
   focus: { value: number; score: number };
   exposure: { value: number };
+  gain?: { value: number };
+  whiteBalance?: { value: number };
+  brightness?: { value: number };
+  contrast?: { value: number };
+  original?: Partial<Record<CameraControlProperty, StoredCameraControl>>;
   calibratedAt: string;
 }
 
@@ -45,6 +62,14 @@ const CAPTURE_TIMEOUT_MS = 2_000;
 const MAX_CAPTURE_ITERATIONS = 3;
 const MAX_CALIBRATION_EXPOSURE_ITERATIONS = 6;
 const MAX_STEP_UNITS = 3;
+const CONTROL_SETTLE_MS = 120;
+const GAIN_CANDIDATES = [8, 16, 24, 32, 48, 64, 96] as const;
+const GAIN_RANGE_FRACTIONS = [
+  0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64,
+] as const;
+const BRIGHTNESS_OFFSETS = [-8, -4, 0, 4, 8] as const;
+const CONTRAST_OFFSETS = [-16, -8, 0, 8, 16] as const;
+const LOCAL_TONE_OFFSETS = [-1, 0, 1] as const;
 
 function autoExposureNumberEnv(
   name: string,
@@ -93,6 +118,48 @@ function resolveFrameSafeExposureWindow(
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+function uniqueCandidates(values: readonly number[]) {
+  return [...new Set(values)];
+}
+
+function quantizeControl(value: number, control: CameraControlValue) {
+  const step = Math.max(1, Math.abs(control.step || 1));
+  return clamp(
+    control.min + Math.round((value - control.min) / step) * step,
+    control.min,
+    control.max,
+  );
+}
+
+function gainCandidates(control: CameraControlValue) {
+  const preferred = GAIN_CANDIDATES.filter(
+    (value) => value >= control.min && value <= control.max,
+  );
+  if (preferred.length > 0) return preferred;
+  const span = control.max - control.min;
+  if (!(span > 0)) return [];
+  return GAIN_RANGE_FRACTIONS.map((fraction) =>
+    quantizeControl(control.min + span * fraction, control),
+  );
+}
+
+function storedControl(
+  control?: CameraControlValue,
+): StoredCameraControl | undefined {
+  return control ? { value: control.value, mode: control.mode } : undefined;
+}
+
+function distancePenalty(
+  value: number,
+  origin: number,
+  range: { min: number; max: number },
+  weight: number,
+) {
+  return (
+    (Math.abs(value - origin) / Math.max(1, range.max - range.min)) * weight
+  );
 }
 
 function correctionFingerprint(screen: ImagingScreen) {
@@ -156,18 +223,26 @@ export class CameraImagingController {
         ),
       ) as StoredCameraImaging;
       if (
-        !([1, 2, 3, 4] as const).includes(value.version) ||
+        !([1, 2, 3, 4, 5, 6] as const).includes(value.version) ||
         value.cameraId !== this.camera.id ||
         !Array.isArray(value.rois) ||
         !Number.isFinite(value.focus?.value) ||
         !Number.isFinite(value.exposure?.value)
       )
         return;
+      // Version 5 could persist a clipped white-balance and tone result.
+      if (value.version === 5) return;
       this.stored = value;
       this.statusValue = {
         state: 'idle',
         focus: value.focus.value,
         exposure: value.exposure.value,
+        ...(value.gain ? { gain: value.gain.value } : {}),
+        ...(value.whiteBalance
+          ? { whiteBalance: value.whiteBalance.value }
+          : {}),
+        ...(value.brightness ? { brightness: value.brightness.value } : {}),
+        ...(value.contrast ? { contrast: value.contrast.value } : {}),
         updatedAt: Date.parse(value.calibratedAt) || undefined,
       };
     } catch (error) {
@@ -189,6 +264,24 @@ export class CameraImagingController {
     return screens;
   }
 
+  private async preset(): Promise<{
+    exposure: CameraControlValue;
+    focus: CameraControlValue;
+  }> {
+    const controls = await this.ensureControls();
+    const values = await controls.read();
+    if (!values.exposure?.supportsManual || !values.focus?.supportsManual)
+      throw new RobotArmError(
+        'VISION_UNAVAILABLE',
+        'This camera does not support automatic imaging control',
+        409,
+      );
+    return {
+      exposure: values.exposure,
+      focus: values.focus,
+    };
+  }
+
   private async getControls(): Promise<CameraHardwareControl | undefined> {
     if (!this.controls && this.controlFactory) {
       try {
@@ -196,7 +289,7 @@ export class CameraImagingController {
       } catch (error) {
         throw new RobotArmError(
           'VISION_UNAVAILABLE',
-          `Camera focus and exposure control failed: ${
+          `Camera imaging control failed: ${
             error instanceof Error ? error.message : String(error)
           }`,
           409,
@@ -204,6 +297,16 @@ export class CameraImagingController {
       }
     }
     return this.controls;
+  }
+
+  private async ensureControls(): Promise<CameraHardwareControl> {
+    const controls = await this.getControls();
+    if (controls) return controls;
+    throw new RobotArmError(
+      'VISION_UNAVAILABLE',
+      'This camera does not expose imaging controls',
+      409,
+    );
   }
 
   private setUnsupported(): CameraImagingStatus {
@@ -234,11 +337,22 @@ export class CameraImagingController {
         this.setUnsupported();
         return;
       }
-      const { controls, values: current } = reading;
-      if (current.focus.supportsAuto)
-        await controls.set('focus', current.focus.value, 'auto');
-      if (current.exposure.supportsAuto)
-        await controls.set('exposure', current.exposure.value, 'auto');
+      const { controls } = reading;
+      const current = await controls.read();
+      if (this.stored?.original) {
+        await this.restoreControls(controls, this.stored.original);
+      } else {
+        if (current.focus?.supportsAuto)
+          await controls.set('focus', current.focus.value, 'auto');
+        if (current.exposure?.supportsAuto)
+          await controls.set('exposure', current.exposure.value, 'auto');
+        if (current.whiteBalance?.supportsAuto)
+          await controls.set(
+            'whiteBalance',
+            current.whiteBalance.value,
+            'auto',
+          );
+      }
     } catch (error) {
       this.statusValue = {
         state: 'error',
@@ -249,16 +363,17 @@ export class CameraImagingController {
     }
     this.statusValue = {
       state: 'released',
-      message: 'Focus and exposure are released for perspective correction',
+      message:
+        'Camera imaging controls are released for perspective correction',
       updatedAt: Date.now(),
     };
   }
 
   async clearPerspectiveBinding(): Promise<void> {
-    this.stored = undefined;
     try {
       await this.releaseForCorrection();
     } finally {
+      this.stored = undefined;
       await rm(cameraImagingFile(this.directory, this.camera.id), {
         force: true,
       });
@@ -294,11 +409,32 @@ export class CameraImagingController {
       }
       await controls.set('exposure', this.stored.exposure.value, 'manual');
       await controls.set('focus', this.stored.focus.value, 'manual');
+      for (const [property, value] of [
+        ['gain', this.stored.gain?.value],
+        ['whiteBalance', this.stored.whiteBalance?.value],
+        ['brightness', this.stored.brightness?.value],
+        ['contrast', this.stored.contrast?.value],
+      ] as const) {
+        if (value === undefined) continue;
+        const control = (await controls.read())[property];
+        if (control?.supportsManual)
+          await controls.set(property, value, 'manual');
+      }
       this.applied = true;
       this.statusValue = {
         state: 'ready',
         focus: this.stored.focus.value,
         exposure: this.stored.exposure.value,
+        ...(this.stored.gain ? { gain: this.stored.gain.value } : {}),
+        ...(this.stored.whiteBalance
+          ? { whiteBalance: this.stored.whiteBalance.value }
+          : {}),
+        ...(this.stored.brightness
+          ? { brightness: this.stored.brightness.value }
+          : {}),
+        ...(this.stored.contrast
+          ? { contrast: this.stored.contrast.value }
+          : {}),
         updatedAt: Date.now(),
       };
       // Exposure remains locked after restart. Automatic adjustment is reserved
@@ -317,7 +453,7 @@ export class CameraImagingController {
     if (!screens.length)
       throw new RobotArmError(
         'MAPPING_REQUIRED',
-        'Perspective correction is required before focus and exposure calibration',
+        'Perspective correction is required before camera imaging calibration',
         409,
       );
     const reading = await this.readManualControls().catch((error) => {
@@ -329,7 +465,7 @@ export class CameraImagingController {
       throw error;
     });
     if (!reading) return this.setUnsupported();
-    const { controls, values: original } = reading;
+    const { controls } = reading;
 
     this.stopMonitor();
     this.applied = false;
@@ -338,18 +474,55 @@ export class CameraImagingController {
       message: 'Calibrating exposure',
       updatedAt: Date.now(),
     };
+    const original = await controls.read();
+    const warnings: string[] = [];
     try {
-      await controls.set('exposure', original.exposure.value, 'manual');
-      await controls.set('focus', original.focus.value, 'auto');
-      await delay(800);
-      await this.convergeExposureForCalibration();
-      const exposure = (await controls.read()).exposure;
-      if (!exposure)
-        throw new Error('Exposure control disappeared during calibration');
+      const preset = await this.preset();
+      await controls.set(
+        'exposure',
+        clamp(preset.exposure.value, preset.exposure.min, preset.exposure.max),
+        'manual',
+      );
+      await controls.set('focus', preset.focus.value, 'auto');
+      if (original.gain?.supportsManual)
+        await controls.set('gain', original.gain.default, 'manual');
+      if (original.brightness?.supportsManual)
+        await controls.set('brightness', original.brightness.default, 'manual');
+      if (original.contrast?.supportsManual)
+        await controls.set('contrast', original.contrast.default, 'manual');
+      await delay(CONTROL_SETTLE_MS);
+
+      const exposure = await this.optimizeExposureAndGain(screens);
+      const gain = original.gain?.supportsManual
+        ? (await controls.read()).gain
+        : undefined;
+
+      this.statusValue = {
+        state: 'tone',
+        exposure: exposure?.value,
+        gain: gain?.value,
+        message: 'Balancing brightness and contrast across all screens',
+        updatedAt: Date.now(),
+      };
+      const tone = await this.tuneBrightnessAndContrast(screens);
+      if (!tone) warnings.push('Brightness and contrast could not be measured');
+
+      this.statusValue = {
+        state: 'white-balance',
+        exposure: exposure?.value,
+        gain: gain?.value,
+        message: 'Locking white balance from neutral screen patches',
+        updatedAt: Date.now(),
+      };
+      const whiteBalance = await this.searchWhiteBalance(screens);
+      if (!whiteBalance)
+        warnings.push('White balance could not be measured from the screen');
 
       this.statusValue = {
         state: 'focus',
-        exposure: exposure.value,
+        exposure: exposure?.value,
+        gain: gain?.value,
+        ...(whiteBalance ? { whiteBalance: whiteBalance.value } : {}),
         message: 'Optimizing camera focus across all screen ROIs',
         updatedAt: Date.now(),
       };
@@ -367,6 +540,7 @@ export class CameraImagingController {
         focusWarnings.push(
           'The ROI did not improve over the automatic focus baseline',
         );
+      warnings.push(...focusWarnings);
 
       let finalControls = await controls.read();
       if (finalControls.focus?.mode !== 'manual')
@@ -374,9 +548,21 @@ export class CameraImagingController {
       if (finalControls.exposure?.mode !== 'manual')
         await controls.set(
           'exposure',
-          finalControls.exposure?.value ?? exposure.value,
+          finalControls.exposure?.value ??
+            exposure?.value ??
+            preset.exposure.value,
           'manual',
         );
+      const optionalProperties = [
+        'gain',
+        ...(whiteBalance ? (['whiteBalance'] as const) : []),
+        ...(tone ? (['brightness', 'contrast'] as const) : []),
+      ] as const;
+      for (const property of optionalProperties) {
+        const control = finalControls[property];
+        if (control?.supportsManual && control.mode !== 'manual')
+          await controls.set(property, control.value, 'manual');
+      }
       finalControls = await controls.read();
       const finalFocus = finalControls.focus;
       const finalExposure = finalControls.exposure;
@@ -392,8 +578,13 @@ export class CameraImagingController {
           'The camera did not keep exposure in manual mode after calibration',
           409,
         );
+      const finalTone = await measureTone(await this.freshFrame(), screens);
+      if (finalTone && !finalTone.monotonic)
+        warnings.push('The calibrated grayscale bars are not monotonic');
+      if (finalTone && finalTone.white > 247)
+        warnings.push('The white calibration bar remains clipped');
       const stored: StoredCameraImaging = {
-        version: 4,
+        version: 6,
         cameraId: this.camera.id,
         rois: screens.map((screen) => ({
           screenId: screen.screenId,
@@ -401,6 +592,24 @@ export class CameraImagingController {
         })),
         focus: { value: focus.value, score: focus.score },
         exposure: { value: finalExposure.value },
+        ...(finalControls.gain
+          ? { gain: { value: finalControls.gain.value } }
+          : {}),
+        ...(finalControls.whiteBalance
+          ? { whiteBalance: { value: finalControls.whiteBalance.value } }
+          : {}),
+        ...(finalControls.brightness
+          ? { brightness: { value: finalControls.brightness.value } }
+          : {}),
+        ...(finalControls.contrast
+          ? { contrast: { value: finalControls.contrast.value } }
+          : {}),
+        original: Object.fromEntries(
+          Object.entries(original).flatMap(([property, control]) => {
+            const value = storedControl(control);
+            return value ? [[property as CameraControlProperty, value]] : [];
+          }),
+        ),
         calibratedAt: new Date().toISOString(),
       };
       await this.persist(stored);
@@ -410,20 +619,25 @@ export class CameraImagingController {
         state: 'ready',
         focus: focus.value,
         exposure: finalExposure.value,
-        message: focusWarnings.length
-          ? `Focus locked with warning: ${focusWarnings.join('; ')}`
-          : 'Focus and exposure locked',
+        ...(finalControls.gain ? { gain: finalControls.gain.value } : {}),
+        ...(finalControls.whiteBalance
+          ? { whiteBalance: finalControls.whiteBalance.value }
+          : {}),
+        ...(finalControls.brightness
+          ? { brightness: finalControls.brightness.value }
+          : {}),
+        ...(finalControls.contrast
+          ? { contrast: finalControls.contrast.value }
+          : {}),
+        message: warnings.length
+          ? `Camera imaging locked with warning: ${warnings.join('; ')}`
+          : 'Focus, exposure, white balance and tone locked',
         updatedAt: Date.now(),
       };
       return this.status();
     } catch (error) {
       try {
-        await controls.set('focus', original.focus.value, original.focus.mode);
-        await controls.set(
-          'exposure',
-          original.exposure.value,
-          original.exposure.mode,
-        );
+        await this.restoreControls(controls, original);
       } catch {
         // The primary calibration error is more actionable than rollback failure.
       }
@@ -434,6 +648,293 @@ export class CameraImagingController {
       };
       throw error;
     }
+  }
+
+  private async restoreControls(
+    controls: CameraHardwareControl,
+    values: Partial<Record<CameraControlProperty, StoredCameraControl>>,
+  ) {
+    for (const [property, value] of Object.entries(values)) {
+      if (!value) continue;
+      try {
+        await controls.set(
+          property as CameraControlProperty,
+          value.value,
+          value.mode,
+        );
+      } catch {
+        // Restore as many controls as the device still allows.
+      }
+    }
+  }
+
+  private async optimizeExposureAndGain(screens: readonly ImagingScreen[]) {
+    const controls = await this.ensureControls();
+    const values = await controls.read();
+    const exposure = values.exposure;
+    if (!exposure?.supportsManual)
+      throw new RobotArmError(
+        'VISION_UNAVAILABLE',
+        'This camera does not support manual exposure control',
+        409,
+      );
+    const gain = values.gain;
+    if (gain?.supportsManual)
+      await controls.set('gain', gain.default, 'manual');
+    const window = resolveFrameSafeExposureWindow(
+      exposure,
+      this.stream.getInfo().fps,
+    ) ?? {
+      min: exposure.min,
+      max: exposure.max,
+    };
+    const step = Math.max(1, Math.abs(exposure.step || 1));
+    const candidates = uniqueCandidates(
+      Array.from(
+        { length: Math.floor((window.max - window.min) / step) + 1 },
+        (_, index) => window.min + index * step,
+      ).concat(window.max),
+    );
+    let best:
+      | {
+          value: number;
+          score: number;
+          metrics: LumaMetrics;
+        }
+      | undefined;
+    for (const value of candidates) {
+      await controls.set('exposure', value, 'manual');
+      await delay(CONTROL_SETTLE_MS);
+      const reading = await this.currentCalibrationExposureReading();
+      const score =
+        exposureCalibrationScore(reading.selected) +
+        distancePenalty(value, exposure.value, window, 0.02);
+      if (
+        !best ||
+        score < best.score - 1e-9 ||
+        (Math.abs(score - best.score) < 1e-9 &&
+          Math.abs(value - exposure.value) <
+            Math.abs(best.value - exposure.value))
+      )
+        best = { value, score, metrics: reading.selected };
+    }
+    if (!best)
+      throw new RobotArmError(
+        'VISION_UNAVAILABLE',
+        'No exposure sample could be evaluated',
+        409,
+      );
+    await controls.set('exposure', best.value, 'manual');
+
+    let bestGain = gain?.value;
+    if (
+      gain?.supportsManual &&
+      best.value === window.max &&
+      (best.metrics.mean < 175 ||
+        classifyExposureExtreme(best.metrics) === 'too-dark')
+    ) {
+      let bestGainScore = best.score;
+      for (const gainValue of uniqueCandidates(gainCandidates(gain))) {
+        await controls.set('gain', gainValue, 'manual');
+        await delay(CONTROL_SETTLE_MS);
+        const reading = await this.currentCalibrationExposureReading();
+        const score =
+          exposureCalibrationScore(reading.selected) +
+          distancePenalty(gainValue, gain.default, gain, 0.08);
+        if (score < bestGainScore - 1e-9) {
+          bestGainScore = score;
+          bestGain = gainValue;
+        }
+      }
+    }
+    if (gain?.supportsManual)
+      await controls.set('gain', bestGain ?? gain.default, 'manual');
+    this.statusValue = {
+      ...this.statusValue,
+      state: 'exposure',
+      exposure: best.value,
+      ...(bestGain !== undefined ? { gain: bestGain } : {}),
+      message: 'Exposure and gain converged',
+      updatedAt: Date.now(),
+    };
+    return { value: best.value, gain: bestGain };
+  }
+
+  private async searchWhiteBalance(screens: readonly ImagingScreen[]) {
+    const controls = await this.ensureControls();
+    const control = (await controls.read()).whiteBalance;
+    if (!control?.supportsManual) return undefined;
+    const initialReading = await measureWhiteBalance(
+      await this.freshFrame(),
+      screens,
+    );
+    const step = Math.max(1, Math.abs(control.step || 1));
+    const span = Math.max(step, control.max - control.min);
+    const coarse = Array.from({ length: 5 }, (_, index) =>
+      quantizeControl(control.min + (span * index) / 4, control),
+    );
+    let best:
+      | { value: number; score: number; reading: WhiteBalanceReading }
+      | undefined = initialReading && {
+      value: control.value,
+      score:
+        initialReading.score +
+        distancePenalty(control.value, control.default, control, 0.03),
+      reading: initialReading,
+    };
+    for (const value of uniqueCandidates([control.value, ...coarse])) {
+      await controls.set('whiteBalance', value, 'manual');
+      await delay(CONTROL_SETTLE_MS);
+      const reading = await measureWhiteBalance(
+        await this.freshFrame(),
+        screens,
+      );
+      if (!reading) continue;
+      const score =
+        reading.score + distancePenalty(value, control.default, control, 0.03);
+      if (
+        !best ||
+        score < best.score - 1e-9 ||
+        (Math.abs(score - best.score) < 1e-9 &&
+          Math.abs(value - control.default) <
+            Math.abs(best.value - control.default))
+      )
+        best = { value, score, reading };
+    }
+    if (!best) {
+      await this.restoreControls(controls, { whiteBalance: control });
+      return undefined;
+    }
+    const fineSpan = span / 8;
+    for (const value of uniqueCandidates([
+      quantizeControl(best.value - fineSpan, control),
+      quantizeControl(best.value - fineSpan / 2, control),
+      best.value,
+      quantizeControl(best.value + fineSpan / 2, control),
+      quantizeControl(best.value + fineSpan, control),
+    ])) {
+      if (value < control.min || value > control.max) continue;
+      await controls.set('whiteBalance', value, 'manual');
+      await delay(CONTROL_SETTLE_MS);
+      const reading = await measureWhiteBalance(
+        await this.freshFrame(),
+        screens,
+      );
+      if (!reading) continue;
+      const score =
+        reading.score + distancePenalty(value, control.default, control, 0.03);
+      if (score < best.score - 1e-9) best = { value, score, reading };
+    }
+    if (best.reading.score > 0.08) {
+      await this.restoreControls(controls, { whiteBalance: control });
+      return undefined;
+    }
+    await controls.set('whiteBalance', best.value, 'manual');
+    return { ...best.reading, value: best.value };
+  }
+
+  private async tuneBrightnessAndContrast(screens: readonly ImagingScreen[]) {
+    const controls = await this.ensureControls();
+    const values = await controls.read();
+    const brightness = values.brightness?.supportsManual
+      ? values.brightness
+      : undefined;
+    const contrast = values.contrast?.supportsManual
+      ? values.contrast
+      : undefined;
+    if (!brightness && !contrast)
+      return measureTone(await this.freshFrame(), screens);
+
+    const evaluate = async (brightnessValue: number, contrastValue: number) => {
+      if (brightness)
+        await controls.set('brightness', brightnessValue, 'manual');
+      if (contrast) await controls.set('contrast', contrastValue, 'manual');
+      await delay(CONTROL_SETTLE_MS);
+      const reading = await measureTone(await this.freshFrame(), screens);
+      if (!reading) return undefined;
+      return {
+        reading,
+        score:
+          reading.score +
+          (brightness
+            ? distancePenalty(
+                brightnessValue,
+                brightness.default,
+                brightness,
+                0.1,
+              )
+            : 0) +
+          (contrast
+            ? distancePenalty(contrastValue, contrast.default, contrast, 0.12)
+            : 0),
+        brightnessValue,
+        contrastValue,
+      };
+    };
+
+    let brightnessValue = brightness?.value ?? 0;
+    let contrastValue = contrast?.value ?? 0;
+    let best: Awaited<ReturnType<typeof evaluate>>;
+    if (brightness) {
+      for (const offset of BRIGHTNESS_OFFSETS) {
+        const candidate = quantizeControl(
+          brightness.value + offset,
+          brightness,
+        );
+        const result = await evaluate(candidate, contrastValue);
+        if (!result) continue;
+        if (
+          !best ||
+          result.score < best.score - 1e-9 ||
+          (Math.abs(result.score - best.score) < 1e-9 &&
+            Math.abs(candidate - brightness.value) <
+              Math.abs(best.brightnessValue - brightness.value))
+        )
+          best = result;
+      }
+      brightnessValue = best?.brightnessValue ?? brightness.value;
+    }
+
+    if (contrast) {
+      for (const offset of CONTRAST_OFFSETS) {
+        const candidate = quantizeControl(contrast.value + offset, contrast);
+        const result = await evaluate(brightnessValue, candidate);
+        if (!result) continue;
+        if (
+          !best ||
+          result.score < best.score - 1e-9 ||
+          (Math.abs(result.score - best.score) < 1e-9 &&
+            Math.abs(candidate - contrast.value) <
+              Math.abs(best.contrastValue - contrast.value))
+        )
+          best = result;
+      }
+      contrastValue = best?.contrastValue ?? contrast.value;
+    }
+
+    if (brightness && contrast) {
+      const centerBrightness = best?.brightnessValue ?? brightnessValue;
+      const centerContrast = best?.contrastValue ?? contrastValue;
+      for (const brightnessOffset of LOCAL_TONE_OFFSETS) {
+        for (const contrastOffset of LOCAL_TONE_OFFSETS) {
+          const result = await evaluate(
+            quantizeControl(
+              centerBrightness + brightnessOffset * 4,
+              brightness,
+            ),
+            quantizeControl(centerContrast + contrastOffset * 8, contrast),
+          );
+          if (result && (!best || result.score < best.score - 1e-9))
+            best = result;
+        }
+      }
+    }
+    if (!best) return undefined;
+    brightnessValue = best.brightnessValue;
+    contrastValue = best.contrastValue;
+    if (brightness) await controls.set('brightness', brightnessValue, 'manual');
+    if (contrast) await controls.set('contrast', contrastValue, 'manual');
+    return best.reading;
   }
 
   /**

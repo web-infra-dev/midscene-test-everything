@@ -3,35 +3,38 @@ import { mkdir, mkdtemp, readFile, rm, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import pacote from 'pacote';
+import { captureBuildFiles } from './hardware/native/usb-capture-app.js';
 import { directory } from './settings.js';
 
 const exec = promisify(execFile);
 const packageName = '@midscene/ios-airlink';
-const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+const stableVersionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+const canaryVersionPattern = /^0\.0\.0-canary-\d{14}$/;
+
+export function releaseTag(version: string) {
+  if (stableVersionPattern.test(version)) return 'latest';
+  if (canaryVersionPattern.test(version)) return 'canary';
+}
 
 export async function cliVersion() {
-  const {
-    name,
-    version,
-    private: workspace,
-  } = JSON.parse(
+  const { name, version } = JSON.parse(
     await readFile(new URL('../package.json', import.meta.url), 'utf8'),
   );
   if (
     name !== packageName ||
     typeof version !== 'string' ||
-    !versionPattern.test(version)
+    !releaseTag(version)
   )
     throw new Error('The device service package has invalid metadata.');
-  if (!workspace && version !== '0.0.0') return version;
+  return version;
 }
 
-export async function latestRelease() {
+export async function latestRelease(tag: 'latest' | 'canary') {
   const { name, version, dist } = await pacote.manifest(
-    `${packageName}@latest`,
+    `${packageName}@${tag}`,
     { preferOnline: true, fetchRetries: 1, fetchTimeout: 15_000 },
   );
-  if (name !== packageName || !versionPattern.test(version) || !dist?.integrity)
+  if (name !== packageName || releaseTag(version) !== tag || !dist?.integrity)
     throw new Error('The npm release has invalid metadata.');
   return { version, integrity: dist.integrity };
 }
@@ -74,13 +77,7 @@ export async function stageRelease(version: string, integrity?: string) {
     await Promise.all([
       readFile(entry),
       readFile(join(root, 'dist', 'commands.js')),
-      exec('/usr/bin/codesign', [
-        '--verify',
-        '--strict',
-        '-R',
-        'identifier "com.midscene.ios-airlink.capture" and anchor apple generic',
-        join(root, 'native', 'Midscene iOS AirLink Capture.app'),
-      ]),
+      ...captureBuildFiles.map((file) => readFile(join(root, 'native', file))),
     ]);
     return { directory: staged, entry };
   } catch (error) {

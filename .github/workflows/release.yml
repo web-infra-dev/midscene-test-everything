@@ -1,0 +1,151 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - package.json
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: release-${{ github.event_name == 'push' && 'stable' || 'canary' }}
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    name: Publish canary release
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository == 'web-infra-dev/midscene-test-everything'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - run: pnpm install --frozen-lockfile
+        env:
+          HUSKY: '0'
+
+      - run: node scripts/bump-release-version.mjs canary
+      - run: pnpm build
+      - run: pnpm -r publish --access public --tag canary --no-git-checks
+
+  publish_release:
+    name: Publish stable release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'web-infra-dev/midscene-test-everything'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check if release version changed
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+        run: |
+          current_version="$(node -e "console.log(JSON.parse(require('node:fs').readFileSync('package.json', 'utf8')).version)")"
+          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            previous_version=""
+          else
+            previous_version="$(git show "${BEFORE}:package.json" 2>/dev/null | node -e "const fs=require('node:fs'); try{console.log(JSON.parse(fs.readFileSync(0,'utf8')).version)}catch{console.log('')}")"
+          fi
+          if [ "$current_version" = "$previous_version" ] || ! [[ "$current_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || [ "$current_version" = "0.0.0" ]; then
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            if ! git log "${BEFORE}..${AFTER}" --format=%s | grep -qx "chore(release): v${current_version}"; then
+              echo "should_publish=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          node -e '
+            const fs = require("node:fs");
+            const path = require("node:path");
+            const expected = process.argv[1];
+            const roots = ["packages", "packages/robot-arm", "packages/shared"];
+            const manifests = ["examples/package.json"];
+            for (const root of roots) {
+              for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+                if (entry.isDirectory()) {
+                  const file = path.join(root, entry.name, "package.json");
+                  if (fs.existsSync(file)) manifests.push(file);
+                }
+              }
+            }
+            for (const file of manifests) {
+              if (!fs.existsSync(file)) continue;
+              const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
+              if (!pkg.private && pkg.version !== expected) {
+                console.error(`Version mismatch in ${file}: expected ${expected}, found ${pkg.version}`);
+                process.exit(1);
+              }
+            }
+          ' "$current_version"
+          gh auth setup-git --hostname github.com
+          if git ls-remote --exit-code --tags origin "refs/tags/v${current_version}" >/dev/null 2>&1; then
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          echo "version=${current_version}" >> "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
+        if: steps.check.outputs.should_publish == 'true'
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        if: steps.check.outputs.should_publish == 'true'
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - if: steps.check.outputs.should_publish == 'true'
+        run: pnpm install --frozen-lockfile
+        env:
+          HUSKY: '0'
+
+      - if: steps.check.outputs.should_publish == 'true'
+        run: pnpm build
+
+      - if: steps.check.outputs.should_publish == 'true'
+        run: pnpm -r publish --access public --tag latest --no-git-checks
+
+      - name: Draft GitHub Release
+        if: steps.check.outputs.should_publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ steps.check.outputs.version }}
+        run: |
+          tag="v${VERSION}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            exit 0
+          fi
+          gh release create "$tag" --target "$GITHUB_SHA" --draft --generate-notes --title "$tag"

@@ -8,9 +8,11 @@ import { promisify } from 'node:util';
 import { RobotVisionError } from './errors.js';
 import { JpegProcessCameraSource } from './jpeg-process-camera-source.js';
 import { buildCameraApp, openCameraApp } from './macos-camera-app.js';
+import { MacosCameraHardwareControl } from './macos-camera-control.js';
 import type {
   CameraBackend,
   CameraDevice,
+  CameraHardwareControl,
   CameraSource,
   ResolvedCameraStreamOptions,
 } from './types.js';
@@ -213,19 +215,55 @@ export class MacosCameraBackend implements CameraBackend {
       String(options.verticalFlip),
     ];
     if (this.cameraAppDirectory && !this.helperPath) {
-      this.appPromise ??= buildCameraApp(this.cameraAppDirectory).catch(
-        (error) => {
-          this.appPromise = undefined;
-          throw error;
-        },
-      );
-      return openCameraApp(await this.appPromise, args, signal);
+      return openCameraApp(await this.getCameraApp(), args, signal);
     }
     const child = spawn(await this.getHelper(), args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });
     return new JpegProcessCameraSource(child, 'macOS camera process');
+  }
+
+  async openHardwareControl(
+    deviceId: string,
+  ): Promise<CameraHardwareControl | undefined> {
+    const device = await this.cachedDevice(deviceId);
+    if (!device) return undefined;
+    const control = new MacosCameraHardwareControl(deviceId, device.uid, () =>
+      this.controlExecutable(),
+    );
+    await control.open();
+    return control;
+  }
+
+  private async cachedDevice(deviceId: string) {
+    let device = this.deviceCache.get(deviceId);
+    if (!device) {
+      await this.listDevices();
+      device = this.deviceCache.get(deviceId);
+    }
+    return device;
+  }
+
+  private getCameraApp(): Promise<string> {
+    this.appPromise ??= buildCameraApp(this.cameraAppDirectory!).catch(
+      (error) => {
+        this.appPromise = undefined;
+        throw error;
+      },
+    );
+    return this.appPromise;
+  }
+
+  private async controlExecutable(): Promise<string> {
+    if (this.cameraAppDirectory && !this.helperPath)
+      return join(
+        await this.getCameraApp(),
+        'Contents',
+        'MacOS',
+        'MidsceneCamera',
+      );
+    return this.getHelper();
   }
 
   private getHelper(): Promise<string> {
