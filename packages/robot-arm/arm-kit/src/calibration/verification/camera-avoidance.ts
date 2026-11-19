@@ -18,13 +18,18 @@ import {
 } from '../camera-avoidance.js';
 import { calibrationQuad } from '../screen-position.js';
 import type { CalibrationHost } from './commands.js';
-import { assertSafeObservation } from './safe-position.js';
+import {
+  type ScreenParkingClearance,
+  assertSafeObservation,
+  minimumClearanceTipZ,
+} from './safe-position.js';
 import { atTravelHeight } from './travel-height.js';
 
 export interface CameraAvoidanceState {
   candidate?: CalibrationSession['candidate'];
   stage: CalibrationSession['stage'];
   requireTravel?: boolean;
+  screenClearances?: readonly ScreenParkingClearance[];
   auto?: Pick<
     NonNullable<CalibrationSession['auto']>,
     | 'batchParking'
@@ -106,6 +111,15 @@ export function assertBatchParking(
     );
 }
 
+export function assertParkingScreenClearances(
+  s: CameraAvoidanceState,
+  ctx: ApplicationContext,
+  pose: CartesianPose,
+): void {
+  for (const { geometry, clearanceMm } of s.screenClearances ?? [])
+    assertSafeObservation(geometry, pose, ctx.tool.offsetMm, clearanceMm);
+}
+
 /** Only a complete preflight may fall back. A failed submitted move propagates. */
 export async function avoidCamera(
   host: AvoidanceHost,
@@ -166,6 +180,7 @@ export async function avoidCamera(
     let canVerifyHere = false;
     try {
       assertBatchParking(s, ctx, start);
+      assertParkingScreenClearances(s, ctx, start);
       canVerifyHere = true;
     } catch {
       host.check();
@@ -193,11 +208,11 @@ export async function avoidCamera(
   for (const proposed of targets.slice(0, 4)) {
     host.check();
     const actual = await host.stationaryPose(ctx);
-    const lift = atTravelHeight(
+    let lift = atTravelHeight(
       host.safeLift(actual, candidate, ctx, false),
       ctx,
     );
-    const target = atTravelHeight(
+    let target = atTravelHeight(
       parking
         ? flangePose(
             contactPoint(proposed, ctx.tool.offsetMm),
@@ -209,6 +224,19 @@ export async function avoidCamera(
         ? { ...ctx, minimumTravelTipZMm: ctx.minimumTravelTipZMm + 0.5 }
         : ctx,
     );
+    if (s.screenClearances?.length) {
+      // Check the same fitted planes that will be checked when saving. A
+      // straight travel leg between two clear endpoints clears those planes.
+      const minimumTravelTipZMm = Math.max(
+        ...s.screenClearances.flatMap((screen) => [
+          minimumClearanceTipZ(screen, lift, ctx.tool.offsetMm),
+          minimumClearanceTipZ(screen, target, ctx.tool.offsetMm),
+        ]),
+      );
+      const raisedContext = { ...ctx, minimumTravelTipZMm };
+      lift = atTravelHeight(lift, raisedContext);
+      target = atTravelHeight(target, raisedContext);
+    }
     if (parking) {
       const actualSide = cameraSide(actual);
       const liftSide = cameraSide(lift);
@@ -251,6 +279,8 @@ export async function avoidCamera(
         ctx.screen.safeHeightMm,
       );
       assertBatchParking(s, ctx, target);
+      assertParkingScreenClearances(s, ctx, lift);
+      assertParkingScreenClearances(s, ctx, target);
       assertParkingCorridor(actualTip, parking?.corridor);
       assertParkingCorridor(liftTip, parking?.corridor);
       await host.preflight(
@@ -281,6 +311,17 @@ export async function avoidCamera(
         ctx.screen.safeHeightMm,
       );
       assertBatchParking(s, ctx, measured);
+      try {
+        assertParkingScreenClearances(s, ctx, measured);
+      } catch (error) {
+        host.check();
+        if (
+          !(error instanceof RobotArmError) ||
+          error.code !== 'UNSAFE_OBSERVATION'
+        )
+          throw error;
+        continue;
+      }
       if (host.verifyCameraVisibility) {
         s.auto.checkingVisibility = true;
         progress?.();

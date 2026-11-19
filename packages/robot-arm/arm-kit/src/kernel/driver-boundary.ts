@@ -454,7 +454,12 @@ export class RobotDriverBoundary {
     if (!this.resolver.descriptor('control.enable-with-payload'))
       return undefined;
     const source = this.resolver.method('readPayloadApplication');
-    const raw = source?.();
+    const readbackAfterMs =
+      !this.payloadEnabling &&
+      this.payloadInvalidationReason === 'connection-lost'
+        ? Date.parse(this.payloadUpdatedAt)
+        : undefined;
+    const raw = source?.(readbackAfterMs);
     if (source && !raw)
       throw new RobotArmError(
         'INVALID_STATE',

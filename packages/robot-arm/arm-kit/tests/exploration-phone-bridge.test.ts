@@ -164,7 +164,7 @@ it.each([
       const error = await job;
       if (['standard', 'fast', 'slide', 'stream'].includes(mode)) {
         expect(error).toBeUndefined();
-        expect(collector.localPoints).toHaveLength(3);
+        expect(collector.localPoints).toHaveLength(mode === 'slide' ? 5 : 3);
         expect(collector.points).toHaveLength(mode === 'standard' ? 9 : 6);
         if (mode === 'standard') {
           const finalPresses = motions.filter(

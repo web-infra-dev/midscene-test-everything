@@ -490,6 +490,7 @@ export class CalibrationBatch {
           frame,
           signal,
           check,
+          { sharedParking: true },
         );
         if (debug) debug.visibility = evidence;
         return evidence;
@@ -506,6 +507,7 @@ export class CalibrationBatch {
       {
         operatorConfirmed: operatorConfirmedParking,
         requireTravel: Boolean(debug),
+        clearanceProfileIds: profiles.map(({ id }) => id),
       },
     );
     return { parked, profiles, source, guard };
@@ -1149,6 +1151,7 @@ export class CalibrationBatch {
               row.status = 'preparing';
               row.runIds.push(session.id);
               row.note = undefined;
+              row.qualityWarnings = undefined;
             });
             await host.service.command(
               session.id,
@@ -1184,6 +1187,25 @@ export class CalibrationBatch {
                   current.error ?? 'Screen calibration stopped',
                   409,
                 );
+              const warnings = current.explorationQuality?.warnings;
+              if (
+                current.stage === 'boundary-review' &&
+                state.acceptance === 'automatic' &&
+                !warnings?.some(
+                  ({ percent }) => !Number.isFinite(percent) || percent < 0,
+                )
+              ) {
+                await this.update(() => {
+                  row.qualityWarnings = warnings;
+                  state.status = 'running';
+                  row.status = 'exploring';
+                  row.progress = undefined;
+                });
+                this.check(signal);
+                if (this.choice) break;
+                await host.service.command(current.id, 'verify-boundary', true);
+                continue;
+              }
               if (
                 [
                   'review',

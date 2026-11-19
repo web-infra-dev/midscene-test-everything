@@ -1,9 +1,13 @@
 import { Buffer } from 'node:buffer';
 import { type Server, type Socket, createServer } from 'node:net';
 import type { RobotArmFeedbackStatus } from '@midscene/arm-kit/internal/contracts';
-import { evaluatePayloadApplication } from '@midscene/arm-kit/internal/contracts';
+import {
+  RobotArmError,
+  evaluatePayloadApplication,
+} from '@midscene/arm-kit/internal/contracts';
+import { RobotDriverBoundary } from '@midscene/arm-kit/internal/kernel/driver-boundary';
 import { pose } from '@midscene/arm-kit/internal/testkit/fixtures';
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it, rstest } from '@rstest/core';
 import {
   MG400_REALTIME_FRAME_LENGTH,
   Mg400RealtimeFramer,
@@ -243,6 +247,59 @@ describe('MG400 ordered motion sequence', () => {
       await b.cleanup();
     }
   });
+
+  it('reconfirms an unchanged load after a transient state failure using a fresh idle frame', async () => {
+    const b = await bench({ mode: () => '5', feedbackStaleAfterMs: 1000 });
+    try {
+      await b.adapter.connect();
+      await waitFor(() => b.connectedFeedbackClients() > 0);
+      const boundary = new RobotDriverBoundary(b.adapter);
+      b.push(feedbackFrame({ loadKg: 0.2 }));
+      await waitFor(
+        () => boundary.payloadApplicationSnapshot()?.status === 'confirmed',
+      );
+      const previous = boundary.payloadApplicationSnapshot()!;
+      const previousReadback = Date.parse(previous.applied!.confirmedAt);
+      await waitFor(() => Date.now() > previousReadback);
+
+      const getState = rstest.spyOn(b.adapter.driver, 'getState');
+      getState.mockRejectedValueOnce(
+        new RobotArmError('DISCONNECTED', 'State query interrupted', 503),
+      );
+      await expect(boundary.status()).rejects.toMatchObject({
+        code: 'DISCONNECTED',
+      });
+      expect(boundary.payloadApplicationSnapshot()).toMatchObject({
+        status: 'unconfirmed',
+        reason: 'connection-lost',
+      });
+
+      b.push(feedbackFrame({ loadKg: 0.2, mode: 7, running: true }));
+      await waitFor(
+        () =>
+          (b.adapter.latestMotionSample()?.receivedAt ?? 0) > previousReadback,
+      );
+      expect(boundary.payloadApplicationSnapshot()?.status).toBe('unconfirmed');
+
+      b.push(feedbackFrame({ loadKg: 0.2, runQueuedCmd: true }));
+      await waitFor(
+        () => boundary.payloadApplicationSnapshot()?.status === 'confirmed',
+      );
+      const current = boundary.payloadApplicationSnapshot()!;
+      expect(current.applied?.payload.massKg).toBe(0.2);
+      expect(Date.parse(current.applied!.confirmedAt)).toBeGreaterThan(
+        previousReadback,
+      );
+      expect(
+        b.commands.some((command) =>
+          /^(EnableRobot|DisableRobot|SetPayLoad)\(/.test(command),
+        ),
+      ).toBe(false);
+    } finally {
+      await b.cleanup();
+    }
+  });
+
   it('syncs payload at idle with RunQueuedCmd set without toggling enablement', async () => {
     const b = await bench({ mode: () => '5' });
     try {

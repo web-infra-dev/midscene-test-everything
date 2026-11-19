@@ -2366,7 +2366,7 @@ export const zh: Record<string, string> = {
   'Finish camera mapping to calibrate focus and exposure automatically.':
     '完成相机映射后将自动标定焦距和曝光。',
   'Clear Applied Perspective': '清除当前透视（保留屏幕）',
-  'Calibrating camera intrinsics': '正在调整相机内参',
+  'Calibrating camera focus and exposure': '正在校准相机对焦与曝光',
   ...setupZh,
   ...migratedZh,
   ...assistedCalibrationZh,

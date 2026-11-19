@@ -1,6 +1,7 @@
 export const assistedCalibrationZh: Record<string, string> = {
   'Use Saved Teaching': '沿用已保存的示教',
-  'Calibration saved · Camera mapping changed': '标定已保存，相机映射已变更',
+  'Camera mapping changed · Recalibration required':
+    '相机映射已变更，需重新标定',
   'Phone step acknowledgement timed out. Touch at this position is unknown.':
     '手机未在时限内确认本步，当前位置的接触状态未知。请检查标定页和连接后重试。',
   'The phone cancelled the active pointer. Touch at this position is unknown.':
@@ -347,6 +348,8 @@ export const assistedCalibrationZh: Record<string, string> = {
   'Verifying clicks': '正在验证点击',
   'Mean Error': '平均误差',
   'Review calibration measurements': '请复核以下标定测量值',
+  'Calibration quality warning': '标定质量提示',
+  'Got it': '知道了',
   'Review targets allow {0}% relative measurement error.':
     '以下建议值均有 {0}% 的相对容差。',
   '{0} {1}% (target ≥{2}%)': '{0} {1}%（建议 ≥{2}%）',

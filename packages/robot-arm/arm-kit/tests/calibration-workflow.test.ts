@@ -1611,12 +1611,12 @@ it('records measured installation reference and camera boundary, requires corrid
 });
 
 it.each([
-  { mode: 'standard', offsetMm: 1.01, accepted: true },
-  { mode: 'standard', offsetMm: 3, accepted: false },
-  { mode: 'slide', offsetMm: 2.01, accepted: true },
+  { mode: 'standard', offsetMm: 1.01, warns: false },
+  { mode: 'standard', offsetMm: 3, warns: true },
+  { mode: 'slide', offsetMm: 2.01, warns: false },
 ])(
   'parks after verified boundaries and checks a $offsetMm mm holdout for $mode batch acceptance',
-  async ({ mode, offsetMm, accepted }) => {
+  async ({ mode, offsetMm, warns }) => {
     const f = await setup();
     const timer = setInterval(() => void f.send(), 50);
     try {
@@ -1702,7 +1702,7 @@ it.each([
         mode === 'slide' ? 'start-slide' : 'start-automatic',
         true,
       );
-      if (!accepted) {
+      if (warns) {
         await rstest.waitFor(() =>
           expect(f.service.status()?.stage).toBe('boundary-review'),
         );
@@ -1760,23 +1760,14 @@ it.each([
         mode === 'slide' ? 'Boundary edge 4' : 'Return observation',
       );
       const automatic = await f.service.acceptAutomatically();
-      expect(automatic.accepted).toBe(accepted);
-      if (!automatic.accepted) {
-        expect(automatic.reasons).toContain(
-          'Holdout maximum 3.00% (target ≤2%)',
-        );
-        expect(f.service.status()?.stage).toBe('review');
-        await f.service.command(state.id, 'accept', true);
-      }
+      expect(automatic.accepted).toBe(true);
       const saved = f.service.status()!;
       expect(saved.stage).toBe('completed');
       expect(saved.result?.verification?.protocol).toBe('auto-boundary-v1');
       expect(saved.result?.verification?.auto?.validationMaxMm).toBeCloseTo(
         offsetMm,
       );
-      expect(saved.result?.verification?.auto?.humanAccepted).toBe(
-        !automatic.accepted,
-      );
+      expect(saved.result?.verification?.auto?.automaticAccepted).toBe(true);
     } finally {
       clearInterval(timer);
       await f.dispose();

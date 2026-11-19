@@ -350,7 +350,7 @@ export class CameraImagingController {
       this.statusValue = {
         state: 'focus',
         exposure: exposure.value,
-        message: 'Adjusting camera intrinsics across all screen ROIs',
+        message: 'Optimizing camera focus across all screen ROIs',
         updatedAt: Date.now(),
       };
       const autoFocus = (await controls.read()).focus;

@@ -3,18 +3,30 @@ import type {
   CalibrationQualityReading,
 } from '@midscene/robotics-shared/assisted-contracts';
 import { CALIBRATION_RELATIVE_SLACK } from '@midscene/robotics-shared/assisted-contracts';
-import { Alert, Typography } from 'antd';
+import { Alert, Button, Typography } from 'antd';
+import { useState } from 'react';
 import { t } from '../../i18n';
 
 export function CalibrationQualityWarnings({
   warnings,
-}: { warnings?: CalibrationQualityReading[] }) {
-  if (!warnings?.length) return null;
+  advisory = false,
+  dismissible = false,
+}: {
+  warnings?: CalibrationQualityReading[];
+  advisory?: boolean;
+  dismissible?: boolean;
+}) {
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed || !warnings?.length) return null;
   return (
     <Alert
       type="warning"
       showIcon
-      message={t('Review calibration measurements')}
+      message={t(
+        advisory
+          ? 'Calibration quality warning'
+          : 'Review calibration measurements',
+      )}
       description={
         <>
           {t('Review targets allow {0}% relative measurement error.', [
@@ -32,6 +44,11 @@ export function CalibrationQualityWarnings({
               </li>
             ))}
           </ul>
+          {dismissible && (
+            <Button size="small" onClick={() => setDismissed(true)}>
+              {t('Got it')}
+            </Button>
+          )}
         </>
       }
     />
@@ -40,7 +57,11 @@ export function CalibrationQualityWarnings({
 
 export function ExplorationQualitySummary({
   quality,
-}: { quality?: AssistedCalibrationState['explorationQuality'] }) {
+  advisory,
+}: {
+  quality?: AssistedCalibrationState['explorationQuality'];
+  advisory?: boolean;
+}) {
   if (!quality) return null;
   const { gridRmsMm, holdoutMaxMm, coverage, shortSideMm } = quality;
   const values = [
@@ -65,7 +86,10 @@ export function ExplorationQualitySummary({
               values,
             )}
       </Typography.Paragraph>
-      <CalibrationQualityWarnings warnings={quality.warnings} />
+      <CalibrationQualityWarnings
+        warnings={quality.warnings}
+        advisory={advisory}
+      />
     </>
   );
 }

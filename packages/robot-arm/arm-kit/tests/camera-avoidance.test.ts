@@ -4,7 +4,10 @@ import {
   cameraAvoidanceTargets,
   taughtCameraSide,
 } from '../src/calibration/camera-avoidance.js';
-import { avoidCamera } from '../src/calibration/verification/camera-avoidance.js';
+import {
+  type CameraAvoidanceState,
+  avoidCamera,
+} from '../src/calibration/verification/camera-avoidance.js';
 import type { CalibrationHost } from '../src/calibration/verification/commands.js';
 import type {
   CalibrationSession,
@@ -132,6 +135,42 @@ it('moves to a candidate during a debug search even when the starting pose is al
     expect(await avoidCamera(f.host, debug, f.ctx)).toBe(true);
     expect(f.move.mock.calls.at(-1)?.[0]).toEqual(target);
     expect(verify.mock.calls).toEqual([[target]]);
+  } finally {
+    await f.cleanup();
+  }
+});
+it('continues shared parking at a higher position when another screen lacks clearance', async () => {
+  const f = await setup(pose(100, -125, 80));
+  try {
+    f.session.auto!.batchParking = {
+      pose: pose(100, -180, 80),
+      obstacles: [],
+      complete: true,
+    };
+    const state: CameraAvoidanceState = {
+      ...f.session,
+      screenClearances: [
+        {
+          geometry: {
+            plane: { normal: { x: 0, y: 0, z: -1 }, offset: -77 },
+            inward: { x: 0, y: 0, z: -1 },
+          },
+          clearanceMm: 5,
+        },
+      ],
+    };
+    const verify = rstest.fn(async () => ({
+      clear: true,
+      checkedAt: new Date().toISOString(),
+      screens: [],
+    }));
+    f.host.verifyCameraVisibility = verify;
+    expect(await avoidCamera(f.host, state, f.ctx)).toBe(true);
+    expect(f.move.mock.calls.map(([target]) => target)).toEqual([
+      pose(100, -125, 82.5),
+      pose(100, -180, 82.5),
+    ]);
+    expect(verify.mock.calls).toEqual([[pose(100, -180, 82.5)]]);
   } finally {
     await f.cleanup();
   }

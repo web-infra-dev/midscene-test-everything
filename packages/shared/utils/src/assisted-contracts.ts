@@ -663,6 +663,7 @@ export interface CalibrationBatchState {
       total: number;
     };
     note?: string;
+    qualityWarnings?: CalibrationQualityReading[];
     status:
       | 'pending'
       | 'preparing'

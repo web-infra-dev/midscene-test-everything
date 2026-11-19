@@ -26,6 +26,7 @@ async function pattern(
     | 'edge'
     | 'rounded-corner'
     | 'speckled'
+    | 'scattered-gaps'
     | 'top-tile'
     | 'small-spot'
     | 'thin-diagonal'
@@ -76,6 +77,9 @@ async function pattern(
           x % 30 <= 13 &&
           y % 30 >= 11 &&
           y % 30 <= 13) ||
+        (blocked === 'scattered-gaps' &&
+          sampleColumn % 3 === 0 &&
+          sampleRow % 4 === 0) ||
         (blocked === 'small-spot' &&
           sampleColumn >= 18 &&
           sampleColumn < 21 &&
@@ -175,6 +179,40 @@ it('tolerates scattered misses when every tile still responds', async () => {
   const result = await measureScreenVisibility(frames, screens);
   expect(result.screens[0].interiorVisibleFraction).toBeLessThan(0.98);
   expect(result.clear).toBe(true);
+});
+
+it('accepts extra scattered gaps only in the shared parking fallback', async () => {
+  const phases = [0, 1, 0];
+  const frames = await Promise.all(
+    phases.map((phase) =>
+      pattern(phase, 'scattered-gaps', 0, 0, undefined, true),
+    ),
+  );
+  const options = { pattern: 'offset-contrast' as const };
+  expect((await measureScreenVisibility(frames, screens, options)).clear).toBe(
+    false,
+  );
+  expect(
+    (
+      await measureScreenVisibility(frames, screens, {
+        ...options,
+        sharedParking: true,
+      })
+    ).clear,
+  ).toBe(true);
+  const obstruction = await Promise.all(
+    phases.map((phase) =>
+      pattern(phase, 'thin-diagonal', 0, 0, undefined, true),
+    ),
+  );
+  expect(
+    (
+      await measureScreenVisibility(obstruction, screens, {
+        ...options,
+        sharedParking: true,
+      })
+    ).clear,
+  ).toBe(false);
 });
 
 it('allows a small spot but rejects a thin obstruction with high local coverage', async () => {

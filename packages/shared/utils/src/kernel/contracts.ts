@@ -149,7 +149,8 @@ export interface RobotDriver {
   updateMotionSettings?(
     request: ControllerMotionSettingsUpdate,
   ): Promise<ControllerMotionSettings>;
-  readPayloadApplication?(): PayloadApplicationSnapshot;
+  /** When supplied, look for controller load feedback received at or after this time. */
+  readPayloadApplication?(readbackAfterMs?: number): PayloadApplicationSnapshot;
   readPose?(options?: { fresh?: boolean }): Promise<MeasuredPose>;
   readJoints?(options?: { fresh?: boolean }): Promise<MeasuredJoints>;
   moveLinear?(

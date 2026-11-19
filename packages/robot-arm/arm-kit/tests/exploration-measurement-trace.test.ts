@@ -1,10 +1,9 @@
 // Speed-work guard for the automatic exploration path.
 //
 // Each trace is produced through the production bridge (`AutomaticCapture`) with
-// a deterministic phone, a tilted screen and fake timers. Measurement fields
-// (move geometry, sample heights and sources, evidence, phone result sequence,
-// timing event counts) must stay identical across speed work; travel-speed
-// changes may only show up as `speedRatio` diffs when the golden is regenerated.
+// a deterministic phone, a tilted screen and fake timers. Standard retains its
+// exact reference trace. Fast checks sliding samples, work budgets and parity
+// between request-based and streamed phone feedback.
 //
 // Regenerate with: UPDATE_GOLDEN=1 pnpm --filter @midscene/arm-kit exec rstest \
 //   run tests/exploration-measurement-trace.test.ts
@@ -38,11 +37,12 @@ const round = (value: number, digits = 3) =>
 
 /** Work budget per scenario; a speed change may only lower these. */
 const BUDGETS: Record<string, { moves: number; phoneResults: number }> = {
-  fast: { moves: 49, phoneResults: 45 },
+  // The tilted fixture takes several independently released height sweeps.
+  fast: { moves: 85, phoneResults: 75 },
   standard: { moves: 163, phoneResults: 143 },
   // Streaming trades host requests for pushed frames: the page sends several
   // frames per confirmation, but the host only issues one prepare request.
-  stream: { moves: 49, phoneResults: 420 },
+  stream: { moves: 85, phoneResults: 640 },
 };
 
 type Scenario = 'fast' | 'standard' | 'stream';
@@ -264,44 +264,47 @@ async function trace(mode: Scenario) {
   }
 }
 
-it.each(['fast', 'standard', 'stream'])(
-  'keeps the %s measurement trace and work budget stable',
-  async (mode) => {
-    const measured = await trace(mode as Scenario);
-    const goldenPath = GOLDEN;
-    const readGolden = async () => {
-      try {
-        return JSON.parse(await readFile(goldenPath, 'utf8')) as Record<
-          string,
-          unknown
-        >;
-      } catch {
-        return {};
-      }
-    };
-    if (process.env.UPDATE_GOLDEN === '1') {
-      const golden = await readGolden();
-      golden[mode] = measured.trace;
-      await mkdir(new URL('./golden/', import.meta.url), { recursive: true });
-      await writeFile(
-        goldenPath,
-        `${JSON.stringify(golden, null, 2)}\n`,
-        'utf8',
-      );
+it('keeps the standard measurement trace and work budget stable', async () => {
+  const measured = await trace('standard');
+  const goldenPath = GOLDEN;
+  const readGolden = async () => {
+    try {
+      return JSON.parse(await readFile(goldenPath, 'utf8')) as Record<
+        string,
+        unknown
+      >;
+    } catch {
+      return {};
     }
+  };
+  if (process.env.UPDATE_GOLDEN === '1') {
     const golden = await readGolden();
-    expect(measured.trace).toEqual(golden[mode]);
-    // Explicit budgets, so the work reduction is visible in the test itself.
-    const budget = BUDGETS[mode];
-    expect(measured.moves).toBeLessThanOrEqual(budget.moves);
-    expect(measured.phoneResults).toBeLessThanOrEqual(budget.phoneResults);
-    // Streaming must not change what is measured, only how it is reported.
-    if (mode === 'stream') {
-      expect(measured.trace.samples).toEqual(golden.fast.samples);
-      expect(measured.trace.moves).toEqual(golden.fast.moves);
-      expect(measured.trace.evidence).toEqual(golden.fast.evidence);
-      expect(measured.trace.timing).toEqual(golden.fast.timing);
-    }
-  },
-  40000,
-);
+    golden.standard = measured.trace;
+    await mkdir(new URL('./golden/', import.meta.url), { recursive: true });
+    await writeFile(goldenPath, `${JSON.stringify(golden, null, 2)}\n`, 'utf8');
+  }
+  const golden = await readGolden();
+  expect(measured.trace).toEqual(golden.standard);
+  const budget = BUDGETS.standard;
+  expect(measured.moves).toBeLessThanOrEqual(budget.moves);
+  expect(measured.phoneResults).toBeLessThanOrEqual(budget.phoneResults);
+}, 40000);
+
+it('collects the same fast sliding measurements with both phone feedback modes', async () => {
+  const fast = await trace('fast');
+  const stream = await trace('stream');
+  expect(stream.trace.samples).toEqual(fast.trace.samples);
+  expect(stream.trace.moves).toEqual(fast.trace.moves);
+  expect(stream.trace.evidence).toEqual(fast.trace.evidence);
+  expect(stream.trace.timing).toEqual(fast.trace.timing);
+  expect(
+    fast.trace.samples
+      .filter((sample) => sample.role === 'fit')
+      .map((sample) => sample.zSource),
+  ).toEqual(Array(4).fill('predicted'));
+  expect(fast.trace.evidence.measuredPlaneSamples).toBeGreaterThanOrEqual(3);
+  expect(fast.moves).toBeLessThanOrEqual(BUDGETS.fast.moves);
+  expect(fast.phoneResults).toBeLessThanOrEqual(BUDGETS.fast.phoneResults);
+  expect(stream.moves).toBeLessThanOrEqual(BUDGETS.stream.moves);
+  expect(stream.phoneResults).toBeLessThanOrEqual(BUDGETS.stream.phoneResults);
+}, 40000);

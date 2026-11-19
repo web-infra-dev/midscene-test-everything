@@ -27,6 +27,7 @@ import {
 import type { BatchClient as RobotArmApi } from '../../batch-client';
 import { calibrationErrorText, t } from '../../i18n';
 import { batchAnnouncements, speakCalibration } from '../../voice/calibration';
+import { CalibrationQualityWarnings } from './CalibrationQualityWarnings';
 
 const active = (batch: CalibrationBatchState | null | undefined) =>
   Boolean(batch && ['running', 'waiting', 'stopping'].includes(batch.status));
@@ -55,7 +56,7 @@ function calibrationStatus(calibrated: boolean, cameraMappingChanged = false) {
   if (cameraMappingChanged)
     return {
       color: 'orange',
-      label: t('Calibration saved · Camera mapping changed'),
+      label: t('Camera mapping changed · Recalibration required'),
     };
   return calibrated
     ? { color: 'green', label: t('Calibrated') }
@@ -436,6 +437,14 @@ export const CalibrationBatchPanel = forwardRef<
                   <Typography.Paragraph type="danger">
                     {calibrationErrorText(item.error)}
                   </Typography.Paragraph>
+                )}
+                {item.status === 'completed' && (
+                  <CalibrationQualityWarnings
+                    key={`${batch.id}:${item.runIds.at(-1) ?? ''}`}
+                    warnings={item.qualityWarnings}
+                    advisory
+                    dismissible
+                  />
                 )}
                 {item.runIds.length > 0 && (
                   <details>

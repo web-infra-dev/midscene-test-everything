@@ -12,6 +12,10 @@ import { surfaceClearanceMm } from '../surface.js';
 import type { CalibrationHost } from './commands.js';
 
 type PlaneGeometry = Pick<CalibrationProfile, 'plane' | 'inward' | 'surface'>;
+export type ScreenParkingClearance = {
+  geometry: PlaneGeometry;
+  clearanceMm: number;
+};
 export function screenPlaneHeight(
   geometry: PlaneGeometry,
   pose: CartesianPose,
@@ -44,6 +48,28 @@ export function assertSafeObservation(
       'UNSAFE_OBSERVATION',
       'Saved safe position must be at least the safe clearance away from the fitted screen. Record a higher safe position. Collected points are retained.',
     );
+}
+
+export function minimumClearanceTipZ(
+  { geometry, clearanceMm }: ScreenParkingClearance,
+  pose: CartesianPose,
+  offset: Vector3,
+): number {
+  const deficit =
+    screenPlaneHeight(geometry, pose, offset) +
+    clearanceMm +
+    surfaceClearanceMm(geometry.surface);
+  if (deficit <= 0) return Number.NEGATIVE_INFINITY;
+  const clearancePerMm =
+    -geometry.plane.normal.z / dot(geometry.plane.normal, geometry.inward);
+  if (clearancePerMm <= 1e-6)
+    throw new RobotArmError(
+      'UNSAFE_OBSERVATION',
+      'Raising the stylus cannot clear the fitted screen plane',
+      409,
+    );
+  // Leave room for measured arrival error at the clearance limit.
+  return contactPoint(pose, offset).z + deficit / clearancePerMm + 0.5;
 }
 
 /** Return a pending calibration to its saved observation without contacting the screen. */

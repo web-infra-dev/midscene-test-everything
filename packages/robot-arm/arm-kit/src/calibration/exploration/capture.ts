@@ -275,7 +275,9 @@ export class AutomaticCapture {
             before: pose,
             after: pose,
             positionConvention:
-              sample.method === 'stepped' ? 'contact-interval' : 'predicted',
+              sample.method === 'stepped' || sample.heightIntervalMm
+                ? 'contact-interval'
+                : 'predicted',
             heightIntervalMm: sample.heightIntervalMm,
           },
         };

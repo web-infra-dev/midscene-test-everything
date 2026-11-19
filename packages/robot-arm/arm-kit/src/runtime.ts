@@ -17,6 +17,7 @@ import { moveToTaughtPosition } from './calibration/taught-position.js';
 import {
   type CameraAvoidanceState,
   assertBatchParking,
+  assertParkingScreenClearances,
   avoidCamera,
 } from './calibration/verification/camera-avoidance.js';
 import { applyCalibrationCommand } from './calibration/verification/commands.js';
@@ -3595,10 +3596,19 @@ export class RobotArmRuntime extends RobotKernel {
     ) => Promise<ScreenVisibilityEvidence>,
     guard: () => void,
     confirmPages: () => Promise<void>,
-    options: { operatorConfirmed?: boolean; requireTravel?: boolean } = {},
+    options: {
+      operatorConfirmed?: boolean;
+      requireTravel?: boolean;
+      clearanceProfileIds?: readonly string[];
+    } = {},
   ): Promise<{ pose: CartesianPose; visibility: SharedParkingEvidence }> {
     const { operatorConfirmed, requireTravel } = options;
     const profile = this.profileStore.getCalibration(calibrationId);
+    const screenClearances = options.clearanceProfileIds?.map((id) => {
+      const geometry = this.profileStore.getCalibration(id);
+      const screen = this.profileStore.getScreen(geometry.screenProfileId);
+      return { geometry, clearanceMm: screen.safeHeightMm };
+    });
     const ctx = this.context(binding);
     ctx.minimumTravelTipZMm = Math.max(
       ctx.minimumTravelTipZMm ?? Number.NEGATIVE_INFINITY,
@@ -3628,6 +3638,7 @@ export class RobotArmRuntime extends RobotKernel {
         candidate: structuredClone(profile),
         stage: 'verification',
         requireTravel,
+        screenClearances,
         auto: { batchParking: parking },
       };
       if (operatorConfirmed) {
@@ -3648,6 +3659,7 @@ export class RobotArmRuntime extends RobotKernel {
             409,
           );
         assertBatchParking(state, ctx, pose);
+        assertParkingScreenClearances(state, ctx, pose);
         await this.motionExecutor.stable(pose, 5000, check, (ms) =>
           this.hold(ms),
         );

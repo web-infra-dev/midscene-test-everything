@@ -137,6 +137,7 @@ export async function measureScreenVisibility(
   options?: {
     includeUndetected?: boolean;
     pattern?: ScreenVisibilityProbePattern;
+    sharedParking?: boolean;
   },
 ): Promise<ScreenVisibilityEvidence> {
   if (frames.length !== 3 || !screens.length)
@@ -168,6 +169,10 @@ export async function measureScreenVisibility(
   const { columns, rows } = CALIBRATION_PHONE_POLICY.visibilityPattern;
   const pattern = options?.pattern ?? 'checkerboard';
   const offsetPattern = pattern === 'offset-contrast';
+  // The shared parking fallback can lose scattered samples to glare or
+  // alignment. Still require the expected pattern and a clear connected mask.
+  const minimumInteriorFraction =
+    offsetPattern && options?.sharedParking ? 0.9 : 0.95;
   const results = screens.map((screen) => {
     if (
       screen.sourceWidth !== width ||
@@ -342,7 +347,7 @@ export async function measureScreenVisibility(
     // narrow pen spanning several tiles, even with high coverage in each tile.
     const clear =
       visibleFraction >= 0.85 &&
-      interiorVisibleFraction >= 0.95 &&
+      interiorVisibleFraction >= minimumInteriorFraction &&
       largestRegion < 8 &&
       // A cached page or a broad camera-wide color shift cannot confirm this pattern.
       (!offsetPattern || matchedCenters / sampledCenters >= 0.8);

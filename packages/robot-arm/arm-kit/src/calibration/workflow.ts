@@ -32,7 +32,6 @@ import { verifyScreenVisibility } from './camera/visibility.js';
 import type { CalibrationVision } from './camera/vision.js';
 import { AutomaticCapture } from './exploration/capture.js';
 import { fitExploration } from './exploration/fit.js';
-import { explorationQualityWarnings } from './exploration/quality.js';
 import { invertMapping, pointDistance, project } from './phone/geometry.js';
 import { CalibrationPhoneSession, sameLayout } from './phone/session.js';
 import { knownScreenTravelHeight, pageOrderedQuad } from './screen-position.js';
@@ -42,6 +41,7 @@ import { moveToTaughtPosition } from './taught-position.js';
 import { assertSafeObservation } from './verification/safe-position.js';
 
 const log = getDebug('robot-arm:web-calibration', { console: true });
+const debug = getDebug('robot-arm:web-calibration');
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 // Only feedback and data-quality failures permit motion after a measured probe.
 const recoverableSamplingErrors = new Set([
@@ -2193,7 +2193,7 @@ export class CalibrationWorkflow {
     if (!timing.size) return;
     // One JSON object per attempt so the log report can parse it without
     // depending on the logger's object formatting.
-    log(
+    debug(
       `Automatic sampling timing ${JSON.stringify({
         attemptId,
         deviceId: this.options.deviceId,
@@ -2634,23 +2634,12 @@ export class CalibrationWorkflow {
       reasons.push(
         'Automatic acceptance requires complete contact and plane evidence for the selected sampling mode',
       );
-    else {
-      const screen = this.runtime.profileStore.getScreen(
-        c.candidate!.screenProfileId,
-      );
-      const warnings = explorationQualityWarnings(screen, quality, evidence);
-      if (state?.mapping)
-        warnings.push(
-          ...mappingQualityWarnings(
-            state.mapping.accuracy,
-            state.mapping.layout,
-          ),
-        );
-      for (const warning of warnings)
-        reasons.push(
-          `${warning.label} ${warning.percent.toFixed(2)}% (target ${warning.minimum ? '≥' : '≤'}${warning.targetPercent}%)`,
-        );
-    }
+    if (
+      state?.explorationQuality?.warnings?.some(
+        ({ percent }) => !Number.isFinite(percent) || percent < 0,
+      )
+    )
+      reasons.push('Automatic acceptance requires valid quality measurements');
     if (
       !c?.boundary ||
       ![

@@ -1799,7 +1799,7 @@ export function MarkerCalibrationDialog({
             type="info"
             message={t(
               handoffPending
-                ? 'Calibrating camera intrinsics'
+                ? 'Calibrating camera focus and exposure'
                 : 'Detecting markers',
             )}
           />

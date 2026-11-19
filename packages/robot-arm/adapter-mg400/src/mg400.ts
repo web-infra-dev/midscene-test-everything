@@ -184,6 +184,7 @@ const JOG_STOP_CONFIRM_MS = 1500;
 const RECONNECT_BASE_DELAY_MS = 500;
 const RECONNECT_MAX_DELAY_MS = 5000;
 const logMg400 = getDebug('robot-arm:mg400', { console: true });
+const debugMg400 = getDebug('robot-arm:mg400');
 /**
  * `axisID` values from the TCP/IP protocol manual: X/Y/Z/R for Cartesian axes
  * and J1..J4 for joints, each with an explicit direction suffix.
@@ -1044,7 +1045,7 @@ export class Mg400Adapter implements RobotArmAdapter {
   /** Set only after a connection was actually established once. */
   private hasConnected = false;
   private lastControllerClock?: bigint;
-  private payloadEvidence() {
+  private payloadEvidence(readbackAfterMs?: number) {
     const frame = this.feedback.current();
     if (frame) {
       if (
@@ -1067,16 +1068,20 @@ export class Mg400Adapter implements RobotArmAdapter {
       frame.loadKg >= 0 &&
       frame.loadKg <= MG400_MAX_PAYLOAD_KG
     ) {
-      // Initial adoption needs a stationary arm. Once confirmed, normal motion
-      // can retain that evidence while fresh feedback still reports the load.
+      // Adoption and re-confirmation need a stationary arm. Routine reads can
+      // retain existing evidence during motion while feedback reports the load.
       if (
-        evidence.status === 'confirmed' ||
+        (readbackAfterMs === undefined && evidence.status === 'confirmed') ||
         (frame.mode === 5 &&
           !frame.running &&
           !frame.pauseCmdFlag &&
           !frame.dragStatus)
       )
-        this.payloadApplication.observeReadback(frame.loadKg, frame.receivedAt);
+        this.payloadApplication.observeReadback(
+          frame.loadKg,
+          frame.receivedAt,
+          readbackAfterMs,
+        );
     } else if (evidence.applied?.source === 'controller-readback') {
       this.payloadApplication.invalidate('readback-unavailable');
     }
@@ -1211,7 +1216,8 @@ export class Mg400Adapter implements RobotArmAdapter {
       enableWithPayload: (payload) => this.enable(payload),
       appliedPayload: () => this.payloadEvidence().applied,
       applyPayload: (payload) => this.applyPayload(payload),
-      readPayloadApplication: () => this.payloadEvidence(),
+      readPayloadApplication: (readbackAfterMs) =>
+        this.payloadEvidence(readbackAfterMs),
       disable: () => this.disable(),
       clearFaults: () => this.clearFaults(),
       enterDragMode: () => this.enterDragMode(),
@@ -1865,7 +1871,7 @@ export class Mg400Adapter implements RobotArmAdapter {
         const joints = parseMg400GetAngle(body);
         if (body.split(',').length === 6 && !this.getAnglePaddingLogged) {
           this.getAnglePaddingLogged = true;
-          logMg400(
+          debugMg400(
             'GetAngle six-field zero padding accepted; using four joints.',
             {
               connectionIdentity: this.connectionIdentity,

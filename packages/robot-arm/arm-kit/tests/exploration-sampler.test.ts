@@ -29,6 +29,7 @@ describe('first-time automatic exploration', () => {
     'fast-slide',
     'fast-refine-stalled',
     'fast-adaptive-slide',
+    'fast-corner-slide',
     'fast-hysteresis',
     'fast-offset-hysteresis',
     'fast-reported-failure',
@@ -77,7 +78,9 @@ describe('first-time automatic exploration', () => {
           ? -200.12645
           : mode.includes('hysteresis')
             ? activationZ + 2.5
-            : activationZ;
+            : mode === 'fast-adaptive-slide'
+              ? activationZ + 0.15
+              : activationZ;
       let previousHeld = false;
       let missedPress = false;
       let contact: { x: number; y: number; z: number } | undefined;
@@ -91,9 +94,11 @@ describe('first-time automatic exploration', () => {
       let actualPose = pose(100, -50, startZ);
       const finishedSampling = false;
       let missedSlide = false;
+      let restartPressZ: number | undefined;
       let refining = false;
       let lowestZ = Number.POSITIVE_INFINITY;
       const isFast = !mode.startsWith('standard') && mode !== 'safety-floor';
+      const slides = mode.endsWith('slide');
       const tilted = mode === 'standard-tilt';
       const slopeX = tilted ? 0.015 : 0;
       const pagePixel = () =>
@@ -147,11 +152,20 @@ describe('first-time automatic exploration', () => {
           if (
             mode === 'fast-adaptive-slide' &&
             purpose === 'slide' &&
+            session.auto?.progress?.phase === 'grid' &&
             !missedSlide
           ) {
             missedSlide = true;
             screen = null;
           }
+          if (
+            mode === 'fast-adaptive-slide' &&
+            missedSlide &&
+            purpose === 'press' &&
+            screen &&
+            restartPressZ === undefined
+          )
+            restartPressZ = contact?.z;
           if (
             mode === 'press-recovers' &&
             !missedPress &&
@@ -297,8 +311,13 @@ describe('first-time automatic exploration', () => {
           let tiltOffset = tilted
             ? slopeX * (point.x - 100) - 0.005 * (point.y + 50)
             : 0;
-          // Steep enough that the fast audit sees more than its 3 mm budget.
-          if (mode === 'fast-tilt-audit') tiltOffset = 0.04 * (point.x - 100);
+          // Raise the corners enough to exceed the audit threshold while
+          // keeping both contacts above the downward safety limit.
+          if (mode === 'fast-tilt-audit')
+            tiltOffset = 0.04 * Math.abs(point.x - 100);
+          // The old retry raised the pen between the restart and inset.
+          if (mode === 'fast-adaptive-slide')
+            tiltOffset = -0.007 * (point.x - 100) + 0.006 * (point.y + 50);
           touching =
             inside &&
             (touching
@@ -308,6 +327,14 @@ describe('first-time automatic exploration', () => {
             touching = true;
           if (mode === 'repress-missing' && repressing) touching = false;
           if (mode === 'fast-no-touch' && point.x < 50) touching = false;
+          if (
+            mode === 'fast-corner-slide' &&
+            point.x < 21 &&
+            point.y > -15 &&
+            (!previousHeld ||
+              Math.hypot(point.x - previous.x, point.y - previous.y) < 0.2)
+          )
+            touching = false;
           if (mode === 'fast-local-recovery' && point.x < 50)
             touching = inside && point.z <= activationZ - 0.75;
           // A remote point that only touches at the floor would need a final
@@ -340,9 +367,7 @@ describe('first-time automatic exploration', () => {
           ? {
               mode: 'fast-horizontal' as const,
               horizontalConfirmed: true,
-              collection: mode.endsWith('slide')
-                ? ('slide' as const)
-                : ('tap' as const),
+              collection: slides ? ('slide' as const) : ('tap' as const),
             }
           : {}),
       });
@@ -353,7 +378,7 @@ describe('first-time automatic exploration', () => {
           'snapshot-missing': 'Phone step acknowledgement timed out',
           'snapshot-stale': 'Phone step acknowledgement timed out',
           'safety-floor': 'safety floor',
-          'fast-no-touch': 'too tilted for fast mode',
+          'fast-no-touch': 'did not sustain touch within the safe depth',
           'fast-tilt-audit': 'screen height error at the audit points',
           'fast-refine-stalled': 'could not narrow the contact interval',
         };
@@ -369,16 +394,20 @@ describe('first-time automatic exploration', () => {
           if (mode === 'safety-floor')
             expect(lowestZ).toBeGreaterThanOrEqual(27.625);
           if (mode === 'fast-no-touch') {
-            // The audit owns its envelope: lowest measured contact minus the
-            // 6 mm tilt range, never the first-touch safety floor.
-            expect(lowestZ).toBeGreaterThanOrEqual(24);
-            expect(session.auto?.collectedSamples).toHaveLength(3);
-            expect(session.auto?.fastAdaptation?.searchSteps).toBe(0);
+            await expect(job).rejects.toMatchObject({
+              code: 'TOUCH_CONTACT_LOST',
+              details: {
+                audit: true,
+                cause: 'TOUCH_SAFETY_LIMIT',
+                retryCause: 'TOUCH_SAFETY_LIMIT',
+              },
+            });
+            expect(lowestZ).toBeGreaterThanOrEqual(activationZ - 2.25);
           }
           return;
         }
         const collection = await job;
-        expect(collection.probes).toHaveLength(3);
+        expect(collection.probes).toHaveLength(slides ? 5 : 3);
         expect(collection.grid).toHaveLength(isFast ? 6 : 9);
         if (mode === 'standard') expect(finalPressCount).toBe(12);
         const fit = () =>
@@ -479,7 +508,8 @@ describe('first-time automatic exploration', () => {
         }
         expect(result.candidate.acceptanceStatus).toBe('pending');
         // The simulated screen maps pixels in XY; the measured axes follow its surface.
-        const sizePrecision = tilted ? 1 : isFast ? 2 : 3;
+        const sizePrecision =
+          tilted || mode === 'fast-adaptive-slide' ? 1 : isFast ? 2 : 3;
         expect(result.measuredSize.physicalWidthMm).toBeCloseTo(
           tilted ? Math.hypot(200, slopeX * 200) : 200,
           sizePrecision,
@@ -497,24 +527,27 @@ describe('first-time automatic exploration', () => {
           samples
             .filter((sample) => sample.role === role)
             .map((sample) => sample.method);
-        if (mode === 'fast-slide' || mode === 'fast-tap') {
-          // Two audit corners are measured first; the rest are predicted from
-          // the plane they form with the first touch. A prediction that misses
-          // falls back to a local recovery, so the exact method can vary.
+        if (slides) {
+          expect(methodsOf('fit')).toEqual(Array(4).fill('slide'));
+          expect(methodsOf('validation')).toEqual(Array(2).fill('slide'));
+          expect(methodsOf('probe').slice(3)).toEqual(['slide', 'slide']);
+          for (const probe of collection.probes.slice(3)) {
+            expect(probe.zSource).toBe('measured');
+            const [touchedZ, clearZ] = probe.heightIntervalMm!;
+            expect(clearZ).toBeGreaterThan(touchedZ);
+            expect(clearZ - touchedZ).toBeLessThanOrEqual(0.251);
+          }
           expect(result.evidence.validationHeightMaxMm).toBeUndefined();
-          expect(methodsOf('validation')).toEqual(
-            Array(2).fill(mode === 'fast-slide' ? 'slide' : 'direct'),
-          );
+        }
+        if (mode === 'fast-tap') {
+          expect(result.evidence.validationHeightMaxMm).toBeUndefined();
+          expect(methodsOf('validation')).toEqual(['direct', 'direct']);
           const fitMethods = methodsOf('fit');
           expect(fitMethods.slice(0, 2)).toEqual(['stepped', 'stepped']);
           expect(
             fitMethods
               .slice(2)
-              .every((method) =>
-                mode === 'fast-slide'
-                  ? method === 'slide' || method === 'stepped'
-                  : method === 'direct' || method === 'stepped',
-              ),
+              .every((method) => method === 'direct' || method === 'stepped'),
           ).toBe(true);
           // First touch plus the two audit corners always press; a predicted
           // press that misses adds one local-recovery press.
@@ -532,7 +565,7 @@ describe('first-time automatic exploration', () => {
             // Predicted presses use the anchor height; the measured audit
             // points sit within one bracket of it on this flat screen.
             if (point.zSource === 'predicted') {
-              // The plane is fitted from the two audit corners plus the first
+              // The plane is fitted from the two interior audits plus the first
               // touch, so the far side extrapolates a fraction of a millimetre.
               expect(Math.abs(point.pressedZ - first.pressedZ)).toBeLessThan(
                 0.3,
@@ -548,10 +581,17 @@ describe('first-time automatic exploration', () => {
         }
         if (mode === 'fast-adaptive-slide') {
           expect(missedSlide).toBe(true);
-          const fitMethods = methodsOf('fit');
-          expect(fitMethods.slice(0, 2)).toEqual(['stepped', 'stepped']);
-          expect(fitMethods.at(-1)).toBe('slide');
-          expect(methodsOf('validation')).toEqual(['direct', 'slide']);
+          const [inset] = collection.grid;
+          expect(inset.screen.x).toBeGreaterThan(inset.target.screen.x);
+          expect(restartPressZ).toBeDefined();
+          expect(inset.pressedZ).toBeCloseTo(restartPressZ!, 5);
+          expect(session.auto?.fastAdaptation?.searchSteps).toBe(0);
+        }
+        if (mode === 'fast-corner-slide') {
+          const [corner] = collection.grid;
+          expect(corner.screen.x).toBeCloseTo(corner.target.screen.x);
+          expect(corner.screen.y).toBeCloseTo(corner.target.screen.y);
+          expect(corner.zSource).toBe('predicted');
         }
         if (mode === 'press-recovers') expect(missedPress).toBe(true);
         expect(f.store.getScreen(f.screen.id)).toEqual(f.screen);

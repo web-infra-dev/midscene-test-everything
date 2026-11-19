@@ -484,16 +484,18 @@ function GuidedContent({
         (completed &&
           openingScreen &&
           initialStep !== 1 &&
+          next.correction &&
           next.installationTaught &&
           !reviewInstallationOnOpen)
       )
         setStep(3);
       else if (
         currentStep.current === 3 &&
-        (!next.installationTaught ||
+        (!next.correction ||
+          !next.installationTaught ||
           (!completed && next.mappingReady === false))
       ) {
-        if (next.mappingReady === false) {
+        if (!next.correction || next.mappingReady === false) {
           if (next.correction && next.perspectiveValidity?.state !== 'invalid')
             resumeCalibration.current = screenId;
           setStep(1);
@@ -744,9 +746,10 @@ function GuidedContent({
    * once; the selected one carries the freshest correction and the verdict.
    */
   const asideOutlines = knownScreens.flatMap((entry) => {
-    const fresh = config?.deviceId === entry.id ? config.correction : undefined;
     const quad =
-      entry.id === activeId ? (fresh ?? entry.correction) : entry.correction;
+      activeConfig && entry.id === activeId
+        ? activeConfig.correction
+        : entry.correction;
     if (
       !quad ||
       (step === 1 &&
@@ -1146,8 +1149,9 @@ function GuidedContent({
     phoneFullscreen,
     selectedId,
   ]);
+  const hasCorrection = Boolean(config?.correction);
   const startSingle = useCallback(async () => {
-    if (startingSingle.current) return;
+    if (startingSingle.current || !hasCorrection) return;
     if (!config?.installationTaught) {
       setStep(2);
       return;
@@ -1167,7 +1171,7 @@ function GuidedContent({
       startingSingle.current = undefined;
     }
     await refresh();
-  }, [base, config?.installationTaught, refresh, selectedId]);
+  }, [base, config?.installationTaught, hasCorrection, refresh, selectedId]);
   const soleScreen =
     savedScreens.length === 1 && savedScreens[0].id === selectedId;
   useEffect(() => {
@@ -1177,6 +1181,7 @@ function GuidedContent({
     }
     if (
       !soleScreen ||
+      !hasCorrection ||
       !controller.setup.mapping ||
       checkedScreen !== selectedId ||
       batchActive ||
@@ -1194,6 +1199,7 @@ function GuidedContent({
   }, [
     step,
     soleScreen,
+    hasCorrection,
     controller.setup.mapping,
     checkedScreen,
     selectedId,
@@ -1261,6 +1267,7 @@ function GuidedContent({
     <Button
       disabled={
         !config?.ready ||
+        !hasCorrection ||
         !config.installationTaught ||
         outlineBlocked ||
         singleBusy
@@ -1402,6 +1409,7 @@ function GuidedContent({
                   disabled={
                     closing ||
                     !config?.ready ||
+                    !hasCorrection ||
                     !config.installationTaught ||
                     outlineBlocked ||
                     controller.busy ||
@@ -1679,7 +1687,10 @@ function GuidedContent({
                       />
                     )}
                     {batchRunning && current && (
-                      <ActiveBatchScreen controller={progress} />
+                      <ActiveBatchScreen
+                        controller={progress}
+                        advisory={batch?.acceptance === 'automatic'}
+                      />
                     )}
                     {!batchActive &&
                       lease?.phase === 'completed' &&
@@ -1722,6 +1733,7 @@ function GuidedContent({
                           loading={singleQueued}
                           disabled={
                             !config.ready ||
+                            !hasCorrection ||
                             !config.installationTaught ||
                             singleQueued
                           }
@@ -2057,15 +2069,20 @@ function WizardFooter({
 }
 function ActiveBatchScreen({
   controller,
+  advisory,
 }: {
   controller: ReturnType<typeof useAssistedCalibration>;
+  advisory: boolean;
 }) {
   const session = controller.session;
   return (
     <div className="guided-batch-progress">
       <div>
         {session && <ExplorationProgress session={session} />}
-        <ExplorationQualitySummary quality={session?.explorationQuality} />
+        <ExplorationQualitySummary
+          quality={session?.explorationQuality}
+          advisory={advisory}
+        />
         {session &&
           ['return-ready', 'positioning-safe'].includes(session.stage) && (
             <Typography.Paragraph>

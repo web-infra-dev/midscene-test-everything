@@ -64,9 +64,14 @@ export class PayloadApplicationTracker {
     };
   }
   /** Fresh controller configuration may restore mass evidence, never optional inertia. */
-  observeReadback(massKg: number, receivedAt: number): void {
+  observeReadback(
+    massKg: number,
+    receivedAt: number,
+    readbackAfterMs?: number,
+  ): void {
     if (
       this.value.status === 'applying' ||
+      (readbackAfterMs !== undefined && receivedAt < readbackAfterMs) ||
       receivedAt < Date.parse(this.value.updatedAt) ||
       [
         'application-failed',
@@ -77,10 +82,14 @@ export class PayloadApplicationTracker {
     )
       return;
     const applied = this.value.applied;
-    // Retain command-confirmed inertia only while the observed mass is unchanged.
+    // Routine reads keep the confirmation stable. After a connection gap,
+    // only a new controller readback can establish the mass again.
     if (
       applied &&
-      sameToolPayload({ massKg }, { massKg: applied.payload.massKg })
+      sameToolPayload({ massKg }, { massKg: applied.payload.massKg }) &&
+      (readbackAfterMs === undefined ||
+        (applied.source === 'controller-readback' &&
+          Date.parse(applied.confirmedAt) >= readbackAfterMs))
     )
       return;
     const confirmedAt = new Date(receivedAt).toISOString();
