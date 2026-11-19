@@ -41,17 +41,22 @@ const CAMERA_AVOIDANCE_OBSTACLE_LIMIT_MM = 300;
 /** Keep the parking pose this far outside the screens' combined footprint. */
 const CAMERA_AVOIDANCE_PARKING_MARGIN_MM = 10;
 
+function cameraParkingFootprint(points: readonly PlanePoint[]) {
+  const margin = CAMERA_AVOIDANCE_PARKING_MARGIN_MM;
+  return {
+    minX: Math.min(...points.map((point) => point.x)) - margin,
+    maxX: Math.max(...points.map((point) => point.x)) + margin,
+    minY: Math.min(...points.map((point) => point.y)) - margin,
+    maxY: Math.max(...points.map((point) => point.y)) + margin,
+  };
+}
+
 export function insideCameraParkingFootprint(
   tip: PlanePoint,
   points: readonly PlanePoint[],
 ): boolean {
-  const margin = CAMERA_AVOIDANCE_PARKING_MARGIN_MM;
-  return (
-    tip.x >= Math.min(...points.map((point) => point.x)) - margin &&
-    tip.x <= Math.max(...points.map((point) => point.x)) + margin &&
-    tip.y >= Math.min(...points.map((point) => point.y)) - margin &&
-    tip.y <= Math.max(...points.map((point) => point.y)) + margin
-  );
+  const { minX, maxX, minY, maxY } = cameraParkingFootprint(points);
+  return tip.x >= minX && tip.x <= maxX && tip.y >= minY && tip.y <= maxY;
 }
 
 export function assertParkingCorridor(
@@ -76,6 +81,91 @@ const distance = (
   left: { x: number; y: number },
   right: { x: number; y: number },
 ): number => Math.hypot(left.x - right.x, left.y - right.y);
+
+export function screenCenterDistanceSum(
+  tip: PlanePoint,
+  centers: readonly PlanePoint[],
+): number {
+  return centers.reduce((sum, center) => sum + distance(tip, center), 0);
+}
+
+/** Search just outside the full screen group and give visibility a wider fallback. */
+export function sharedParkingPoints(
+  footprintPoints: readonly PlanePoint[],
+  centers: readonly PlanePoint[],
+  corridor:
+    | NonNullable<CalibrationBatchPlan['transfer']>['corridor']
+    | undefined,
+  cameraExcess: (point: PlanePoint) => number,
+): PlanePoint[] {
+  const footprint = cameraParkingFootprint(footprintPoints);
+  const points: PlanePoint[] = [];
+  // The near edge leaves room for arrival error. The second edge and
+  // neighbouring points allow for occlusion by the arm away from its tip.
+  for (const padding of [2, 20]) {
+    const minX = footprint.minX - padding;
+    const maxX = footprint.maxX + padding;
+    const minY = footprint.minY - padding;
+    const maxY = footprint.maxY + padding;
+    for (const axis of ['x', 'y'] as const) {
+      const horizontal = axis === 'x';
+      const from = Math.max(
+        horizontal ? minX : minY,
+        (horizontal ? corridor?.minX : corridor?.minY) ??
+          Number.NEGATIVE_INFINITY,
+      );
+      const to = Math.min(
+        horizontal ? maxX : maxY,
+        (horizontal ? corridor?.maxX : corridor?.maxY) ??
+          Number.POSITIVE_INFINITY,
+      );
+      if (from > to) continue;
+      for (const fixed of horizontal ? [minY, maxY] : [minX, maxX]) {
+        if (
+          corridor &&
+          (fixed < (horizontal ? corridor.minY : corridor.minX) ||
+            fixed > (horizontal ? corridor.maxY : corridor.maxX))
+        )
+          continue;
+        const pointAt = (value: number) =>
+          horizontal ? { x: value, y: fixed } : { x: fixed, y: value };
+        let low = from;
+        let high = to;
+        const fromExcess = cameraExcess(pointAt(from));
+        const toExcess = cameraExcess(pointAt(to));
+        if (fromExcess > 0 && toExcess > 0) continue;
+        if (fromExcess > 0 || toExcess > 0) {
+          const boundary =
+            from + ((to - from) * fromExcess) / (fromExcess - toExcess);
+          if (fromExcess > 0) low = boundary;
+          else high = boundary;
+        }
+        // The distance sum restricted to an edge is convex.
+        let left = low;
+        let right = high;
+        for (let step = 0; step < 24; step++) {
+          const a = (left * 2 + right) / 3;
+          const b = (left + right * 2) / 3;
+          if (
+            screenCenterDistanceSum(pointAt(a), centers) <=
+            screenCenterDistanceSum(pointAt(b), centers)
+          )
+            right = b;
+          else left = a;
+        }
+        const closest = (left + right) / 2;
+        for (const offset of [0, -20, 20]) {
+          const point = pointAt(
+            Math.max(low, Math.min(high, closest + offset)),
+          );
+          if (points.every((existing) => distance(existing, point) >= 1))
+            points.push(point);
+        }
+      }
+    }
+  }
+  return points;
+}
 
 /**
  * Estimate which side of the screen the screen camera is on.

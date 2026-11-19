@@ -175,6 +175,82 @@ it('continues shared parking at a higher position when another screen lacks clea
     await f.cleanup();
   }
 });
+it('prefers the closer shared parking pose in XY even when it is higher', async () => {
+  const f = await setup();
+  try {
+    const saved = pose(210, -111, 180);
+    const screenCenters = [
+      { x: 100, y: -50, z: 30 },
+      { x: 320, y: -50, z: 30 },
+    ];
+    f.session.auto!.batchParking = {
+      pose: saved,
+      obstacles: [
+        [
+          { x: 220, y: 0 },
+          { x: 420, y: 0 },
+          { x: 420, y: -100 },
+          { x: 220, y: -100 },
+        ],
+      ],
+      complete: true,
+    };
+    const verify = rstest.fn(async () => ({
+      clear: true,
+      checkedAt: new Date().toISOString(),
+      screens: [],
+    }));
+    f.host.verifyCameraVisibility = verify;
+
+    expect(
+      await avoidCamera(f.host, { ...f.session, screenCenters }, f.ctx),
+    ).toBe(true);
+    expect(f.session.candidate!.observationPose).toEqual(saved);
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect(verify).toHaveBeenCalledWith(saved);
+  } finally {
+    await f.cleanup();
+  }
+});
+it('tries the closest point along the group edge and stops after four occluded poses', async () => {
+  const f = await setup();
+  try {
+    f.session.auto!.batchParking = {
+      obstacles: [
+        [
+          { x: 220, y: 0 },
+          { x: 420, y: 0 },
+          { x: 420, y: -100 },
+          { x: 220, y: -100 },
+        ],
+      ],
+      corridor: { minX: 80, maxX: 340, minY: -140, maxY: 0 },
+      complete: true,
+    };
+    const verify = rstest.fn(async (_target: ReturnType<typeof pose>) => ({
+      clear: false,
+      checkedAt: new Date().toISOString(),
+      screens: [],
+    }));
+    f.host.verifyCameraVisibility = verify;
+    const state: CameraAvoidanceState = {
+      ...f.session,
+      screenCenters: [
+        { x: 100, y: -50 },
+        { x: 320, y: -50 },
+      ],
+    };
+
+    expect(await avoidCamera(f.host, state, f.ctx)).toBe(false);
+    expect(verify).toHaveBeenCalledTimes(4);
+    const first = verify.mock.calls[0][0].positionMm;
+    expect(first.x).toBeCloseTo(210, 1);
+    expect(first.y).toBeCloseTo(-112);
+    expect(f.session.auto?.observationRecorded).toBe(false);
+  } finally {
+    await f.cleanup();
+  }
+});
 it('keeps manual fallback when every candidate is refused; a submitted movement failure never tries another exit', async () => {
   const f = await setup();
   try {

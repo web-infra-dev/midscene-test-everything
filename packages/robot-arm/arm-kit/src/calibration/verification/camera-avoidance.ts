@@ -4,6 +4,7 @@ import {
   type CalibrationSession,
   type CartesianPose,
   RobotArmError,
+  type Vector3,
 } from '../../contracts.js';
 import { contactPoint, flangePose, quaternionDistance } from '../../domain.js';
 import {
@@ -14,6 +15,8 @@ import {
   assertParkingCorridor,
   cameraAvoidanceTargets,
   insideCameraParkingFootprint,
+  screenCenterDistanceSum,
+  sharedParkingPoints,
   taughtCameraSide,
 } from '../camera-avoidance.js';
 import { calibrationQuad } from '../screen-position.js';
@@ -25,11 +28,14 @@ import {
 } from './safe-position.js';
 import { atTravelHeight } from './travel-height.js';
 
+const MAX_SHARED_PARKING_MOVES = 4;
+
 export interface CameraAvoidanceState {
   candidate?: CalibrationSession['candidate'];
   stage: CalibrationSession['stage'];
   requireTravel?: boolean;
   screenClearances?: readonly ScreenParkingClearance[];
+  screenCenters?: readonly Pick<Vector3, 'x' | 'y'>[];
   auto?: Pick<
     NonNullable<CalibrationSession['auto']>,
     | 'batchParking'
@@ -151,16 +157,18 @@ export async function avoidCamera(
       const quad = c && screen && calibrationQuad(c, screen);
       return quad ? [quad] : [];
     });
+  const parkingObstacles = [...obstacles, ...(parking?.obstacles ?? [])];
   const generated = cameraAvoidanceTargets(
     candidate,
     ctx.screen,
     ctx.tool,
     taughtCameraSide(candidate, ctx.screen, ctx.installationTeaching),
-    [...obstacles, ...(parking?.obstacles ?? [])],
+    parkingObstacles,
     Boolean(parking),
   );
-  // A saved position is checked first. At most three new candidates are explored.
-  const targets = parking?.pose ? [parking.pose, ...generated] : generated;
+  const targets: Array<CartesianPose | undefined> = parking?.pose
+    ? [parking.pose, ...generated]
+    : generated;
   const options = {
     speed: scaleSpeed(ctx.screen.actionSpeed, 0.1),
     acceleration: scaleAcceleration(ctx.screen.actionAcceleration, 0.1),
@@ -172,41 +180,76 @@ export async function avoidCamera(
     cameraBoundaryExcessMm(contactPoint(pose, ctx.tool.offsetMm), teaching),
   ];
   const startSide = cameraSide(start);
-  if (
-    parking &&
-    !s.requireTravel &&
-    startSide.every((distance) => distance <= -20)
-  ) {
-    let canVerifyHere = false;
-    try {
-      assertBatchParking(s, ctx, start);
-      assertParkingScreenClearances(s, ctx, start);
-      canVerifyHere = true;
-    } catch {
-      host.check();
-    }
-    if (canVerifyHere && host.verifyCameraVisibility) {
-      const visibility = await host.verifyCameraVisibility(start);
-      await host.stable(start, ctx);
-      host.check();
-      s.auto.cameraVisibility = visibility;
-      if (visibility.clear) {
-        candidate.observationPose = start;
-        s.auto.observationRecorded = true;
-        s.auto.cameraAvoidanceRecorded = true;
-        s.stage = 'verification';
-        return true;
-      }
-    }
-  }
   if (parking && startSide.some((distance) => distance > -10))
     throw new RobotArmError(
       'CAMERA_CLEARANCE_REQUIRED',
       'The robot is too close to the taught camera boundary for automatic parking. Check the camera installation and teaching.',
       409,
     );
-  for (const proposed of targets.slice(0, 4)) {
+  // A stay at the measured start needs the same clearance and visibility checks.
+  if (parking && !s.requireTravel && startSide.every((side) => side <= -20))
+    targets.unshift(undefined);
+  const centers = s.screenCenters;
+  let attempts = targets;
+  if (parking && centers && centers.length > 1) {
+    const quad = calibrationQuad(candidate, ctx.screen);
+    if (quad) {
+      const startTip = contactPoint(start, ctx.tool.offsetMm);
+      const poseAt = (point: Pick<Vector3, 'x' | 'y'>) =>
+        flangePose(
+          { ...point, z: startTip.z },
+          start.orientation,
+          ctx.tool.offsetMm,
+        );
+      const points = sharedParkingPoints(
+        [...quad, ...parkingObstacles.flat()],
+        centers,
+        parking.corridor,
+        (point) =>
+          Math.max(
+            ...cameraSide(poseAt(point)).map(
+              (side, index) => side - Math.min(-20, startSide[index] - 10),
+            ),
+          ) + 0.5,
+      );
+      targets.push(...points.map(poseAt));
+    }
+    attempts = targets
+      .map((proposed) => ({
+        proposed,
+        score: screenCenterDistanceSum(
+          contactPoint(proposed ?? start, ctx.tool.offsetMm),
+          centers,
+        ),
+      }))
+      .sort((a, b) => a.score - b.score)
+      .map(({ proposed }) => proposed);
+  }
+
+  let moves = 0;
+  for (const proposed of attempts) {
     host.check();
+    if (parking && moves >= MAX_SHARED_PARKING_MOVES) break;
+    if (!proposed) {
+      if (moves || !host.verifyCameraVisibility) continue;
+      try {
+        assertBatchParking(s, ctx, start);
+        assertParkingScreenClearances(s, ctx, start);
+      } catch {
+        host.check();
+        continue;
+      }
+      const visibility = await host.verifyCameraVisibility(start);
+      await host.stable(start, ctx);
+      host.check();
+      s.auto.cameraVisibility = visibility;
+      if (!visibility.clear) continue;
+      candidate.observationPose = start;
+      s.auto.observationRecorded = true;
+      s.auto.cameraAvoidanceRecorded = true;
+      s.stage = 'verification';
+      return true;
+    }
     const actual = await host.stationaryPose(ctx);
     let lift = atTravelHeight(
       host.safeLift(actual, candidate, ctx, false),
@@ -298,6 +341,7 @@ export async function avoidCamera(
     s.auto.avoidingCamera = true;
     progress?.();
     try {
+      moves++;
       await host.move(lift, ctx, options.speed, options.acceleration);
       await host.stable(lift, ctx);
       await host.move(target, ctx, options.speed, options.acceleration);

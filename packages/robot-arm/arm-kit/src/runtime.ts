@@ -11,7 +11,7 @@ import type {
   CalibrationBatchState,
 } from './assisted-contracts.js';
 import { assertParkingCorridor } from './calibration/camera-avoidance.js';
-import { screenPoseMm } from './calibration/geometry.js';
+import { screenContactMm, screenPoseMm } from './calibration/geometry.js';
 import { contactDepthMm, surfaceClearanceMm } from './calibration/surface.js';
 import { moveToTaughtPosition } from './calibration/taught-position.js';
 import {
@@ -3596,11 +3596,21 @@ export class RobotArmRuntime extends RobotKernel {
   ): Promise<{ pose: CartesianPose; visibility: SharedParkingEvidence }> {
     const { operatorConfirmed, requireTravel } = options;
     const profile = this.profileStore.getCalibration(calibrationId);
-    const screenClearances = options.clearanceProfileIds?.map((id) => {
+    const screens = options.clearanceProfileIds?.map((id) => {
       const geometry = this.profileStore.getCalibration(id);
       const screen = this.profileStore.getScreen(geometry.screenProfileId);
-      return { geometry, clearanceMm: screen.safeHeightMm };
+      return { geometry, screen };
     });
+    const screenClearances = screens?.map(({ geometry, screen }) => ({
+      geometry,
+      clearanceMm: screen.safeHeightMm,
+    }));
+    const screenCenters = screens?.map(({ geometry, screen }) =>
+      screenContactMm(geometry, {
+        x: screen.physicalWidthMm / 2,
+        y: screen.physicalHeightMm / 2,
+      }),
+    );
     const ctx = this.context(binding);
     ctx.minimumTravelTipZMm = Math.max(
       ctx.minimumTravelTipZMm ?? Number.NEGATIVE_INFINITY,
@@ -3631,6 +3641,7 @@ export class RobotArmRuntime extends RobotKernel {
         stage: 'verification',
         requireTravel,
         screenClearances,
+        screenCenters,
         auto: { batchParking: parking },
       };
       if (operatorConfirmed) {
