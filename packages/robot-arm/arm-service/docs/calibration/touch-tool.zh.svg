@@ -1,0 +1,78 @@
+<!-- Exported from ../../src/ui/calibration/components/robot-arm/SetupIllustration.tsx -->
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="400" class="robot-setup-illustration" viewBox="0 0 640 400" role="img" aria-label="配置示意图" focusable="false">
+<title>配置示意图</title>
+<style>
+  text { font-family: system-ui, sans-serif; fill: #242b34; font-size: 15px; }
+  .setup-art-small { font-size: 12px; fill: #586474; }
+  .setup-art-on-glass { fill: #526782; }
+  .setup-art-line { fill: none; stroke: #4778e8; stroke-width: 2; }
+  .setup-art-ext { fill: none; stroke: #a9bde8; stroke-width: 1.5; stroke-dasharray: 4 4; }
+  .setup-art-dim { stroke: #4778e8; stroke-width: 2; }
+  .setup-art-label { font-size: 13px; font-weight: 600; }
+  .setup-art-blue { fill: #4778e8; }
+  .setup-art-title { font-size: 17px; font-weight: 600; }
+</style>
+<defs>
+<linearGradient id="R0-metal" x2="0" y2="1">
+<stop stop-color="#edf1f7">
+</stop>
+<stop offset="1" stop-color="#b6c2d3">
+</stop>
+</linearGradient>
+<linearGradient id="R0-glass" x2="1" y2="1">
+<stop stop-color="#eef5ff">
+</stop>
+<stop offset="1" stop-color="#d8e7ff">
+</stop>
+</linearGradient>
+<marker id="R0-arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M0 0L10 5L0 10" fill="#4778e8">
+</path>
+</marker>
+<filter id="R0-shadow" x="-30%" y="-30%" width="160%" height="180%">
+<feDropShadow dx="0" dy="9" stdDeviation="10" flood-color="#263c66" flood-opacity=".1">
+</feDropShadow>
+</filter>
+</defs>
+<rect width="640" height="400" rx="20" fill="#f2f4f7">
+</rect>
+<text x="32" y="38" class="setup-art-title">测量完整的法兰原点到尖端距离</text>
+<text x="32" y="61" class="setup-art-small">包含支架与转接件 · 此图为垂直向下安装</text>
+<g filter="url(#R0-shadow)">
+<path d="M232 83h146v30H232Z" fill="url(#R0-metal)" stroke="#8596ae">
+</path>
+<ellipse cx="305" cy="112" rx="73" ry="17" fill="#d0d9e6" stroke="#8596ae">
+</ellipse>
+<rect x="284" y="113" width="42" height="88" rx="5" fill="#6d7f98">
+</rect>
+<path d="M284 185h42l-10 24h-22Z" fill="#42556f">
+</path>
+<rect x="299" y="209" width="12" height="106" rx="4" fill="url(#R0-metal)" stroke="#8797ae">
+</rect>
+<path d="M299 310h12l-6 23Z" fill="#40536e">
+</path>
+</g>
+<circle cx="305" cy="112" r="5" fill="#4778e8" stroke="white" stroke-width="2">
+</circle>
+<circle cx="305" cy="333" r="5" fill="#4778e8" stroke="white" stroke-width="2">
+</circle>
+<path d="M305 112H418M305 333H418" class="setup-art-ext">
+</path>
+<path d="M409 117V328" class="setup-art-dim" marker-start="url(#R0-arrow)" marker-end="url(#R0-arrow)">
+</path>
+<rect x="386" y="197" width="111" height="49" rx="8" fill="#f2f4f7">
+</rect>
+<text x="400" y="218" class="setup-art-label setup-art-blue">触控笔长度</text>
+<text x="400" y="236" class="setup-art-small">实测值 · mm</text>
+<path d="M300 112H186" class="setup-art-ext">
+</path>
+<text x="52" y="108" class="setup-art-label">法兰坐标系原点</text>
+<text x="65" y="128" class="setup-art-small">从这里开始量</text>
+<path d="M282 157H186" class="setup-art-ext">
+</path>
+<text x="100" y="163">支架 / 转接件</text>
+<path d="M299 277H186" class="setup-art-ext">
+</path>
+<text x="126" y="282">触控笔</text>
+<text x="258" y="366" class="setup-art-label">接触尖端</text>
+</svg>

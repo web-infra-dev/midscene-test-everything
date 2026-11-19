@@ -1,0 +1,87 @@
+<!-- Exported from ../../src/ui/calibration/components/robot-arm/SetupIllustration.tsx -->
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="400" class="robot-setup-illustration" viewBox="0 0 640 400" role="img" aria-label="配置示意图" focusable="false">
+<title>配置示意图</title>
+<style>
+  text { font-family: system-ui, sans-serif; fill: #242b34; font-size: 15px; }
+  .setup-art-small { font-size: 12px; fill: #586474; }
+  .setup-art-on-glass { fill: #526782; }
+  .setup-art-line { fill: none; stroke: #4778e8; stroke-width: 2; }
+  .setup-art-ext { fill: none; stroke: #a9bde8; stroke-width: 1.5; stroke-dasharray: 4 4; }
+  .setup-art-dim { stroke: #4778e8; stroke-width: 2; }
+  .setup-art-label { font-size: 13px; font-weight: 600; }
+  .setup-art-blue { fill: #4778e8; }
+  .setup-art-title { font-size: 17px; font-weight: 600; }
+</style>
+<defs>
+<linearGradient id="R0-metal" x2="0" y2="1">
+<stop stop-color="#edf1f7">
+</stop>
+<stop offset="1" stop-color="#b6c2d3">
+</stop>
+</linearGradient>
+<linearGradient id="R0-glass" x2="1" y2="1">
+<stop stop-color="#eef5ff">
+</stop>
+<stop offset="1" stop-color="#d8e7ff">
+</stop>
+</linearGradient>
+<marker id="R0-arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M0 0L10 5L0 10" fill="#4778e8">
+</path>
+</marker>
+<filter id="R0-shadow" x="-30%" y="-30%" width="160%" height="180%">
+<feDropShadow dx="0" dy="9" stdDeviation="10" flood-color="#263c66" flood-opacity=".1">
+</feDropShadow>
+</filter>
+</defs>
+<rect width="640" height="400" rx="20" fill="#f2f4f7">
+</rect>
+<text x="32" y="38" class="setup-art-title">四角对应，方向一致</text>
+<text x="32" y="61" class="setup-art-small">固定相机后，选取完整触控区域并检查校正结果</text>
+<path d="M161 132L72 309H251L184 132" fill="#e9effb">
+</path>
+<rect x="133" y="87" width="81" height="50" rx="10" fill="url(#R0-metal)" stroke="#8d9db3">
+</rect>
+<circle cx="173" cy="112" r="15" fill="#435873">
+</circle>
+<circle cx="173" cy="112" r="7" fill="#799bcd">
+</circle>
+<path d="M82 232L228 243L241 312L72 295Z" fill="#34445c">
+</path>
+<path d="M86 237L224 248L235 306L78 291Z" fill="url(#R0-glass)" stroke="#4778e8" stroke-width="2">
+</path>
+<path d="M279 238H338" class="setup-art-line" marker-end="url(#R0-arrow)">
+</path>
+<text x="283" y="218" class="setup-art-small">校正</text>
+<rect x="385" y="127" width="156" height="195" rx="12" fill="#34445c">
+</rect>
+<rect x="391" y="133" width="144" height="183" rx="7" fill="url(#R0-glass)" stroke="#10aa95" stroke-width="2">
+</rect>
+<g fill="#10aa95" stroke="white" stroke-width="2">
+<circle cx="86" cy="237" r="5">
+</circle>
+<circle cx="224" cy="248" r="5">
+</circle>
+<circle cx="235" cy="306" r="5">
+</circle>
+<circle cx="78" cy="291" r="5">
+</circle>
+<circle cx="391" cy="133" r="5">
+</circle>
+<circle cx="535" cy="133" r="5">
+</circle>
+<circle cx="535" cy="316" r="5">
+</circle>
+<circle cx="391" cy="316" r="5">
+</circle>
+</g>
+<path d="M400 151h42m-42 0v42" class="setup-art-line" marker-end="url(#R0-arrow)">
+</path>
+<path d="M400 151h42" class="setup-art-line" marker-end="url(#R0-arrow)">
+</path>
+<text x="453" y="157" class="setup-art-small setup-art-on-glass">右</text>
+<text x="399" y="212" class="setup-art-small setup-art-on-glass">下</text>
+<text x="411" y="108" class="setup-art-label">校正画面</text>
+<text x="67" y="354" class="setup-art-small">相机能看到完整区域</text>
+<text x="386" y="354" class="setup-art-small">左上 / 向右 / 向下均对应</text>
+</svg>

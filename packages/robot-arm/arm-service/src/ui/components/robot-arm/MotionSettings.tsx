@@ -1,3 +1,4 @@
+import { SCREEN_PRESS_DEPTH_RANGE_MM } from '@midscene/robotics-shared/contracts';
 import {
   Alert,
   App,
@@ -304,7 +305,16 @@ export function MotionSettings({
                   id={`${fieldId}-${field.key}`}
                   aria-label={t(field.label)}
                   value={draft?.[field.key] ?? null}
-                  min={0}
+                  min={
+                    field.key === 'pressDepthMm'
+                      ? SCREEN_PRESS_DEPTH_RANGE_MM.min
+                      : 0
+                  }
+                  max={
+                    field.key === 'pressDepthMm'
+                      ? SCREEN_PRESS_DEPTH_RANGE_MM.max
+                      : undefined
+                  }
                   disabled={disabled}
                   onChange={(value) => setNumber(field.key, value)}
                 />

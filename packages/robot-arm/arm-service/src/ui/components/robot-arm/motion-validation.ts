@@ -1,3 +1,4 @@
+import { SCREEN_PRESS_DEPTH_RANGE_MM } from '@midscene/robotics-shared/contracts';
 import { t } from '../../i18n';
 import type { EffectiveCapabilities } from '../../robot-arm-api';
 type SetupProfile = Record<string, any>;
@@ -136,7 +137,14 @@ export function validateMotionSettings(
       );
     }
   }
-  measuredNumber(screen, 'screen', 'pressDepthMm', t('press depth (mm)'), 0, 5);
+  measuredNumber(
+    screen,
+    'screen',
+    'pressDepthMm',
+    t('press depth (mm)'),
+    SCREEN_PRESS_DEPTH_RANGE_MM.min,
+    SCREEN_PRESS_DEPTH_RANGE_MM.max,
+  );
   measuredNumber(
     screen,
     'screen',
@@ -145,6 +153,12 @@ export function validateMotionSettings(
     Number.MIN_VALUE,
     100,
   );
+  if (screen.pressDepthMm <= -screen.safeHeightMm)
+    throw new SetupFieldError(
+      'screen',
+      'pressDepthMm',
+      t('Safe height must exceed the magnitude of a negative press depth.'),
+    );
   measuredNumber(
     screen,
     'screen',

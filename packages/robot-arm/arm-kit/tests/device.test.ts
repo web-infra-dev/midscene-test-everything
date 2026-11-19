@@ -264,6 +264,32 @@ it('updates only screen motion fields, preserves calibration and rejects stale e
     await f.dispose();
   }
 });
+it('saves a negative press depth and places the tap target above the screen', async () => {
+  const f = await setup();
+  try {
+    const device = f.create();
+    await device.connect();
+    const { screen, calibration } = await device.configuration();
+    const saved = await device.updateMotionSettings({
+      revision: screen.revision,
+      pressDepthMm: -0.5,
+    });
+    await expect(
+      device.updateMotionSettings({
+        revision: saved.revision,
+        safeHeightMm: 0.5,
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_PROFILE' });
+    expect((await device.configuration()).screen.pressDepthMm).toBe(-0.5);
+    await device.perform({ type: 'tap', point: { x: 500, y: 250 } });
+    const lowestTargetZ = Math.min(
+      ...f.adapter.movements.map((target) => target.positionMm.z),
+    );
+    expect(lowestTargetZ).toBeCloseTo(calibration.origin.z + 0.5);
+  } finally {
+    await f.dispose();
+  }
+});
 it('safe position requires confirmation and current calibration; record does not move, return uses runtime checks', async () => {
   const f = await setup();
   try {

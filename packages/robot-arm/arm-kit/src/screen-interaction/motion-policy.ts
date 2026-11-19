@@ -3,6 +3,7 @@ import {
   type MotionOptions,
   type MotionSpeed,
   RobotArmError,
+  SCREEN_PRESS_DEPTH_RANGE_MM,
   type ScreenMotionSettings,
   type ScreenProfile,
 } from '../contracts.js';
@@ -129,12 +130,17 @@ export function validateScreenMotionSettings(
     s.motionTimeoutMs > 120000 ||
     s.safeHeightMm > 100 ||
     !Number.isFinite(s.pressDepthMm) ||
-    s.pressDepthMm < 0 ||
-    s.pressDepthMm > 5
+    s.pressDepthMm < SCREEN_PRESS_DEPTH_RANGE_MM.min ||
+    s.pressDepthMm > SCREEN_PRESS_DEPTH_RANGE_MM.max
   )
     throw new RobotArmError(
       'INVALID_PROFILE',
       'Invalid resolution, depth, clearance or timeout',
+    );
+  if (s.pressDepthMm <= -s.safeHeightMm)
+    throw new RobotArmError(
+      'INVALID_PROFILE',
+      'Safe height must exceed the magnitude of a negative press depth.',
     );
   assertSpeed(s.actionSpeed);
   if (s.swipeEndpointHoldMs === undefined)

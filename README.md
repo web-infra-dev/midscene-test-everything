@@ -60,7 +60,7 @@ A DOBOT MG400 robot arm taps and swipes a real in-car screen while an overhead c
 > <!-- TODO(AVATR Robotic team): Introduce the team, the in-vehicle testing scenarios behind this solution, and how it is used in production. -->
 > _Placeholder: an introduction from the AVATR Robotic team is coming soon._
 
-Get started: [`arm-service`](./packages/robot-arm/arm-service/README.md) · [Setup guide](https://midscenejs.com/universal-device/quick-start#dobot-mg400) · Bring your own arm with [`arm-kit`](./packages/robot-arm/arm-kit/README.md)
+Follow the [MG400 setup guide](./packages/robot-arm/arm-service/README.md) or integrate your own arm with [`arm-kit`](./packages/robot-arm/arm-kit/README.md).
 
 ### 📱 iOS AirLink × physical iPhone
 

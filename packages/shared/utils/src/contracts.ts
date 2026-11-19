@@ -414,7 +414,10 @@ export function evaluatePayloadApplication(input: {
     reason,
   };
 }
+export const SCREEN_PRESS_DEPTH_RANGE_MM = { min: -5, max: 5 } as const;
+
 export interface ScreenMotionSettings {
+  /** Offset from the calibrated screen surface. Negative values stop above it. */
   pressDepthMm: number;
   safeHeightMm: number;
   actionSpeed: MotionSpeed;

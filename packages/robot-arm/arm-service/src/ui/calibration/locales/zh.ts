@@ -1686,6 +1686,8 @@ export const zh: Record<string, string> = {
   'Enter an installation description.': '请输入安装说明。',
   'Enter a screen direction description.': '请输入屏幕方向说明。',
   'press depth (mm)': '按压深度 (mm)',
+  'Safe height must exceed the magnitude of a negative press depth.':
+    '安全高度必须大于负按压深度的绝对值。',
   'safe height (mm)': '安全高度 (mm)',
   'contact time (ms)': '接触时长 (ms)',
   'swipe endpoint hold (ms)': '滑动终点保持时长 (ms)',
