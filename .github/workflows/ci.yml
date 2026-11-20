@@ -114,7 +114,7 @@ jobs:
 
   macos-native:
     name: macOS native camera
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 10
 
     steps:

@@ -170,6 +170,20 @@ func matchingUVCDevice(
     devices: [UVCDeviceInfo]
 ) -> UVCDeviceInfo? {
     let uid = camera.uniqueID.lowercased()
+    // USB camera UIDs can encode the location ID, vendor ID, and product ID.
+    if uid.hasPrefix("0x"), let usbID = UInt64(uid.dropFirst(2), radix: 16) {
+        let locationId = UInt32(usbID >> 32)
+        if locationId != 0 {
+            let vendorId = UInt32((usbID >> 16) & 0xffff)
+            let productId = UInt32(usbID & 0xffff)
+            return devices.first {
+                $0.locationId == locationId &&
+                    $0.vendorId == vendorId &&
+                    $0.productId == productId
+            }
+        }
+    }
+
     let serialMatches = devices.filter {
         $0.serialNumber.count >= 4 &&
             uid.contains($0.serialNumber.lowercased())
@@ -189,8 +203,6 @@ func matchingUVCDevice(
     }
     if containsName.count == 1 { return containsName[0] }
 
-    if serialMatches.count == 1 { return serialMatches[0] }
-    if devices.count == 1 { return devices[0] }
     return nil
 }
 
