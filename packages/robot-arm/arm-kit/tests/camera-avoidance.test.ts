@@ -374,6 +374,32 @@ it('tries the closest point along the group edge and stops after four occluded p
     await f.cleanup();
   }
 });
+it('ends a shared parking search at the current candidate when image evidence is insufficient', async () => {
+  const f = await setup();
+  try {
+    f.session.auto!.batchParking = { obstacles: [], complete: true };
+    const verify = rstest.fn(async () => ({
+      clear: false,
+      checkedAt: new Date().toISOString(),
+      screens: [
+        {
+          id: 'phone',
+          clear: false,
+          assessment: 'insufficient-evidence' as const,
+          reason: 'glare' as const,
+          visibleFraction: 0.99,
+          minimumTileFraction: 0.83,
+        },
+      ],
+    }));
+    f.host.verifyCameraVisibility = verify;
+    expect(await avoidCamera(f.host, f.session, f.ctx)).toBe(false);
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect(f.session.auto?.observationRecorded).toBe(false);
+  } finally {
+    await f.cleanup();
+  }
+});
 it.each([
   { confirmed: true, expectedY: -112 },
   { confirmed: false, expectedY: -130 },

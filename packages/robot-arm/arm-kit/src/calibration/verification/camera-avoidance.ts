@@ -869,19 +869,33 @@ async function parkShared(
         await host.stable(measured, ctx);
         host.check();
         auto.cameraVisibility = visibility;
-        report(visibility.clear ? 'selected' : 'visibility-rejected', {
-          measured,
-          measuredTripMm: distance(actualTip, measuredTip),
-          measuredDistanceSumMm: screenReferenceDistanceSum(
-            measuredTip,
-            references,
-          ),
-          inPlace: atTarget,
-          screens: visibility.screens,
-          unclearScreenIds: visibility.screens
-            .filter((screen) => screen.clear !== true)
-            .map((screen) => screen.id),
-        });
+        const inconclusive = visibility.screens.some(
+          (screen) => screen.assessment === 'insufficient-evidence',
+        );
+        report(
+          visibility.clear
+            ? 'selected'
+            : inconclusive
+              ? 'visibility-insufficient-evidence'
+              : 'visibility-rejected',
+          {
+            measured,
+            measuredTripMm: distance(actualTip, measuredTip),
+            measuredDistanceSumMm: screenReferenceDistanceSum(
+              measuredTip,
+              references,
+            ),
+            inPlace: atTarget,
+            screens: visibility.screens,
+            unclearScreenIds: visibility.screens
+              .filter((screen) => screen.clear !== true)
+              .map((screen) => screen.id),
+          },
+        );
+        if (!visibility.clear && inconclusive) {
+          result = 'visibility-insufficient-evidence';
+          return false;
+        }
         if (!visibility.clear) continue;
         candidate.observationPose = measured;
         auto.observationRecorded = true;

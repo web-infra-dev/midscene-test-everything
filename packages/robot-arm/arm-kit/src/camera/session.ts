@@ -326,6 +326,11 @@ export class CameraSession implements CalibrationVision {
   async prepareCaptureExposure(): Promise<void> {
     await this.imaging?.beforeCapture();
   }
+  async withReducedVisibilityExposure<T>(
+    capture: (exposure: { previous: number; reduced: number }) => Promise<T>,
+  ): Promise<T | undefined> {
+    return this.imaging?.withReducedVisibilityExposure(capture);
+  }
   async binding(options: CalibrationVisionOptions): Promise<VisionBinding> {
     if (options.cameraId !== this.camera.id)
       throw new RobotArmError(

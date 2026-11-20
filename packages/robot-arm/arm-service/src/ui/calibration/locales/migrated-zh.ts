@@ -105,6 +105,19 @@ const teachingBoundaryZh: Record<string, string> = {
     '共用安全位自动对齐时检测到工具位置变化，已中止本次搜索。',
   'The arm reached a candidate Safe Position, but the camera could not verify every screen.':
     '机械臂已到达候选安全位，但相机未能确认所有屏幕清晰可见。',
+  'Possible screen glare prevented confirmation after rechecking at the same pose.':
+    '原地复测后，疑似屏幕反光仍影响可见性确认。',
+  'The robot moved during screen visibility verification. Retry from a stable pose.':
+    '屏幕可见性检测期间机械臂位置或朝向发生变化，请停稳后重试。',
+  'The camera could not read the screen pattern reliably after rechecking at the same pose.':
+    '原地复测后，相机仍无法可靠识别屏幕图案。',
+  'Camera exposure could not be restored after the visibility recheck.':
+    '可见性复测后，相机未能恢复原曝光设置。',
+  'Insufficient image evidence': '图像证据不足',
+  'Visibility assessment': '判定',
+  'Possible glare': '疑似反光',
+  'Unreliable screen pattern': '图案响应不足',
+  'Possible obstruction': '疑似遮挡',
   'The camera could not verify every screen after automatic parking. Check the live view or record a Safe Position manually.':
     '自动避让后，相机仍未能确认所有屏幕可见。请检查实时画面或手动记录安全位。',
   'The screen visibility pattern could not be verified. Check the camera view and paired phone pages.':

@@ -993,6 +993,84 @@ export class CameraImagingController {
     await this.ensureExposureForCapture();
   }
 
+  /** Shorten a locked exposure for a single image sequence and restore it. */
+  async withReducedVisibilityExposure<T>(
+    capture: (exposure: { previous: number; reduced: number }) => Promise<T>,
+  ): Promise<T | undefined> {
+    const controls = this.controls;
+    if (
+      !controls ||
+      !this.applied ||
+      this.closed ||
+      this.adjusting ||
+      this.captureInProgress
+    )
+      return undefined;
+    this.captureInProgress = true;
+    try {
+      const original = (await controls.read().catch(() => undefined))?.exposure;
+      if (!original?.supportsManual || original.mode !== 'manual')
+        return undefined;
+      const window = resolveFrameSafeExposureWindow(
+        original,
+        this.stream.getInfo().fps,
+      );
+      if (!window) return undefined;
+      const reduced = Math.max(
+        window.min,
+        original.value - Math.max(1, Math.abs(original.step || 1)),
+      );
+      if (reduced >= original.value) return undefined;
+
+      let applied: CameraControlValue | undefined;
+      try {
+        await controls.set('exposure', reduced, 'manual');
+        applied = (await controls.read()).exposure;
+      } catch {
+        // Even a failed set or readback may have changed the hardware setting.
+      }
+      let outcome: { value?: T } | { error: unknown } = {};
+      if (
+        applied?.mode === 'manual' &&
+        Number.isFinite(applied.value) &&
+        applied.value < original.value
+      ) {
+        try {
+          outcome = {
+            value: await capture({
+              previous: original.value,
+              reduced: applied.value,
+            }),
+          };
+        } catch (error) {
+          outcome = { error };
+        }
+      }
+      try {
+        await controls.set('exposure', original.value, 'manual');
+        const restored = (await controls.read()).exposure;
+        if (restored?.mode !== 'manual' || restored.value !== original.value)
+          throw new Error(
+            'Exposure readback does not match the original setting',
+          );
+      } catch (error) {
+        this.applied = false;
+        this.stopMonitor();
+        const message =
+          'Camera exposure could not be restored after the visibility recheck.';
+        this.statusValue = { state: 'error', message, updatedAt: Date.now() };
+        throw new RobotArmError('VISION_UNAVAILABLE', message, 409, {
+          exposure: original.value,
+          cause: error instanceof Error ? error.message : String(error),
+        });
+      }
+      if ('error' in outcome) throw outcome.error;
+      return outcome.value;
+    } finally {
+      this.captureInProgress = false;
+    }
+  }
+
   private async searchFocus(
     focus: CameraControlValue,
     screens: readonly ImagingScreen[],
@@ -1161,7 +1239,8 @@ export class CameraImagingController {
     background: boolean,
   ): Promise<boolean> {
     const controls = this.controls;
-    if (!controls || this.adjusting) return false;
+    if (!controls || this.adjusting || (background && this.captureInProgress))
+      return false;
     this.adjusting = true;
     try {
       const values = await controls.read();

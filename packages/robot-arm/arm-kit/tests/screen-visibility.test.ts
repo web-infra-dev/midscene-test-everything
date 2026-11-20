@@ -1,7 +1,10 @@
 import { expect, it } from '@rstest/core';
 import sharp from 'sharp';
 import { CALIBRATION_PHONE_POLICY } from '../src/assisted-contracts.js';
-import { measureScreenVisibility } from '../src/camera/screen-visibility.js';
+import {
+  combineGlareExposureEvidence,
+  measureScreenVisibility,
+} from '../src/camera/screen-visibility.js';
 
 const width = 240;
 const height = 360;
@@ -30,6 +33,8 @@ async function pattern(
     | 'top-tile'
     | 'small-spot'
     | 'thin-diagonal'
+    | 'clipped-diagonal'
+    | 'different-dark-diagonal'
     | 'glare',
   gridOffset = 0,
   leftInset = 0,
@@ -63,6 +68,10 @@ async function pattern(
         : colors[(column + row + phase) % 2];
       const sampleColumn = Math.floor(x / 5);
       const sampleRow = Math.floor(y / 5);
+      const diagonal =
+        sampleColumn >= 18 &&
+        sampleColumn < 26 &&
+        sampleRow === sampleColumn + 7;
       const covered =
         x < leftInset ||
         (iosFirstRow !== undefined &&
@@ -85,9 +94,10 @@ async function pattern(
           sampleColumn < 21 &&
           sampleRow >= 24 &&
           (sampleRow < 26 || (sampleRow === 26 && sampleColumn === 18))) ||
-        (blocked === 'thin-diagonal' &&
-          sampleColumn >= 18 &&
-          sampleColumn < 26 &&
+        (blocked === 'thin-diagonal' && diagonal) ||
+        (blocked === 'different-dark-diagonal' &&
+          sampleColumn >= 29 &&
+          sampleColumn < 37 &&
           sampleRow === sampleColumn + 7) ||
         (blocked === 'center' && x >= 90 && x < 120 && y >= 120 && y < 180);
       const offset = (y * width + x) * 3;
@@ -98,9 +108,12 @@ async function pattern(
           color.slice(1 + channel * 2, 3 + channel * 2),
           16,
         );
-        pixels[offset + channel] = covered
-          ? 30
-          : Math.min(255, intensity + (glare ? 100 : 0));
+        pixels[offset + channel] =
+          blocked === 'clipped-diagonal' && diagonal
+            ? 255
+            : covered
+              ? 30
+              : Math.min(255, intensity + (glare ? 100 : 0));
       }
     }
   }
@@ -179,6 +192,61 @@ it('tolerates scattered misses when every tile still responds', async () => {
   const result = await measureScreenVisibility(frames, screens);
   expect(result.screens[0].interiorVisibleFraction).toBeLessThan(0.98);
   expect(result.clear).toBe(true);
+});
+
+it('separates a clipped stripe from a thin obstruction without passing either', async () => {
+  const options = {
+    pattern: 'offset-contrast' as const,
+    sharedParking: true,
+    retainMasks: true,
+  };
+  for (const [defect, assessment, reason] of [
+    ['clipped-diagonal', 'insufficient-evidence', 'glare'],
+    ['thin-diagonal', 'suspected-occlusion', 'connected-gap'],
+  ] as const) {
+    const frames = await Promise.all(
+      [0, 1, 0].map((phase) => pattern(phase, defect, 0, 0, undefined, true)),
+    );
+    const result = await measureScreenVisibility(frames, screens, options);
+    expect(result.clear).toBe(false);
+    expect(result.screens[0]).toMatchObject({
+      assessment,
+      reason,
+      largestUnresponsiveRegion: 8,
+      sampleMasks: {
+        unresponsive: expect.any(String),
+        glare: expect.any(String),
+      },
+    });
+  }
+});
+
+it('uses a second exposure only to prove that originally clipped samples really responded', async () => {
+  const read = async (
+    defect: 'clipped-diagonal' | 'thin-diagonal' | 'different-dark-diagonal',
+  ) => {
+    const frames = await Promise.all(
+      [0, 1, 0].map((phase) => pattern(phase, defect, 0, 0, undefined, true)),
+    );
+    return (
+      await measureScreenVisibility(frames, screens, {
+        pattern: 'offset-contrast',
+        sharedParking: true,
+        retainMasks: true,
+      })
+    ).screens[0];
+  };
+  const normal = await read('clipped-diagonal');
+  const reduced = await read('different-dark-diagonal');
+  expect(normal.clear).toBe(false);
+  expect(reduced.clear).toBe(false);
+  expect(combineGlareExposureEvidence(normal, reduced)).toMatchObject({
+    screen: { clear: true, largestUnresponsiveRegion: 0 },
+    recoveredGlareSamples: 8,
+  });
+  expect(
+    combineGlareExposureEvidence(normal, await read('thin-diagonal')),
+  ).toBeUndefined();
 });
 
 it('accepts extra scattered gaps only in the shared parking fallback', async () => {

@@ -3615,6 +3615,7 @@ export class RobotArmRuntime extends RobotKernel {
     minimumParkingTipZMm: number,
     verifyVisibility: (
       signal: AbortSignal,
+      assertStationary: () => Promise<void>,
     ) => Promise<ScreenVisibilityEvidence>,
     guard: () => void,
     confirmPages: () => Promise<void>,
@@ -3828,7 +3829,21 @@ export class RobotArmRuntime extends RobotKernel {
               contextVersion,
             };
             try {
-              const evidence = await verifyVisibility(host.signal);
+              const evidence = await verifyVisibility(host.signal, async () => {
+                check();
+                const current = await host.read();
+                if (
+                  distance(current.positionMm, pose.positionMm) > 0.1 ||
+                  quaternionDistance(current.orientation, pose.orientation) >
+                    0.001
+                )
+                  throw new RobotArmError(
+                    'VISIBILITY_POSE_CHANGED',
+                    'The robot moved during screen visibility verification. Retry from a stable pose.',
+                    409,
+                    { expected: pose, measured: current },
+                  );
+              });
               check();
               this.audit('calibration', auditId, 'completed', {
                 ...detail,
@@ -3862,17 +3877,30 @@ export class RobotArmRuntime extends RobotKernel {
         throw error;
       });
       check();
-      if (!found && state.auto?.cameraVisibility)
+      if (!found && state.auto?.cameraVisibility) {
+        const screens = state.auto.cameraVisibility.screens
+          .filter((screen) => screen.clear !== true)
+          .map(({ id, assessment, reason }) => ({ id, assessment, reason }));
+        if (
+          screens.some(
+            (screen) => screen.assessment === 'insufficient-evidence',
+          )
+        )
+          throw new RobotArmError(
+            'VISIBILITY_INSUFFICIENT_EVIDENCE',
+            screens.some((screen) => screen.reason === 'glare')
+              ? 'Possible screen glare prevented confirmation after rechecking at the same pose.'
+              : 'The camera could not read the screen pattern reliably after rechecking at the same pose.',
+            409,
+            { screens },
+          );
         throw new RobotArmError(
           'CAMERA_VIEW_OBSTRUCTED',
           'The arm reached a candidate Safe Position, but the camera could not verify every screen.',
           409,
-          {
-            screens: state.auto.cameraVisibility.screens
-              .filter((screen) => screen.clear !== true)
-              .map(({ id }) => ({ id })),
-          },
+          { screens },
         );
+      }
       if (recheckArrivalOutsideTolerance)
         throw new RobotArmError(
           'HISTORICAL_PARKING_ARRIVAL',

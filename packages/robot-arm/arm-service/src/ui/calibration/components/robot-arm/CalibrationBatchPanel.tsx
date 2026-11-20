@@ -702,7 +702,12 @@ export const CalibrationBatchPanel = forwardRef<
               {t(
                 debug.visibility.clear
                   ? 'Screen visibility passed'
-                  : 'Screen visibility did not pass',
+                  : debug.visibility.screens.some(
+                        (screen) =>
+                          screen.assessment === 'insufficient-evidence',
+                      )
+                    ? 'Insufficient image evidence'
+                    : 'Screen visibility did not pass',
               )}
             </Typography.Text>
             <Table
@@ -717,6 +722,18 @@ export const CalibrationBatchPanel = forwardRef<
                   render: (_, screen) =>
                     screens.find(({ screenId }) => screenId === screen.id)
                       ?.name ?? screen.id,
+                },
+                {
+                  title: t('Visibility assessment'),
+                  render: (_, screen) => {
+                    if (screen.clear) return t('Screen visibility passed');
+                    if (screen.reason === 'glare') return t('Possible glare');
+                    if (screen.assessment === 'insufficient-evidence')
+                      return t('Unreliable screen pattern');
+                    if (screen.assessment === 'suspected-occlusion')
+                      return t('Possible obstruction');
+                    return t('Screen visibility did not pass');
+                  },
                 },
                 {
                   title: t('Whole screen'),

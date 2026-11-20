@@ -1014,6 +1014,28 @@ export interface ScreenVisibilityEvidence {
     /** Largest connected group of samples that did not follow the colour change. */
     largestUnresponsiveRegion?: number;
     clear?: boolean;
+    assessment?: 'visible' | 'suspected-occlusion' | 'insufficient-evidence';
+    reason?: 'glare' | 'weak-pattern' | 'connected-gap';
+    patternReliable?: boolean;
+    verifiedBy?: { attempts: number[]; recoveredGlareSamples?: number };
+    glareSamples?: number;
+    largestRegionWithoutGlare?: number;
+    largestRegionWithGlare?: number;
+    /** Row-major sample masks, packed least-significant bit first and base64 encoded. */
+    sampleMasks?: {
+      columns: number;
+      rows: number;
+      viewport: { x: number; y: number; width: number; height: number };
+      firstRowFraction: number;
+      unresponsive: string;
+      glare: string;
+      responsive: string;
+    };
+  }>;
+  attempts?: Array<{
+    pattern: ScreenVisibilityProbePattern;
+    exposure?: { previous: number; reduced: number };
+    screens: ScreenVisibilityEvidence['screens'];
   }>;
 }
 

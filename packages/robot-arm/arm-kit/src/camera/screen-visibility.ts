@@ -7,12 +7,15 @@ import {
   RobotArmError,
   type ScreenVisibilityEvidence,
   type ScreenVisibilityProbePattern,
+  semanticJson,
 } from '../contracts.js';
 import {
   applyHomography,
   computeHomography,
   polygonArea,
 } from './vision-geometry.js';
+
+const MAX_CONNECTED_GAP = 8;
 
 export interface VisibilityScreen {
   id: string;
@@ -95,9 +98,16 @@ function visibilityViewport(
 }
 
 /** Count connected misses so isolated noise does not add up to an obstruction. */
-function largestUnresponsiveRegion(mask: Uint8Array, columns: number) {
+function unresponsiveRegions(
+  unresponsive: Uint8Array,
+  columns: number,
+  glare: Uint8Array,
+) {
+  const mask = unresponsive.slice();
   const rows = mask.length / columns;
   let largest = 0;
+  let withoutGlare = 0;
+  let withGlare = 0;
   for (let index = 0; index < mask.length; index++) {
     if (!mask[index]) continue;
     const region = [index];
@@ -123,8 +133,84 @@ function largestUnresponsiveRegion(mask: Uint8Array, columns: number) {
       }
     }
     largest = Math.max(largest, region.length);
+    if (region.some((sample) => glare[sample]))
+      withGlare = Math.max(withGlare, region.length);
+    else withoutGlare = Math.max(withoutGlare, region.length);
   }
-  return largest;
+  return { largest, withoutGlare, withGlare };
+}
+
+function encodeMask(mask: Uint8Array): string {
+  const packed = Buffer.alloc(Math.ceil(mask.length / 8));
+  for (const [index, value] of mask.entries())
+    if (value) packed[index >> 3] |= 1 << (index & 7);
+  return packed.toString('base64');
+}
+
+type MeasuredScreen = ScreenVisibilityEvidence['screens'][number];
+
+/** Recover only originally clipped samples that reverse reliably in a second exposure. */
+export function combineGlareExposureEvidence(
+  normal: MeasuredScreen,
+  reduced: MeasuredScreen,
+): { screen: MeasuredScreen; recoveredGlareSamples: number } | undefined {
+  const base = normal.sampleMasks;
+  const probe = reduced.sampleMasks;
+  if (
+    reduced.id !== normal.id ||
+    normal.reason !== 'glare' ||
+    !normal.patternReliable ||
+    !reduced.patternReliable ||
+    !base ||
+    !probe ||
+    base.columns !== probe.columns ||
+    base.rows !== probe.rows ||
+    base.firstRowFraction !== probe.firstRowFraction ||
+    semanticJson(base.viewport) !== semanticJson(probe.viewport)
+  )
+    return undefined;
+
+  const unresponsive = Buffer.from(base.unresponsive, 'base64');
+  const glare = Buffer.from(base.glare, 'base64');
+  const responsive = Buffer.from(probe.responsive, 'base64');
+  const verified = Buffer.from(base.responsive, 'base64');
+  const remaining = new Uint8Array(base.columns * base.rows);
+  const remainingGlare = new Uint8Array(remaining.length);
+  let recovered = 0;
+  for (let index = 0; index < remaining.length; index++) {
+    const byte = index >> 3;
+    const bit = 1 << (index & 7);
+    if (!(unresponsive[byte] & bit)) continue;
+    if ((glare[byte] & responsive[byte] & bit) !== 0) {
+      recovered++;
+      verified[byte] |= bit;
+    } else {
+      remaining[index] = 1;
+      if (glare[byte] & bit) remainingGlare[index] = 1;
+    }
+  }
+  const regions = unresponsiveRegions(remaining, base.columns, remainingGlare);
+  if (!recovered || regions.largest >= MAX_CONNECTED_GAP) return undefined;
+
+  return {
+    recoveredGlareSamples: recovered,
+    screen: {
+      ...normal,
+      clear: true,
+      assessment: 'visible',
+      reason: undefined,
+      largestUnresponsiveRegion: regions.largest,
+      glareSamples: (normal.glareSamples ?? recovered) - recovered,
+      largestRegionWithGlare: regions.withGlare,
+      largestRegionWithoutGlare: regions.withoutGlare,
+      sampleMasks: {
+        ...base,
+        unresponsive: encodeMask(remaining),
+        glare: encodeMask(remainingGlare),
+        responsive: verified.toString('base64'),
+      },
+    },
+  };
 }
 
 /**
@@ -138,6 +224,7 @@ export async function measureScreenVisibility(
     includeUndetected?: boolean;
     pattern?: ScreenVisibilityProbePattern;
     sharedParking?: boolean;
+    retainMasks?: boolean;
   },
 ): Promise<ScreenVisibilityEvidence> {
   if (frames.length !== 3 || !screens.length)
@@ -173,193 +260,249 @@ export async function measureScreenVisibility(
   // alignment. Still require the expected pattern and a clear connected mask.
   const minimumInteriorFraction =
     offsetPattern && options?.sharedParking ? 0.9 : 0.95;
-  const results = screens.map((screen) => {
-    if (
-      screen.sourceWidth !== width ||
-      screen.sourceHeight !== height ||
-      screen.points.length !== 4 ||
-      Math.abs(polygonArea(screen.points)) < 10000
-    )
-      throw new RobotArmError(
-        'VISIBILITY_UNAVAILABLE',
-        'A screen outline is missing, too small or incompatible with the current camera frame.',
-      );
-    const transform = computeHomography(
-      [
-        { x: 0, y: 0 },
-        { x: 1, y: 0 },
-        { x: 1, y: 1 },
-        { x: 0, y: 1 },
-      ],
-      screen.points,
-    );
-    const response = (sample: { x: number; y: number }) => {
-      const point = applyHomography(transform, sample);
-      const px = Math.round(point.x);
-      const py = Math.round(point.y);
+  const results = screens.map(
+    (screen): ScreenVisibilityEvidence['screens'][number] => {
       if (
-        !Number.isFinite(px + py) ||
-        px < 0 ||
-        px >= width ||
-        py < 0 ||
-        py >= height
+        screen.sourceWidth !== width ||
+        screen.sourceHeight !== height ||
+        screen.points.length !== 4 ||
+        Math.abs(polygonArea(screen.points)) < 10000
       )
         throw new RobotArmError(
           'VISIBILITY_UNAVAILABLE',
-          'A screen visibility sample is outside the camera frame.',
+          'A screen outline is missing, too small or incompatible with the current camera frame.',
         );
-      const offset = (py * width + px) * channels;
-      // The blue tile has a greater blue-to-red difference than the other tile.
-      // Compare chroma across phases to reject brightness-only changes.
-      const blueMinusRed = decoded.map(
-        ({ data }) => data[offset + 2] - data[offset],
+      const transform = computeHomography(
+        [
+          { x: 0, y: 0 },
+          { x: 1, y: 0 },
+          { x: 1, y: 1 },
+          { x: 0, y: 1 },
+        ],
+        screen.points,
       );
-      const first = blueMinusRed[0] - blueMinusRed[1];
-      const last = blueMinusRed[2] - blueMinusRed[1];
-      // The outer frames display the same color. A weaker reversal can still
-      // count if both transitions exceed the drift between those frames.
-      const threshold = Math.max(12, Math.abs(first - last));
-      if (first >= threshold && last >= threshold) return 1;
-      if (first <= -threshold && last <= -threshold) return -1;
-      return 0;
-    };
-    const viewportHeight = screen.layout?.height;
-    const firstRow =
-      screen.firstRowHeight === undefined
-        ? 1 / rows
-        : screen.firstRowHeight / (viewportHeight ?? 0);
-    // Allow subpixel grid rounding, but reject a collapsed or oversized row.
-    if (
-      !Number.isFinite(firstRow) ||
-      firstRow < 1 / rows - 0.001 ||
-      firstRow > 3 / rows
-    )
-      throw new RobotArmError(
-        'VISIBILITY_UNAVAILABLE',
-        'Invalid visibility pattern row height.',
+      const sampleOffset = (sample: { x: number; y: number }) => {
+        const point = applyHomography(transform, sample);
+        const px = Math.round(point.x);
+        const py = Math.round(point.y);
+        if (
+          !Number.isFinite(px + py) ||
+          px < 0 ||
+          px >= width ||
+          py < 0 ||
+          py >= height
+        )
+          throw new RobotArmError(
+            'VISIBILITY_UNAVAILABLE',
+            'A screen visibility sample is outside the camera frame.',
+          );
+        return (py * width + px) * channels;
+      };
+      const response = (offset: number) => {
+        // The blue tile has a greater blue-to-red difference than the other tile.
+        // Compare chroma across phases to reject brightness-only changes.
+        const blueMinusRed = decoded.map(
+          ({ data }) => data[offset + 2] - data[offset],
+        );
+        const first = blueMinusRed[0] - blueMinusRed[1];
+        const last = blueMinusRed[2] - blueMinusRed[1];
+        // The outer frames display the same color. A weaker reversal can still
+        // count if both transitions exceed the drift between those frames.
+        const threshold = Math.max(12, Math.abs(first - last));
+        if (first >= threshold && last >= threshold) return 1;
+        if (first <= -threshold && last <= -threshold) return -1;
+        return 0;
+      };
+      const viewportHeight = screen.layout?.height;
+      const firstRow =
+        screen.firstRowHeight === undefined
+          ? 1 / rows
+          : screen.firstRowHeight / (viewportHeight ?? 0);
+      // Allow subpixel grid rounding, but reject a collapsed or oversized row.
+      if (
+        !Number.isFinite(firstRow) ||
+        firstRow < 1 / rows - 0.001 ||
+        firstRow > 3 / rows
+      )
+        throw new RobotArmError(
+          'VISIBILITY_UNAVAILABLE',
+          'Invalid visibility pattern row height.',
+        );
+      const rowPosition = (row: number) =>
+        row <= 1
+          ? row * firstRow
+          : firstRow + ((row - 1) / (rows - 1)) * (1 - firstRow);
+      const viewport = visibilityViewport(
+        screen.layout,
+        columns,
+        rows,
+        rowPosition,
+        (point) => response(sampleOffset(point)),
+        offsetPattern,
       );
-    const rowPosition = (row: number) =>
-      row <= 1
-        ? row * firstRow
-        : firstRow + ((row - 1) / (rows - 1)) * (1 - firstRow);
-    const viewport = visibilityViewport(
-      screen.layout,
-      columns,
-      rows,
-      rowPosition,
-      response,
-      offsetPattern,
-    );
-    let visible = 0;
-    let matchedCenters = 0;
-    let sampledCenters = 0;
-    const samplesPerSide = 6;
-    const isCenter = (sample: number) =>
-      offsetPattern
-        ? sample === 1 || sample === 4
-        : sample === 2 || sample === 3;
-    const samplesPerTile = samplesPerSide ** 2;
-    const sampleColumns = columns * samplesPerSide;
-    const sampleRows = rows * samplesPerSide;
-    const detected = new Uint8Array(sampleColumns * sampleRows);
-    const unresponsive = new Uint8Array(detected.length);
-    // Exclude the outline and its rounded corners from the occlusion mask.
-    const margin = samplesPerSide / 2;
-    const right = sampleColumns - margin;
-    const bottom = sampleRows - margin;
-    for (let row = 0; row < rows; row++) {
-      for (let column = 0; column < columns; column++) {
-        const baseSign = (row + column) % 2 === 0 ? 1 : -1;
-        for (let y = 0; y < samplesPerSide; y++) {
-          for (let x = 0; x < samplesPerSide; x++) {
-            const sign =
-              offsetPattern && x < samplesPerSide / 2 !== y < samplesPerSide / 2
-                ? -baseSign
-                : baseSign;
-            const sampleColumn = column * samplesPerSide + x;
-            const sampleRow = row * samplesPerSide + y;
-            const polarity = response({
-              x:
-                viewport.x +
-                ((sampleColumn + 0.5) / sampleColumns) * viewport.width,
-              y:
-                viewport.y +
-                rowPosition((sampleRow + 0.5) / samplesPerSide) *
-                  viewport.height,
-            });
-            // A small outline error can put a sample near a tile boundary
-            // into the neighboring tile. Still require the expected checkerboard
-            // polarity at tile centers and a repeatable inversion everywhere.
-            const center = isCenter(x) && isCenter(y);
-            if (center) {
-              sampledCenters++;
-              if (polarity === sign) matchedCenters++;
+      let visible = 0;
+      let matchedCenters = 0;
+      let sampledCenters = 0;
+      const samplesPerSide = 6;
+      const isCenter = (sample: number) =>
+        offsetPattern
+          ? sample === 1 || sample === 4
+          : sample === 2 || sample === 3;
+      const samplesPerTile = samplesPerSide ** 2;
+      const sampleColumns = columns * samplesPerSide;
+      const sampleRows = rows * samplesPerSide;
+      const detected = new Uint8Array(sampleColumns * sampleRows);
+      const unresponsive = new Uint8Array(detected.length);
+      const glare = new Uint8Array(detected.length);
+      let glareSamples = 0;
+      // Exclude the outline and its rounded corners from the occlusion mask.
+      const margin = samplesPerSide / 2;
+      const right = sampleColumns - margin;
+      const bottom = sampleRows - margin;
+      for (let row = 0; row < rows; row++) {
+        for (let column = 0; column < columns; column++) {
+          const baseSign = (row + column) % 2 === 0 ? 1 : -1;
+          for (let y = 0; y < samplesPerSide; y++) {
+            for (let x = 0; x < samplesPerSide; x++) {
+              const sign =
+                offsetPattern &&
+                x < samplesPerSide / 2 !== y < samplesPerSide / 2
+                  ? -baseSign
+                  : baseSign;
+              const sampleColumn = column * samplesPerSide + x;
+              const sampleRow = row * samplesPerSide + y;
+              const offset = sampleOffset({
+                x:
+                  viewport.x +
+                  ((sampleColumn + 0.5) / sampleColumns) * viewport.width,
+                y:
+                  viewport.y +
+                  rowPosition((sampleRow + 0.5) / samplesPerSide) *
+                    viewport.height,
+              });
+              const polarity = response(offset);
+              // A small outline error can put a sample near a tile boundary
+              // into the neighboring tile. Still require the expected checkerboard
+              // polarity at tile centers and a repeatable inversion everywhere.
+              const center = isCenter(x) && isCenter(y);
+              if (center) {
+                sampledCenters++;
+                if (polarity === sign) matchedCenters++;
+              }
+              const index = sampleRow * sampleColumns + sampleColumn;
+              if (polarity === sign || (!center && polarity === -sign)) {
+                detected[index] = 1;
+                visible++;
+              }
+              // Wrong polarity still means this pixel followed the colour change.
+              // Use polarity to validate the pattern, and absence of a response
+              // to identify the silhouette of a stationary object.
+              if (
+                polarity === 0 &&
+                sampleColumn >= margin &&
+                sampleColumn < right &&
+                sampleRow >= margin &&
+                sampleRow < bottom
+              ) {
+                unresponsive[index] = 1;
+                // All three phases are nearly white and a channel is close to
+                // clipping. Treat this as ambiguous, including bright objects.
+                if (
+                  options?.sharedParking &&
+                  decoded.every(({ data }) => {
+                    const r = data[offset];
+                    const g = data[offset + 1];
+                    const b = data[offset + 2];
+                    return Math.min(r, g, b) >= 225 && Math.max(r, g, b) >= 245;
+                  })
+                ) {
+                  glare[index] = 1;
+                  glareSamples++;
+                }
+              }
             }
-            const index = sampleRow * sampleColumns + sampleColumn;
-            if (polarity === sign || (!center && polarity === -sign)) {
-              detected[index] = 1;
-              visible++;
-            }
-            // Wrong polarity still means this pixel followed the colour change.
-            // Use polarity to validate the pattern, and absence of a response
-            // to identify the silhouette of a stationary object.
-            if (
-              polarity === 0 &&
-              sampleColumn >= margin &&
-              sampleColumn < right &&
-              sampleRow >= margin &&
-              sampleRow < bottom
-            )
-              unresponsive[index] = 1;
           }
         }
       }
-    }
-    let interiorVisible = 0;
-    for (let y = margin; y < bottom; y++) {
-      for (let x = margin; x < right; x++) {
-        interiorVisible += detected[y * sampleColumns + x];
-      }
-    }
-    let minimumTileFraction = 1;
-    for (let y = margin; y + samplesPerSide <= bottom; y += margin) {
-      for (let x = margin; x + samplesPerSide <= right; x += margin) {
-        let windowVisible = 0;
-        for (let dy = 0; dy < samplesPerSide; dy++) {
-          for (let dx = 0; dx < samplesPerSide; dx++) {
-            windowVisible += detected[(y + dy) * sampleColumns + x + dx];
-          }
+      let interiorVisible = 0;
+      for (let y = margin; y < bottom; y++) {
+        for (let x = margin; x < right; x++) {
+          interiorVisible += detected[y * sampleColumns + x];
         }
-        minimumTileFraction = Math.min(
-          minimumTileFraction,
-          windowVisible / samplesPerTile,
-        );
       }
-    }
-    const visibleFraction = visible / detected.length;
-    const interiorVisibleFraction =
-      interiorVisible / ((right - margin) * (bottom - margin));
-    const largestRegion = largestUnresponsiveRegion(
-      unresponsive,
-      sampleColumns,
-    );
-    // A small spot can be a display artefact. A connected gap can also be a
-    // narrow pen spanning several tiles, even with high coverage in each tile.
-    const clear =
-      visibleFraction >= 0.85 &&
-      interiorVisibleFraction >= minimumInteriorFraction &&
-      largestRegion < 8 &&
-      // A cached page or a broad camera-wide color shift cannot confirm this pattern.
-      (!offsetPattern || matchedCenters / sampledCenters >= 0.8);
-    return {
-      id: screen.id,
-      visibleFraction,
-      interiorVisibleFraction,
-      minimumTileFraction,
-      largestUnresponsiveRegion: largestRegion,
-      clear,
-    };
-  });
+      let minimumTileFraction = 1;
+      for (let y = margin; y + samplesPerSide <= bottom; y += margin) {
+        for (let x = margin; x + samplesPerSide <= right; x += margin) {
+          let windowVisible = 0;
+          for (let dy = 0; dy < samplesPerSide; dy++) {
+            for (let dx = 0; dx < samplesPerSide; dx++) {
+              windowVisible += detected[(y + dy) * sampleColumns + x + dx];
+            }
+          }
+          minimumTileFraction = Math.min(
+            minimumTileFraction,
+            windowVisible / samplesPerTile,
+          );
+        }
+      }
+      const visibleFraction = visible / detected.length;
+      const interiorVisibleFraction =
+        interiorVisible / ((right - margin) * (bottom - margin));
+      const regions = unresponsiveRegions(unresponsive, sampleColumns, glare);
+      // A small spot can be a display artefact. A connected gap can also be a
+      // narrow pen spanning several tiles, even with high coverage in each tile.
+      const patternReliable =
+        visibleFraction >= 0.85 &&
+        interiorVisibleFraction >= minimumInteriorFraction &&
+        // A cached page or a broad camera-wide color shift cannot confirm this pattern.
+        (!offsetPattern || matchedCenters / sampledCenters >= 0.8);
+      const clear = patternReliable && regions.largest < MAX_CONNECTED_GAP;
+      const result = {
+        id: screen.id,
+        visibleFraction,
+        interiorVisibleFraction,
+        minimumTileFraction,
+        largestUnresponsiveRegion: regions.largest,
+        clear,
+      };
+      if (!options?.sharedParking) return result;
+
+      const reason = clear
+        ? undefined
+        : regions.withGlare >= MAX_CONNECTED_GAP &&
+            regions.withoutGlare < MAX_CONNECTED_GAP
+          ? 'glare'
+          : !patternReliable
+            ? 'weak-pattern'
+            : 'connected-gap';
+      return {
+        ...result,
+        reason,
+        assessment: clear
+          ? 'visible'
+          : reason === 'connected-gap'
+            ? 'suspected-occlusion'
+            : 'insufficient-evidence',
+        glareSamples,
+        patternReliable,
+        largestRegionWithoutGlare: regions.withoutGlare,
+        largestRegionWithGlare: regions.withGlare,
+        ...(options.retainMasks && !clear
+          ? {
+              sampleMasks: {
+                columns: sampleColumns,
+                rows: sampleRows,
+                viewport,
+                firstRowFraction: firstRow,
+                unresponsive: encodeMask(unresponsive),
+                glare: encodeMask(glare),
+                responsive: encodeMask(detected),
+              },
+            }
+          : {}),
+      };
+    },
+  );
   if (
     !options?.includeUndetected &&
     results.every((screen) => screen.visibleFraction < 0.35)

@@ -374,6 +374,7 @@ export class CalibrationBatch {
     return {
       phones,
       frame: () => camera.rawFrame(),
+      withReducedExposure: camera.withReducedVisibilityExposure?.bind(camera),
       check: () => {
         check();
         if (
@@ -481,17 +482,22 @@ export class CalibrationBatch {
         corridorTravelTipZMm: confirmedCorridor?.travelTipZMm,
       },
       knownScreenTravelHeight(store.list(), selection),
-      async (signal) => {
-        const { phones, frame, check } = await this.visibilityInputs(
-          state.cameraId!,
-          () => this.check(signal),
-        );
+      async (signal, assertStationary) => {
+        const { phones, frame, check, withReducedExposure } =
+          await this.visibilityInputs(state.cameraId!, () =>
+            this.check(signal),
+          );
         const evidence = await verifyScreenVisibility(
           phones,
           frame,
           signal,
           check,
-          { sharedParking: true },
+          {
+            sharedParking: true,
+            retainMasks: Boolean(debug),
+            withReducedExposure,
+            assertStationary,
+          },
         );
         if (debug) debug.visibility = evidence;
         return evidence;

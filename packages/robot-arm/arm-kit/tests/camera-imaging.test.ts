@@ -1536,6 +1536,42 @@ describe('camera imaging', () => {
     }
   }, 10_000);
 
+  it('restores the locked exposure even when a reduced-exposure capture fails', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'camera-imaging-'));
+    const control = new FakeCameraControl();
+    control.values.exposure = {
+      ...control.values.exposure,
+      value: -5,
+      mode: 'manual',
+    };
+    const stream = { getInfo: () => ({ fps: 30 }) };
+    const imaging = new CameraImagingController(
+      { id: 'camera', name: 'Camera', backend: 'dshow' },
+      stream as never,
+      directory,
+      control,
+    );
+    const controller = imaging as unknown as { applied: boolean };
+    controller.applied = true;
+    try {
+      await expect(
+        imaging.withReducedVisibilityExposure(async (exposure) => {
+          expect(exposure.previous).toBe(-5);
+          expect(exposure.reduced).toBeLessThan(-5);
+          expect(control.values.exposure.value).toBe(exposure.reduced);
+          throw new Error('capture failed');
+        }),
+      ).rejects.toThrow('capture failed');
+      expect(control.values.exposure).toMatchObject({
+        value: -5,
+        mode: 'manual',
+      });
+    } finally {
+      await imaging.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('converges calibration exposure from overexposed ROI samples', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'camera-imaging-'));
     const control = new FakeCameraControl();
