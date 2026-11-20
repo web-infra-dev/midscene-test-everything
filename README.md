@@ -56,7 +56,7 @@ Run automated tests on physical iPhones over Mac Bluetooth HID with zero jailbre
 <!-- TODO: Replace with the iOS AirLink demo video (upload to GitHub to get a user-attachments URL). -->
 > 🎥 _Video placeholder: iOS AirLink demo coming soon._
 
-Get started: [`ios-airlink`](./packages/ios-airlink/README.md) · [Setup guide](https://midscenejs.com/universal-device/quick-start#ios-airlink)
+Get started: [`ios-airlink`](./packages/ios-airlink/README.md)
 
 ### 🤝 Showcase your solution
 
@@ -88,32 +88,22 @@ We maintain a clean separation of concerns: **the framework handles all generic 
 
 ## ⚡ Quick start
 
-### 1. Run tests (Connected device)
+### 1. Start or connect a device service
 
-```ts
-import { agentFromUniversalDevice } from '@midscene/universal-device';
-
-const agent = await agentFromUniversalDevice({ host: 'http://localhost:5801' });
-await agent.aiAct('Open the music app and search for "Jay Chou"');
-await agent.aiAssert('The search results list shows songs by Jay Chou');
-await agent.destroy();
-```
-*Or launch `npx @midscene/universal-device-playground` for visual debugging in your browser.*
-
-### 2. Connect a new device (Implement core interfaces)
-
-Expose your device in a few lines with `@midscene/universal-device/server`:
+To run tests, you first need a live device service providing screen capture and action interfaces. You can use an existing integration (e.g. [`ios-airlink`](./packages/ios-airlink/README.md) for physical iPhones) or expose your custom hardware via `@midscene/universal-device/server`:
 
 ```ts
 import { createServer } from 'node:http';
 import { createDeviceHandler } from '@midscene/universal-device/server';
 
 const api = createDeviceHandler({
-  token: 'service-token',
+  token: process.env.MIDSCENE_UNIVERSAL_DEVICE_SERVICE_TOKEN ?? 'my-token',
   listDevices: () => [{ id: 'my-screen', name: 'My Screen', status: 'available', actions: ['tap'] }],
   readyDevice: (id) => ({
     signal: new AbortController().signal,
+    // Core interface 1: Capture screen frame
     screenshot: async () => ({ jpeg: getScreenJpeg(), width: 1920, height: 1080, sequence: 1, receivedAt: Date.now() }),
+    // Core interface 2: Execute hardware action
     execute: async (action) => { if (action.type === 'tap') await myHardware.tap(action.point.x, action.point.y); },
   }),
 });
@@ -121,7 +111,32 @@ const api = createDeviceHandler({
 createServer((req, res) => { if (!api.handle(req, res)) res.writeHead(404).end(); }).listen(5801);
 ```
 
-See the [Universal Device documentation](https://midscenejs.com/universal-device/) for complete protocol specs and advanced usage.
+### 2. Inspect and debug in Playground (Optional)
+
+Once your device service is running, launch the browser Playground to inspect the live screen feed and test manual interactions:
+
+```sh
+npx @midscene/universal-device-playground
+```
+
+### 3. Write and run vision E2E tests
+
+With the device ready, write tests in natural language using the Midscene Agent:
+
+```ts
+import { agentFromUniversalDevice } from '@midscene/universal-device';
+
+const agent = await agentFromUniversalDevice({ host: 'http://localhost:5801' });
+
+try {
+  await agent.aiAct('Open the music app and search for "Jay Chou"');
+  await agent.aiAssert('The search results list shows songs by Jay Chou');
+} finally {
+  await agent.destroy();
+}
+```
+
+See the [Universal Device documentation](./packages/universal-device/README.md) for complete protocol specs and advanced usage.
 
 ## 📦 Packages
 

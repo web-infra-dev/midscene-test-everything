@@ -56,7 +56,7 @@
 <!-- TODO：替换为 iOS AirLink 演示视频（上传到 GitHub 获取 user-attachments 链接）。 -->
 > 🎥 _视频占位：iOS AirLink 演示视频即将补充。_
 
-开始使用：[`ios-airlink`](./packages/ios-airlink/README.md) · [配置指南](https://midscenejs.com/zh/universal-device/quick-start#ios-airlink)
+开始使用：[`ios-airlink`](./packages/ios-airlink/README.zh.md)
 
 ### 🤝 欢迎贡献你的成功案例
 
@@ -88,21 +88,9 @@
 
 ## ⚡ 快速上手
 
-### 1. 运行测试（已有设备）
+### 1. 启动或对接设备服务
 
-```ts
-import { agentFromUniversalDevice } from '@midscene/universal-device';
-
-const agent = await agentFromUniversalDevice({ host: 'http://localhost:5801' });
-await agent.aiAct('打开音乐应用，搜索“周杰伦”');
-await agent.aiAssert('搜索结果列表中显示了周杰伦的歌曲');
-await agent.destroy();
-```
-*或运行 `npx @midscene/universal-device-playground` 在浏览器中可视化调试。*
-
-### 2. 接入新设备（实现核心接口）
-
-只需通过 `@midscene/universal-device/server` 接入你的截屏与控制函数：
+要开始测试，首先需要有一个运行中的设备服务（提供画面与操作接口）。你可以直接使用现成方案（如真机 iPhone 的 [`ios-airlink`](./packages/ios-airlink/README.zh.md)），或者用 `@midscene/universal-device/server` 接入你的自定义硬件：
 
 ```ts
 import { createServer } from 'node:http';
@@ -113,7 +101,9 @@ const api = createDeviceHandler({
   listDevices: () => [{ id: 'my-screen', name: 'My Screen', status: 'available', actions: ['tap'] }],
   readyDevice: (id) => ({
     signal: new AbortController().signal,
+    // 核心接口 1：采集画面
     screenshot: async () => ({ jpeg: getScreenBuffer(), width: 1920, height: 1080, sequence: 1, receivedAt: Date.now() }),
+    // 核心接口 2：执行动作
     execute: async (action) => { if (action.type === 'tap') await myDeviceDriver.tap(action.point.x, action.point.y); },
   }),
 });
@@ -121,7 +111,32 @@ const api = createDeviceHandler({
 createServer((req, res) => { if (!api.handle(req, res)) res.writeHead(404).end(); }).listen(5801);
 ```
 
-完整协议与高级用法见 [Universal Device 文档](https://midscenejs.com/zh/universal-device/)。
+### 2. 交互调试与画面验证（可选）
+
+服务启动后，可在浏览器中打开 Playground 实时预览设备画面并手动点击调试：
+
+```sh
+npx @midscene/universal-device-playground
+```
+
+### 3. 编写并运行自然语言 E2E 测试
+
+设备就绪后，直接通过 Midscene Agent 用自然语言编写测试用例驱动该设备：
+
+```ts
+import { agentFromUniversalDevice } from '@midscene/universal-device';
+
+const agent = await agentFromUniversalDevice({ host: 'http://localhost:5801' });
+
+try {
+  await agent.aiAct('打开音乐应用，搜索“周杰伦”');
+  await agent.aiAssert('列表中展示了周杰伦的歌曲');
+} finally {
+  await agent.destroy();
+}
+```
+
+完整协议与高级用法见 [Universal Device 文档](./packages/universal-device/README.zh.md)。
 
 ## 📦 主要组件
 
