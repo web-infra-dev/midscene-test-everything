@@ -62,9 +62,9 @@ Get started: [`ios-airlink`](./packages/ios-airlink/README.md)
 
 We warmly welcome community contributions of successful integrations across different devices and scenarios! If you have built an alternative hardware solution, connectivity protocol, or unique platform practice, feel free to [open an issue](https://github.com/web-infra-dev/midscene-test-everything/issues/new) to let us know. We would love to feature and link your project right here for the community to see.
 
-## 🏗️ Architecture & Division of Responsibilities
+## 🏗️ Architecture & Workflow
 
-We maintain a clean separation of concerns: **the framework handles all generic AI testing infrastructure, while developers only implement hardware-specific sensing and control.**
+Testing real-world physical devices and screens is inherently complex and involves both hardware and software coordination — it is rarely a trivial task. To make integration as clean and approachable as possible, we maintain a clear separation of concerns: **the framework handles all generic AI testing infrastructure, while developers only implement hardware-specific sensing and control.**
 
 ```text
 ┌────────────────────────────────────────────────────────┐
@@ -83,13 +83,6 @@ We maintain a clean separation of concerns: **the framework handles all generic 
 └────────────────────────────────────────────────────────┘
 ```
 
-- **What you get**: Zero prompt engineering, coordinate guessing, or concurrency headaches — turn-key natural language testing, browser playground, and Agent integrations out of the box.
-- **What you implement**: Plug your screen capture (`screenshot`) and hardware actions (`execute`) into `createDeviceHandler()`.
-
-## 🧭 Concepts & Workflow
-
-Testing real-world physical devices and screens is inherently complex and involves both hardware and software coordination — it is rarely a trivial "Quick Start". Before integrating your setup, it helps to understand the prerequisites and core concepts.
-
 ### 1. Prerequisites: What you need to prepare
 
 A complete physical test pipeline typically requires three fundamental components:
@@ -97,14 +90,7 @@ A complete physical test pipeline typically requires three fundamental component
 - **Visual Sensing**: A reliable way to capture the display (an overhead camera, HDMI/USB capture card, or screen mirroring);
 - **Input Actuator**: A mechanism to interact with the screen (a robotic arm, Bluetooth HID module, stylus, or dedicated control API).
 
-### 2. Core Concepts: How the system works together
-
-- **Device Service**: A lightweight HTTP daemon that wraps your physical hardware into a standardized protocol;
-- **Screenshot**: Provides current screen frames (JPEG Buffer and pixel dimensions) for vision model perception;
-- **Execute**: Translates resolved screen coordinates `(x, y)` from the vision model into physical hardware taps or swipes;
-- **Midscene Agent**: The natural-language testing engine driving the full "perceive ➔ reason ➔ act ➔ assert" test loop.
-
-### 3. End-to-End Demos
+### 2. End-to-End Demos
 
 #### Demo 1: Implementing a Device Service
 
