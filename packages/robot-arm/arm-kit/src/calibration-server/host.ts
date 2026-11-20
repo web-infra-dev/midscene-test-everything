@@ -479,6 +479,7 @@ export class CalibrationHost {
     allowMismatch = false,
     output?: { width: number; height: number },
     assertCurrent?: () => void,
+    options: { preserveImaging?: boolean } = {},
   ) {
     const validity = await this.options.camera.checkCorrection(
       correction,
@@ -489,11 +490,15 @@ export class CalibrationHost {
     this.editable();
     assertCurrent?.();
     if (output)
-      await this.options.camera.setPerspective(correction, {
-        ...output,
-        rotation: correction.rotation,
-      });
-    else await this.options.camera.setCorrection(correction);
+      await this.options.camera.setPerspective(
+        correction,
+        {
+          ...output,
+          rotation: correction.rotation,
+        },
+        options,
+      );
+    else await this.options.camera.setCorrection(correction, options);
     const size = this.autoOutputSize();
     if (size && this.input) {
       const selection = { ...this.input, ...size };
@@ -1071,7 +1076,10 @@ export class CalibrationHost {
             'Enter the required phone display mode first',
             409,
           );
-        await this.saveCorrection(input);
+        await this.saveCorrection(input, false, undefined, undefined, {
+          preserveImaging: true,
+        });
+        await this.service.rebindCameraMapping();
         send(200, await this.configuration());
       } else if (relative === '/camera/correction' && req.method === 'DELETE') {
         // Clearing keeps the screen, its page link and its saved size; the

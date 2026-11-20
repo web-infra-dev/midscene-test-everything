@@ -122,6 +122,30 @@ export class CalibrationSetup {
       await this.runtime.profileStore.saveCalibrationMapping(this.deviceId);
     return this.status();
   }
+  /**
+   * A manual perspective edit replaces only the camera-to-screen geometry.
+   * Keep the verified page transform and accuracy evidence, but rebind them to
+   * the new correction so later calibration does not need another marker pass.
+   */
+  async rebindCurrentMapping() {
+    if (
+      !this.mapping ||
+      !this.input ||
+      this.mapping.vision.width !== this.input.width ||
+      this.mapping.vision.height !== this.input.height
+    )
+      return this.status();
+    const vision = await this.vision.binding(this.visionOptions());
+    this.mapping = { ...this.mapping, vision };
+    if (this.deviceId && this.geometryKey)
+      await this.runtime.profileStore.saveCalibrationMapping(this.deviceId, {
+        geometryKey: this.geometryKey,
+        accuracyBasis: 'outer-markers',
+        mapping: this.mapping,
+      });
+    await this.updateSavedCameraMapping();
+    return this.status();
+  }
   prepare(input: AssistedCalibrationInput) {
     const previous = this.input;
     const previousGeometryKey = this.geometryKey;

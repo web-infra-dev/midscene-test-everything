@@ -113,6 +113,43 @@ it('persists correction by camera identity and invalidates the binding when geom
   );
 });
 
+it('can rebind a manual perspective without releasing camera imaging', async () => {
+  const { manager } = await fixture();
+  const session = await manager.acquire('camera', 'a', 'screen-a');
+  const imaging = (
+    manager as unknown as {
+      imaging: Map<
+        string,
+        {
+          clearPerspectiveBinding(): Promise<void>;
+          rebindPerspective(
+            screenId: string,
+            correction: unknown,
+          ): Promise<void>;
+        }
+      >;
+    }
+  ).imaging.get('camera')!;
+  const clear = rstest.spyOn(imaging, 'clearPerspectiveBinding');
+  const rebind = rstest.spyOn(imaging, 'rebindPerspective');
+  const correction = {
+    sourceWidth: 1920,
+    sourceHeight: 1080,
+    rotation: 0 as const,
+    points: {
+      topLeft: { x: 100, y: 100 },
+      topRight: { x: 500, y: 100 },
+      bottomRight: { x: 500, y: 900 },
+      bottomLeft: { x: 100, y: 900 },
+    },
+  };
+
+  await session.setCorrection(correction, { preserveImaging: true });
+
+  expect(clear).not.toHaveBeenCalled();
+  expect(rebind).toHaveBeenCalledWith('screen-a', correction);
+});
+
 it('persists the perspective output target with the camera correction', async () => {
   const { manager } = await fixture();
   const session = await manager.acquire('camera', 'a');

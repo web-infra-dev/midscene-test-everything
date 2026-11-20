@@ -50,9 +50,7 @@ export class MacosCameraHardwareControl implements CameraHardwareControl {
   async open(): Promise<void> {
     if (this.opened) return;
     if (this.platform !== 'darwin')
-      throw new Error(
-        'AVFoundation camera controls are available on macOS only',
-      );
+      throw new Error('macOS camera controls are available on macOS only');
 
     const executable = await this.executable();
     const child = this.spawnProcess(executable, ['control', this.uid], {
@@ -70,7 +68,7 @@ export class MacosCameraHardwareControl implements CameraHardwareControl {
     child.once('exit', (code, signal) => {
       this.fail(
         new Error(
-          `AVFoundation control process exited (code=${code}, signal=${signal})${
+          `macOS camera control process exited (code=${code}, signal=${signal})${
             this.stderr ? `: ${this.stderr.trim()}` : ''
           }`,
         ),
@@ -138,7 +136,7 @@ export class MacosCameraHardwareControl implements CameraHardwareControl {
           clearInterval(timer);
           reject(
             new Error(
-              `AVFoundation control process failed to start${
+              `macOS camera control process failed to start${
                 this.stderr ? `: ${this.stderr.trim()}` : ''
               }`,
             ),
@@ -153,7 +151,7 @@ export class MacosCameraHardwareControl implements CameraHardwareControl {
           clearInterval(timer);
           reject(
             new Error(
-              `AVFoundation control process did not become ready${
+              `macOS camera control process did not become ready${
                 this.stderr ? `: ${this.stderr.trim()}` : ''
               }`,
             ),
@@ -169,7 +167,7 @@ export class MacosCameraHardwareControl implements CameraHardwareControl {
   ): Promise<BridgeResponse> {
     if (!this.child || !this.opened)
       return Promise.reject(
-        new Error(`AVFoundation control is not open for ${this.deviceId}`),
+        new Error(`macOS camera control is not open for ${this.deviceId}`),
       );
     const id = randomUUID();
     return new Promise((resolve, reject) => {
@@ -177,7 +175,7 @@ export class MacosCameraHardwareControl implements CameraHardwareControl {
         this.pending.delete(id);
         reject(
           new Error(
-            `AVFoundation control command timed out: ${command.action}`,
+            `macOS camera control command timed out: ${command.action}`,
           ),
         );
       }, timeoutMs);
@@ -212,7 +210,7 @@ export class MacosCameraHardwareControl implements CameraHardwareControl {
       if (response.ok) pending.resolve(response);
       else
         pending.reject(
-          new Error(response.error || 'AVFoundation control command failed'),
+          new Error(response.error || 'macOS camera control command failed'),
         );
     }
   }

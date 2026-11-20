@@ -111,3 +111,26 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+  macos-native:
+    name: macOS native camera
+    runs-on: macos-14
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Typecheck and link camera helper
+        run: |
+          set -euo pipefail
+          native=packages/shared/vision/native
+          object="$RUNNER_TEMP/macos-camera-uvc.o"
+          xcrun --sdk macosx clang -fobjc-arc -fblocks -c "$native/macos-camera-uvc.m" -o "$object"
+          xcrun --sdk macosx swiftc -typecheck -import-objc-header "$native/macos-camera-uvc.h" "$native/macos-camera.swift"
+          xcrun --sdk macosx swiftc -O "$native/macos-camera.swift" "$object" \
+            -import-objc-header "$native/macos-camera-uvc.h" \
+            -framework IOKit \
+            -o "$RUNNER_TEMP/midscene-camera"

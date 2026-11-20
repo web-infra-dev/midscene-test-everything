@@ -216,11 +216,19 @@ export class CameraSession implements CalibrationVision {
   getPerspectiveTarget(): PerspectiveTarget | undefined {
     return this.target && structuredClone(this.target);
   }
-  async setCorrection(input: CameraCorrection): Promise<void> {
+  async setCorrection(
+    input: CameraCorrection,
+    options: { preserveImaging?: boolean } = {},
+  ): Promise<void> {
     validateCameraCorrection(input);
     const correction = structuredClone(input);
-    await this.imaging?.clearPerspectiveBinding();
-    return this.writePerspective(correction, this.target);
+    if (!options.preserveImaging) await this.imaging?.clearPerspectiveBinding();
+    await this.writePerspective(correction, this.target);
+    if (options.preserveImaging)
+      await this.imaging?.rebindPerspective(
+        this.screenId ?? this.camera.id,
+        correction,
+      );
   }
   /**
    * Releases the applied perspective. The screen keeps its identity — name,
@@ -242,14 +250,20 @@ export class CameraSession implements CalibrationVision {
   async setPerspective(
     input: CameraCorrection,
     target: PerspectiveTarget,
+    options: { preserveImaging?: boolean } = {},
   ): Promise<void> {
     validateCameraCorrection(input);
     validatePerspectiveTarget(target);
-    await this.imaging?.clearPerspectiveBinding();
-    return this.writePerspective(
+    if (!options.preserveImaging) await this.imaging?.clearPerspectiveBinding();
+    await this.writePerspective(
       structuredClone(input),
       structuredClone(target),
     );
+    if (options.preserveImaging)
+      await this.imaging?.rebindPerspective(
+        this.screenId ?? this.camera.id,
+        input,
+      );
   }
   private writePerspective(
     correction: CameraCorrection,
@@ -308,10 +322,7 @@ export class CameraSession implements CalibrationVision {
     return (await this.stream.getFrame({ fresh: true, timeoutMs: 5000 })).jpeg;
   }
 
-  /**
-   * Explicit capture-button entry point for the retained auto-exposure routine.
-   * Live preview and marker polling intentionally do not call this.
-   */
+  /** Entry point for capture workflows that need a fresh exposure precheck. */
   async prepareCaptureExposure(): Promise<void> {
     await this.imaging?.beforeCapture();
   }
@@ -510,6 +521,7 @@ export class CameraSession implements CalibrationVision {
   async snapshot(options: CalibrationVisionOptions): Promise<VisionSnapshot> {
     // correctedFrame already requests a fresh frame and verifies its dimensions.
     if (SCREEN_DRIFT_DETECTION_ENABLED) await this.assertPerspectiveCurrent();
+    await this.imaging?.beforeCapture();
     const before = await this.binding(options);
     const correction = this.getCorrection()!;
     const image = await this.correctedFrame(correction, options);

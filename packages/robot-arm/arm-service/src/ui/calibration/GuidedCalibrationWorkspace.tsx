@@ -573,28 +573,26 @@ function GuidedContent({
    * mapping, so the later steps and the marker review read one geometry.
    */
   const applyCorrection = useCallback(
-    async (correction: CameraCorrection) => {
-      const saved = await markerRequest<Configuration>(
-        `${base}/camera/correction`,
-        correction,
-      );
+    async (
+      updates: ReadonlyArray<{
+        screenId: string;
+        correction: CameraCorrection;
+      }>,
+    ) => {
+      for (const update of updates)
+        await markerRequest<Configuration>(
+          `/api/devices/${encodeURIComponent(update.screenId)}/calibration/camera/correction`,
+          update.correction,
+        );
       // Page mapping needs the saved tool setup; a bench that has not saved it
-      // yet keeps the perspective and maps during the tool step.
+      // yet keeps the perspective and maps during the tool step. The host
+      // rebinds an existing mapping to the manual corners without replaying
+      // marker detection or camera imaging calibration.
       if (currentBase.current !== base) return;
-      if (saved.output) {
-        try {
-          await client.mapAssistedCalibration(saved.output);
-          if (currentBase.current === base) setMappingError(undefined);
-        } catch (cause) {
-          if (currentBase.current === base)
-            setMappingError(
-              cause instanceof Error ? cause.message : String(cause),
-            );
-        }
-      }
+      setMappingError(undefined);
       await refresh();
     },
-    [base, client, refresh],
+    [base, refresh],
   );
   /**
    * Clearing keeps the screen, its page link and its marker slot; only the
@@ -1568,12 +1566,9 @@ function GuidedContent({
                       perspectiveOpen={perspectiveEditor}
                       onPerspectiveOpenChange={(open) => {
                         // Placing the corners by hand is a deliberate choice:
-                        // keep the automatic pass from opening over the editor.
+                        // keep the automatic pass from opening over the editor
+                        // while retaining the existing camera imaging profile.
                         if (open) autoDetectStarted.current = selectedId;
-                        if (open)
-                          void controller
-                            .releaseImaging()
-                            .catch(() => undefined);
                         setPerspectiveEditor(open);
                       }}
                       output={

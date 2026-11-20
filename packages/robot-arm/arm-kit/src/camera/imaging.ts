@@ -14,7 +14,6 @@ import type { CalibrationImagingStatus } from '../assisted-contracts.js';
 import type { CameraCorrection } from '../contracts.js';
 import { RobotArmError } from '../contracts.js';
 import {
-  CALIBRATION_EXPOSURE_REGION,
   type ImagingScreen,
   type LumaMetrics,
   type ToneReading,
@@ -24,6 +23,7 @@ import {
   exposureSeverity,
   exposureTargetDirection,
   isStructuredDarkUiHighlight,
+  measureCalibrationExposure,
   measureExposure,
   measureFocus,
   measureTone,
@@ -52,8 +52,8 @@ interface StoredCameraImaging {
 }
 
 const SAMPLE_INTERVAL_MS = 1_500;
-/** Two matching extreme samples trigger after roughly three seconds. */
-const MONITOR_INTERVAL_MS = 1_500;
+/** Two matching extreme samples trigger after roughly four seconds. */
+const MONITOR_INTERVAL_MS = 2_000;
 const ADJUST_COOLDOWN_MS = 3_000;
 const SAMPLE_MAX_AGE_MS = 5_000;
 const CONSECUTIVE_SAMPLES = 2;
@@ -63,6 +63,12 @@ const MAX_CAPTURE_ITERATIONS = 3;
 const MAX_CALIBRATION_EXPOSURE_ITERATIONS = 6;
 const MAX_STEP_UNITS = 3;
 const CONTROL_SETTLE_MS = 120;
+const WHITE_BALANCE_SETTLE_MS = 350;
+const WHITE_BALANCE_SAMPLE_COUNT = 3;
+const WHITE_BALANCE_MAX_SCORE = 0.08;
+const FOCUS_SETTLE_MS = 180;
+const FOCUS_LOCAL_RANGE_FRACTION = 0.04;
+const FOCUS_LOCAL_OFFSETS = [0, -1, 1, -2, 2] as const;
 const GAIN_CANDIDATES = [8, 16, 24, 32, 48, 64, 96] as const;
 const GAIN_RANGE_FRACTIONS = [
   0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64,
@@ -124,12 +130,39 @@ function uniqueCandidates(values: readonly number[]) {
   return [...new Set(values)];
 }
 
+function controlStep(control: CameraControlValue) {
+  const step = Math.abs(control.step);
+  return Number.isFinite(step) && step > 0
+    ? step
+    : Math.max(1e-6, (control.max - control.min) / 100);
+}
+
 function quantizeControl(value: number, control: CameraControlValue) {
   const step = Math.max(1, Math.abs(control.step || 1));
   return clamp(
     control.min + Math.round((value - control.min) / step) * step,
     control.min,
     control.max,
+  );
+}
+
+/** Automatic focus supplies the starting point; only inspect a small bracket. */
+function localFocusCandidates(control: CameraControlValue) {
+  const step = controlStep(control);
+  const span = Math.max(0, control.max - control.min);
+  const coarse = Math.max(
+    step,
+    Math.ceil((span * FOCUS_LOCAL_RANGE_FRACTION) / step) * step,
+  );
+  const center = clamp(control.value, control.min, control.max);
+  return FOCUS_LOCAL_OFFSETS.map((offset) => {
+    const value = clamp(center + offset * coarse, control.min, control.max);
+    return control.min + Math.round((value - control.min) / step) * step;
+  }).filter(
+    (value, index, values) =>
+      values.findIndex(
+        (other) => Math.abs(other - value) <= Number.EPSILON * 10,
+      ) === index,
   );
 }
 
@@ -208,6 +241,14 @@ export class CameraImagingController {
     correction: () => CameraCorrection | undefined,
   ) {
     this.registered.set(screenId, correction);
+  }
+
+  async rebindPerspective(screenId: string, correction: CameraCorrection) {
+    if (!this.stored) return;
+    const roi = this.stored.rois.find((entry) => entry.screenId === screenId);
+    if (!roi) return;
+    roi.fingerprint = correctionFingerprint({ screenId, correction });
+    await this.persist(this.stored);
   }
 
   status(): CameraImagingStatus {
@@ -299,6 +340,11 @@ export class CameraImagingController {
     return this.controls;
   }
 
+  private async discardControls(controls: CameraHardwareControl) {
+    if (this.controls === controls) this.controls = undefined;
+    await controls.close().catch(() => undefined);
+  }
+
   private async ensureControls(): Promise<CameraHardwareControl> {
     const controls = await this.getControls();
     if (controls) return controls;
@@ -319,11 +365,20 @@ export class CameraImagingController {
   }
 
   private async readManualControls() {
-    const controls = await this.getControls();
-    if (!controls) return undefined;
-    const { focus, exposure } = await controls.read();
-    if (!focus?.supportsManual || !exposure?.supportsManual) return undefined;
-    return { controls, values: { focus, exposure } };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const controls = await this.getControls();
+      if (!controls) return undefined;
+      try {
+        const { focus, exposure } = await controls.read();
+        if (!focus?.supportsManual || !exposure?.supportsManual)
+          return undefined;
+        return { controls, values: { focus, exposure } };
+      } catch (error) {
+        if (attempt > 0) throw error;
+        await this.discardControls(controls);
+      }
+    }
+    return undefined;
   }
 
   async releaseForCorrection(): Promise<void> {
@@ -437,8 +492,9 @@ export class CameraImagingController {
           : {}),
         updatedAt: Date.now(),
       };
-      // Exposure remains locked after restart. Automatic adjustment is reserved
-      // for an explicit capture-button action.
+      // Keep the restored profile while allowing fresh extreme-luma samples to
+      // adjust exposure without fighting the capture-time precheck.
+      this.startMonitor();
     } catch (error) {
       this.statusValue = {
         state: 'error',
@@ -634,6 +690,7 @@ export class CameraImagingController {
           : 'Focus, exposure, white balance and tone locked',
         updatedAt: Date.now(),
       };
+      this.startMonitor();
       return this.status();
     } catch (error) {
       try {
@@ -688,52 +745,30 @@ export class CameraImagingController {
       min: exposure.min,
       max: exposure.max,
     };
-    const step = Math.max(1, Math.abs(exposure.step || 1));
-    const candidates = uniqueCandidates(
-      Array.from(
-        { length: Math.floor((window.max - window.min) / step) + 1 },
-        (_, index) => window.min + index * step,
-      ).concat(window.max),
-    );
-    let best:
-      | {
-          value: number;
-          score: number;
-          metrics: LumaMetrics;
-        }
-      | undefined;
-    for (const value of candidates) {
-      await controls.set('exposure', value, 'manual');
-      await delay(CONTROL_SETTLE_MS);
-      const reading = await this.currentCalibrationExposureReading();
-      const score =
-        exposureCalibrationScore(reading.selected) +
-        distancePenalty(value, exposure.value, window, 0.02);
-      if (
-        !best ||
-        score < best.score - 1e-9 ||
-        (Math.abs(score - best.score) < 1e-9 &&
-          Math.abs(value - exposure.value) <
-            Math.abs(best.value - exposure.value))
-      )
-        best = { value, score, metrics: reading.selected };
-    }
-    if (!best)
-      throw new RobotArmError(
-        'VISION_UNAVAILABLE',
-        'No exposure sample could be evaluated',
-        409,
-      );
-    await controls.set('exposure', best.value, 'manual');
+    const initialExposure = clamp(exposure.value, window.min, window.max);
+    if (initialExposure !== exposure.value)
+      await controls.set('exposure', initialExposure, 'manual');
+    await this.convergeExposureForCalibration();
 
     let bestGain = gain?.value;
+    const currentExposure = (await controls.read()).exposure;
+    if (!currentExposure)
+      throw new RobotArmError(
+        'VISION_UNAVAILABLE',
+        'Exposure control disappeared during calibration',
+        409,
+      );
+    const finalReading = await this.currentCalibrationExposureReading();
+    const exposureScore =
+      exposureCalibrationScore(finalReading.selected) +
+      distancePenalty(currentExposure.value, exposure.value, window, 0.02);
     if (
       gain?.supportsManual &&
-      best.value === window.max &&
-      (best.metrics.mean < 175 ||
-        classifyExposureExtreme(best.metrics) === 'too-dark')
+      currentExposure.value === window.max &&
+      (finalReading.selected.mean < 175 ||
+        classifyExposureExtreme(finalReading.selected) === 'too-dark')
     ) {
-      let bestGainScore = best.score;
+      let bestGainScore = exposureScore;
       for (const gainValue of uniqueCandidates(gainCandidates(gain))) {
         await controls.set('gain', gainValue, 'manual');
         await delay(CONTROL_SETTLE_MS);
@@ -752,22 +787,19 @@ export class CameraImagingController {
     this.statusValue = {
       ...this.statusValue,
       state: 'exposure',
-      exposure: best.value,
+      exposure: currentExposure.value,
       ...(bestGain !== undefined ? { gain: bestGain } : {}),
       message: 'Exposure and gain converged',
       updatedAt: Date.now(),
     };
-    return { value: best.value, gain: bestGain };
+    return { value: currentExposure.value, gain: bestGain };
   }
 
   private async searchWhiteBalance(screens: readonly ImagingScreen[]) {
     const controls = await this.ensureControls();
     const control = (await controls.read()).whiteBalance;
     if (!control?.supportsManual) return undefined;
-    const initialReading = await measureWhiteBalance(
-      await this.freshFrame(),
-      screens,
-    );
+    const initialReading = await this.measureSettledWhiteBalance(screens);
     const step = Math.max(1, Math.abs(control.step || 1));
     const span = Math.max(step, control.max - control.min);
     const coarse = Array.from({ length: 5 }, (_, index) =>
@@ -784,11 +816,7 @@ export class CameraImagingController {
     };
     for (const value of uniqueCandidates([control.value, ...coarse])) {
       await controls.set('whiteBalance', value, 'manual');
-      await delay(CONTROL_SETTLE_MS);
-      const reading = await measureWhiteBalance(
-        await this.freshFrame(),
-        screens,
-      );
+      const reading = await this.measureSettledWhiteBalance(screens);
       if (!reading) continue;
       const score =
         reading.score + distancePenalty(value, control.default, control, 0.03);
@@ -815,22 +843,41 @@ export class CameraImagingController {
     ])) {
       if (value < control.min || value > control.max) continue;
       await controls.set('whiteBalance', value, 'manual');
-      await delay(CONTROL_SETTLE_MS);
-      const reading = await measureWhiteBalance(
-        await this.freshFrame(),
-        screens,
-      );
+      const reading = await this.measureSettledWhiteBalance(screens);
       if (!reading) continue;
       const score =
         reading.score + distancePenalty(value, control.default, control, 0.03);
       if (score < best.score - 1e-9) best = { value, score, reading };
     }
-    if (best.reading.score > 0.08) {
+    if (best.reading.score > WHITE_BALANCE_MAX_SCORE) {
       await this.restoreControls(controls, { whiteBalance: control });
       return undefined;
     }
     await controls.set('whiteBalance', best.value, 'manual');
-    return { ...best.reading, value: best.value };
+    const verification = await this.measureSettledWhiteBalance(screens);
+    if (!verification || verification.score > WHITE_BALANCE_MAX_SCORE) {
+      await this.restoreControls(controls, { whiteBalance: control });
+      return undefined;
+    }
+    return { ...verification, value: best.value };
+  }
+
+  private async measureSettledWhiteBalance(
+    screens: readonly ImagingScreen[],
+  ): Promise<WhiteBalanceReading | undefined> {
+    await delay(WHITE_BALANCE_SETTLE_MS);
+    // Discard the frame produced before the camera applied the new control.
+    await this.freshFrame();
+    const readings: WhiteBalanceReading[] = [];
+    for (let index = 0; index < WHITE_BALANCE_SAMPLE_COUNT; index += 1) {
+      const reading = await measureWhiteBalance(
+        await this.freshFrame(),
+        screens,
+      );
+      if (reading) readings.push(reading);
+    }
+    readings.sort((left, right) => left.score - right.score);
+    return readings[Math.floor(readings.length / 2)];
   }
 
   private async tuneBrightnessAndContrast(screens: readonly ImagingScreen[]) {
@@ -938,10 +985,8 @@ export class CameraImagingController {
   }
 
   /**
-   * Reserved for an explicit capture-button exposure precheck.
-   *
-   * Do not call this from live preview polling. The calibrated exposure remains
-   * locked until the operator explicitly requests a capture.
+   * Runs immediately before a requested still frame is read. Preview polling
+   * never calls this path, so it cannot continuously disturb the locked camera.
    */
   async beforeCapture(): Promise<void> {
     if (!this.applied || !this.controls) return;
@@ -952,30 +997,23 @@ export class CameraImagingController {
     focus: CameraControlValue,
     screens: readonly ImagingScreen[],
   ) {
-    const step = Math.max(1, Math.abs(focus.step));
-    const coarse = Math.max(
-      step,
-      Math.ceil((focus.max - focus.min) / 13 / step) * step,
-    );
-    const candidates = new Set<number>();
-    for (let value = focus.min; value <= focus.max; value += coarse)
-      candidates.add(value);
-    candidates.add(focus.max);
-    let best = { value: focus.value, score: -1 };
-    for (const value of candidates) {
+    let best = {
+      value: focus.value,
+      score: Number.NEGATIVE_INFINITY,
+      distance: Number.POSITIVE_INFINITY,
+    };
+    for (const value of localFocusCandidates(focus)) {
       await this.controls!.set('focus', value, 'manual');
       const score = await this.measureSettledFocus(screens);
-      if (score > best.score) best = { value, score };
-    }
-    const from = clamp(best.value - coarse, focus.min, focus.max);
-    const to = clamp(best.value + coarse, focus.min, focus.max);
-    for (let value = from; value <= to; value += step) {
-      await this.controls!.set('focus', value, 'manual');
-      const score = await this.measureSettledFocus(screens);
-      if (score > best.score) best = { value, score };
+      const distance = Math.abs(value - focus.value);
+      if (
+        score > best.score + 1e-9 ||
+        (Math.abs(score - best.score) <= 1e-9 && distance < best.distance)
+      )
+        best = { value, score, distance };
     }
     await this.controls!.set('focus', best.value, 'manual');
-    await delay(180);
+    await delay(FOCUS_SETTLE_MS);
     const verification = await measureFocus(await this.freshFrame(), screens);
     return {
       value: best.value,
@@ -986,14 +1024,14 @@ export class CameraImagingController {
   }
 
   private async measureSettledFocus(screens: readonly ImagingScreen[]) {
-    await delay(220);
-    await this.freshFrame();
+    await delay(FOCUS_SETTLE_MS);
     await this.freshFrame();
     const scores: number[] = [];
-    for (let index = 0; index < 3; index += 1)
+    for (let index = 0; index < 2; index += 1)
       scores.push((await measureFocus(await this.freshFrame(), screens)).score);
-    scores.sort((left, right) => left - right);
-    return scores[1] ?? scores[0] ?? 0;
+    return scores.length
+      ? scores.reduce((sum, value) => sum + value, 0) / scores.length
+      : 0;
   }
 
   private async ensureExposureForCapture(): Promise<void> {
@@ -1039,10 +1077,7 @@ export class CameraImagingController {
         iteration++
       ) {
         const reading = await this.currentCalibrationExposureReading();
-        const direction = exposureTargetDirection(
-          reading.selected,
-          Date.now() < this.darkModeUntil,
-        );
+        const direction = classifyExposureExtreme(reading.selected);
         if (!direction) return;
         if (previousDirection && direction !== previousDirection) return;
         previousDirection = direction;
@@ -1117,9 +1152,7 @@ export class CameraImagingController {
   }
 
   private async currentCalibrationExposureReading() {
-    return measureExposure(await this.freshFrame(), this.screens(), {
-      region: CALIBRATION_EXPOSURE_REGION,
-    });
+    return measureCalibrationExposure(await this.freshFrame(), this.screens());
   }
 
   private async applyExposureAdjustment(
@@ -1127,10 +1160,11 @@ export class CameraImagingController {
     direction: 'too-bright' | 'too-dark',
     background: boolean,
   ): Promise<boolean> {
-    if (!this.controls || this.adjusting) return false;
+    const controls = this.controls;
+    if (!controls || this.adjusting) return false;
     this.adjusting = true;
     try {
-      const values = await this.controls.read();
+      const values = await controls.read();
       const exposure = values.exposure;
       if (!exposure?.supportsManual) return false;
       const window = resolveFrameSafeExposureWindow(
@@ -1152,7 +1186,7 @@ export class CameraImagingController {
       );
       if (nextExposure === exposure.value) return false;
 
-      await this.controls.set('exposure', nextExposure, 'manual');
+      await controls.set('exposure', nextExposure, 'manual');
       this.lastAdjustAt = Date.now();
       this.extremeDirection = undefined;
       this.extremeCount = 0;
@@ -1166,6 +1200,9 @@ export class CameraImagingController {
         updatedAt: Date.now(),
       };
       return true;
+    } catch {
+      await this.discardControls(controls);
+      return false;
     } finally {
       this.adjusting = false;
     }

@@ -96,7 +96,9 @@ export function CameraMappingStep({
   onAddScreen?(): void;
   onPair(): void;
   onDetect(): void;
-  onApply(correction: CameraCorrection): Promise<void>;
+  onApply(
+    updates: ReadonlyArray<{ screenId: string; correction: CameraCorrection }>,
+  ): Promise<void>;
   onConfirm?(correction: CameraCorrection): Promise<void>;
   /** Releases the applied perspective but keeps the screen and its page. */
   onClear?(): Promise<void>;
@@ -121,9 +123,14 @@ export function CameraMappingStep({
   const verified = canConfirm && mappingReady && !mappingError;
   const notice = error ?? mappingError;
   useEffect(() => speakCalibration('cameraSetup'), [screenId]);
-  const apply = async (value: CameraCorrection) => {
+  const apply = async (
+    updates: ReadonlyArray<{
+      screenId: string;
+      correction: CameraCorrection;
+    }>,
+  ) => {
     setError(undefined);
-    await onApply(value);
+    await onApply(updates);
     await refresh();
   };
   const confirm = async () => {
@@ -386,6 +393,13 @@ export function CameraMappingStep({
         base={base}
         live={cameraPreviewUrl(base, 'mapping-live')}
         corrected={cameraPreviewUrl(base, 'mapping-editor-corrected')}
+        screens={screens.filter(
+          (
+            entry,
+          ): entry is CameraMappingScreen & { correction: CameraCorrection } =>
+            Boolean(entry.correction),
+        )}
+        screenId={screenId}
         correction={correction}
         output={output}
         onClose={() => setEditorOpen(false)}
@@ -393,9 +407,9 @@ export function CameraMappingStep({
           setEditorOpen(false);
           onDetect();
         }}
-        onApply={async (value) => {
+        onApply={async (updates) => {
           try {
-            await apply(value);
+            await apply(updates);
             setEditorOpen(false);
           } catch (cause) {
             setError(cause instanceof Error ? cause.message : String(cause));
@@ -420,6 +434,8 @@ function PerspectiveEditor({
   base,
   live,
   corrected,
+  screens,
+  screenId,
   correction,
   output,
   onClose,
@@ -432,24 +448,51 @@ function PerspectiveEditor({
   live: string;
   /** Separate MJPEG slot; sharing `live` would make the two retire each other. */
   corrected: string;
+  screens: ReadonlyArray<
+    CameraMappingScreen & { correction: CameraCorrection }
+  >;
+  screenId?: string;
   correction?: CameraCorrection;
   output?: { width: number; height: number };
   onClose(): void;
   onDetect(): void;
-  onApply(correction: CameraCorrection): Promise<void>;
+  onApply(
+    updates: ReadonlyArray<{ screenId: string; correction: CameraCorrection }>,
+  ): Promise<void>;
   onError(cause: unknown): void;
 }) {
   useCalibrationLanguage((state) => state.language);
-  const [draft, setDraft] = useState<CameraCorrection | undefined>(correction);
+  const [activeScreenId, setActiveScreenId] = useState(screenId);
+  const [drafts, setDrafts] = useState<
+    Record<string, CameraCorrection | undefined>
+  >({});
   const [saving, setSaving] = useState(false);
   const [frameKey, setFrameKey] = useState(0);
   /** A frame that never arrives would otherwise leave the editor empty forever. */
   const [frameError, setFrameError] = useState(false);
+  const screensKey = screens
+    .map((screen) => `${screen.id}:${JSON.stringify(screen.correction)}`)
+    .join('|');
   useEffect(() => {
     if (!open) return;
-    setDraft(correction);
+    setActiveScreenId(screenId);
+    setDrafts(
+      Object.fromEntries(
+        screens.map((screen) => [
+          screen.id,
+          structuredClone(screen.correction),
+        ]),
+      ),
+    );
     setFrameError(false);
-  }, [open, correction?.sourceWidth, correction?.sourceHeight]);
+  }, [open, screenId, screensKey]);
+  const activeScreen =
+    screens.find((screen) => screen.id === activeScreenId) ?? screens[0];
+  const draft =
+    drafts[activeScreen?.id ?? screenId] ??
+    (activeScreen?.id === screenId ? correction : activeScreen?.correction);
+  const screenBase = (id: string) =>
+    `/api/devices/${encodeURIComponent(id)}/calibration`;
   /* A camera without a saved preset still needs a rectangle to drag. */
   useEffect(() => {
     if (!open || draft) return;
@@ -462,7 +505,7 @@ function PerspectiveEditor({
       if (!width || !height) return;
       const insetX = width * 0.1;
       const insetY = height * 0.1;
-      setDraft({
+      const initial = {
         points: {
           topLeft: { x: insetX, y: insetY },
           topRight: { x: width - insetX, y: insetY },
@@ -472,7 +515,11 @@ function PerspectiveEditor({
         sourceWidth: width,
         sourceHeight: height,
         rotation: 0,
-      });
+      } satisfies CameraCorrection;
+      setDrafts((current) => ({
+        ...current,
+        [activeScreen?.id ?? screenId]: initial,
+      }));
     };
     image.onerror = () => {
       if (active) setFrameError(true);
@@ -481,10 +528,23 @@ function PerspectiveEditor({
     return () => {
       active = false;
     };
-  }, [open, draft, base, frameKey]);
+  }, [open, draft, activeScreen?.id, screenId, base, frameKey]);
   const size =
-    output ??
+    (activeScreen?.id === screenId ? output : undefined) ??
     (draft && measuredPerspectiveTarget(draft.points, draft.rotation));
+  const overlays = screens.map((screen) => ({
+    id: screen.id,
+    name: screen.name,
+    value: drafts[screen.id] ?? screen.correction,
+    active: screen.id === activeScreen?.id,
+  }));
+  const activeCorrected =
+    activeScreen && activeScreen.id !== screenId
+      ? cameraPreviewUrl(
+          screenBase(activeScreen.id),
+          `mapping-editor-corrected-${activeScreen.id}`,
+        )
+      : corrected;
   return (
     <Modal
       open={open}
@@ -528,11 +588,22 @@ function PerspectiveEditor({
               <header>
                 <strong>{t('Live Preview')}</strong>
                 <div className="range-actions">
+                  {screens.length > 1 && (
+                    <Select
+                      size="small"
+                      aria-label={t('Screen outline')}
+                      value={activeScreen?.id ?? screenId}
+                      options={screens.map((screen) => ({
+                        value: screen.id,
+                        label: screen.name,
+                      }))}
+                      onChange={setActiveScreenId}
+                    />
+                  )}
                   <Button
                     size="small"
                     disabled={saving}
                     onClick={() => {
-                      setDraft(undefined);
                       setFrameError(false);
                       setFrameKey((value) => value + 1);
                     }}
@@ -546,10 +617,18 @@ function PerspectiveEditor({
               </header>
               <div className="screen-range-stage">
                 <CameraCornerEditor
+                  key={`${activeScreen?.id ?? screenId}-${frameKey}`}
                   value={draft}
                   src={live}
                   disabled={saving}
-                  onChange={setDraft}
+                  overlays={overlays}
+                  onChange={(value) => {
+                    if (!activeScreen) return;
+                    setDrafts((current) => ({
+                      ...current,
+                      [activeScreen.id]: value,
+                    }));
+                  }}
                 />
               </div>
             </section>
@@ -567,7 +646,7 @@ function PerspectiveEditor({
                   <CorrectedPreview
                     correction={draft}
                     size={size}
-                    src={corrected}
+                    src={activeCorrected}
                   />
                 )}
               </div>
@@ -584,7 +663,14 @@ function PerspectiveEditor({
               if (!draft) return;
               setSaving(true);
               try {
-                await onApply(draft);
+                const updates = screens.flatMap((screen) => {
+                  const value = drafts[screen.id];
+                  return value &&
+                    JSON.stringify(value) !== JSON.stringify(screen.correction)
+                    ? [{ screenId: screen.id, correction: value }]
+                    : [];
+                });
+                await onApply(updates);
               } catch (cause) {
                 onError(cause);
               } finally {

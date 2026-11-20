@@ -2,6 +2,7 @@ import type { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { expect, it, rstest } from '@rstest/core';
+import { macosCameraControlTarget } from '../src/camera/macos-camera-backend.js';
 import { MacosCameraHardwareControl } from '../src/camera/macos-camera-control.js';
 
 function fixture() {
@@ -49,7 +50,7 @@ function respond(
   child.stdout.write(`${JSON.stringify({ id: request.id, ...value })}\n`);
 }
 
-it('bridges AVFoundation control queries, writes and shutdown', async () => {
+it('bridges camera control queries, writes and shutdown', async () => {
   const { child, control, requests, spawnProcess } = fixture();
   const opening = control.open();
   child.stdout.write('{"id":"ready","ok":true}\n');
@@ -120,7 +121,7 @@ it('reports helper command failures to the imaging caller', async () => {
   await expect(reading).rejects.toThrow('Manual focus is unavailable');
 });
 
-it('rejects startup when the AVFoundation helper cannot launch', async () => {
+it('rejects startup when the camera helper cannot launch', async () => {
   const { child, control } = fixture();
   const opening = control.open();
   await new Promise((resolve) => setImmediate(resolve));
@@ -128,4 +129,18 @@ it('rejects startup when the AVFoundation helper cannot launch', async () => {
 
   await expect(opening).rejects.toThrow('Camera access was denied');
   expect(child.kill).toHaveBeenCalled();
+});
+
+it('targets UVC by USB location and falls back to the AVFoundation UID', () => {
+  expect(
+    macosCameraControlTarget({
+      uid: '0x046d0x085e',
+      usbLocationId: 0x1420_0000,
+    }),
+  ).toBe('uvc:337641472');
+  expect(
+    macosCameraControlTarget({
+      uid: 'CC00000000000000000000000000000',
+    }),
+  ).toBe('CC00000000000000000000000000000');
 });

@@ -1,4 +1,5 @@
 import type { CameraCorrection } from '@midscene/robotics-shared/contracts';
+import * as React from 'react';
 import { useRef } from 'react';
 import { label as defaultLabel } from './labels.js';
 
@@ -12,10 +13,17 @@ export function CameraCornerEditor({
   disabled,
   onChange,
   onDragging,
+  overlays = [],
   translate = defaultLabel,
 }: {
   translate?: typeof defaultLabel;
   onDragging?(active: boolean): void;
+  overlays?: ReadonlyArray<{
+    id: string;
+    name: string;
+    value: CameraCorrection;
+    active: boolean;
+  }>;
   value: CameraCorrection;
   src: string;
   disabled: boolean;
@@ -65,14 +73,24 @@ export function CameraCornerEditor({
           viewBox={`0 0 ${value.sourceWidth} ${value.sourceHeight}`}
         >
           <title>{translate('Screen outline')}</title>
-          <polygon
-            points={corners
-              .map(
-                (corner) =>
-                  `${value.points[corner].x},${value.points[corner].y}`,
-              )
-              .join(' ')}
-          />
+          {overlays.map((overlay) => (
+            <polygon
+              key={overlay.id}
+              className={
+                overlay.active
+                  ? 'camera-corner-overlay camera-corner-overlay-active'
+                  : 'camera-corner-overlay'
+              }
+              points={corners
+                .map(
+                  (corner) =>
+                    `${overlay.value.points[corner].x},${overlay.value.points[corner].y}`,
+                )
+                .join(' ')}
+            >
+              <title>{overlay.name}</title>
+            </polygon>
+          ))}
         </svg>
         {corners.map((corner, index) => (
           <button

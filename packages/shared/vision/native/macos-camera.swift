@@ -11,6 +11,7 @@ struct DeviceInfo: Encodable {
     let name: String
     let deviceType: String
     let formats: [CaptureMode]
+    let usbLocationId: UInt32?
 }
 
 struct CaptureMode: Encodable {
@@ -18,6 +19,58 @@ struct CaptureMode: Encodable {
     let height: Int32
     let minFps: Double
     let maxFps: Double
+}
+
+struct UVCDeviceInfo: Decodable {
+    let locationId: UInt32
+    let vendorId: UInt32
+    let productId: UInt32
+    let name: String
+    let serialNumber: String
+}
+
+struct UVCDeviceListResponse: Decodable {
+    let ok: Bool
+    let devices: [UVCDeviceInfo]?
+    let error: String?
+}
+
+struct ControlRequest: Decodable {
+    let id: String
+    let action: String
+    let property: String?
+    let value: Double?
+    let mode: String?
+}
+
+struct ControlValue: Codable {
+    let property: String
+    let value: Double
+    let mode: String
+    let min: Double
+    let max: Double
+    let step: Double
+    let defaultValue: Double
+    let supportsAuto: Bool
+    let supportsManual: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case property, value, mode, min, max, step, supportsAuto, supportsManual
+        case defaultValue = "default"
+    }
+}
+
+struct ControlResponse: Encodable {
+    let id: String
+    let ok: Bool
+    let controls: [String: ControlValue]?
+    let error: String?
+}
+
+struct UVCControlResponse: Decodable {
+    let ok: Bool
+    let controls: [String: ControlValue]?
+    let error: String?
 }
 
 func cameras() -> [AVCaptureDevice] {
@@ -83,6 +136,243 @@ func fail(_ message: String) -> Never {
     }
     FileHandle.standardError.write(Data((message + "\n").utf8))
     exit(1)
+}
+
+func takeNativeString(_ pointer: UnsafeMutablePointer<CChar>) -> String {
+    defer { MidsceneUVCFreeString(pointer) }
+    return String(cString: pointer)
+}
+
+func uvcDevices() -> [UVCDeviceInfo] {
+    guard let pointer = MidsceneUVCDeviceListJSON() else { return [] }
+    let data = Data(takeNativeString(pointer).utf8)
+    do {
+        let response = try JSONDecoder().decode(
+            UVCDeviceListResponse.self,
+            from: data
+        )
+        return response.ok ? response.devices ?? [] : []
+    } catch {
+        return []
+    }
+}
+
+func normalizedHardwareName(_ value: String) -> String {
+    let scalars = value
+        .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        .unicodeScalars
+        .filter(CharacterSet.alphanumerics.contains)
+    return String(String.UnicodeScalarView(scalars))
+}
+
+func matchingUVCDevice(
+    for camera: AVCaptureDevice,
+    devices: [UVCDeviceInfo]
+) -> UVCDeviceInfo? {
+    let uid = camera.uniqueID.lowercased()
+    let serialMatches = devices.filter {
+        $0.serialNumber.count >= 4 &&
+            uid.contains($0.serialNumber.lowercased())
+    }
+    if serialMatches.count == 1 { return serialMatches[0] }
+
+    let deviceName = normalizedHardwareName(camera.localizedName)
+    let named = devices.filter {
+        normalizedHardwareName($0.name) == deviceName
+    }
+    if named.count == 1 { return named[0] }
+
+    let containsName = devices.filter {
+        let hardwareName = normalizedHardwareName($0.name)
+        return hardwareName.count >= 4 &&
+            (hardwareName.contains(deviceName) || deviceName.contains(hardwareName))
+    }
+    if containsName.count == 1 { return containsName[0] }
+
+    if serialMatches.count == 1 { return serialMatches[0] }
+    if devices.count == 1 { return devices[0] }
+    return nil
+}
+
+func writeControlResponse(_ response: ControlResponse) {
+    do {
+        let data = try JSONEncoder().encode(response)
+        var line = data
+        line.append(0x0A)
+        FileHandle.standardOutput.write(line)
+    } catch {
+        fail("Failed to encode camera control response: \(error)")
+    }
+}
+
+func queryUVCControls(
+    _ device: UnsafeMutableRawPointer
+) throws -> UVCControlResponse {
+    guard let pointer = MidsceneUVCDeviceQueryJSON(device) else {
+        throw NSError(
+            domain: "MidsceneCameraControl",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "UVC query returned no response"]
+        )
+    }
+    let data = Data(takeNativeString(pointer).utf8)
+    let response = try JSONDecoder().decode(UVCControlResponse.self, from: data)
+    if !response.ok {
+        throw NSError(
+            domain: "MidsceneCameraControl",
+            code: 2,
+            userInfo: [NSLocalizedDescriptionKey:
+                response.error ?? "UVC camera query failed"]
+        )
+    }
+    return response
+}
+
+func setUVCControl(
+    _ device: UnsafeMutableRawPointer,
+    property: String,
+    value: Double,
+    mode: String
+) throws {
+    guard let pointer = MidsceneUVCDeviceSetJSON(
+        device,
+        property,
+        value,
+        mode
+    ) else {
+        throw NSError(
+            domain: "MidsceneCameraControl",
+            code: 3,
+            userInfo: [NSLocalizedDescriptionKey: "UVC set returned no response"]
+        )
+    }
+    let data = Data(takeNativeString(pointer).utf8)
+    let response = try JSONDecoder().decode(UVCControlResponse.self, from: data)
+    if !response.ok {
+        throw NSError(
+            domain: "MidsceneCameraControl",
+            code: 4,
+            userInfo: [NSLocalizedDescriptionKey:
+                response.error ?? "UVC camera command failed"]
+        )
+    }
+}
+
+func openUVCControl(_ target: String) -> UnsafeMutableRawPointer? {
+    if target.hasPrefix("uvc:"),
+       let location = UInt32(target.dropFirst(4)) {
+        return MidsceneUVCDeviceCreateForLocation(location)
+    }
+    guard let camera = cameras().first(where: { $0.uniqueID == target }),
+          let match = matchingUVCDevice(for: camera, devices: uvcDevices())
+    else { return nil }
+    return MidsceneUVCDeviceCreateForLocation(match.locationId)
+}
+
+func runControl(_ target: String) -> Never {
+    guard let device = openUVCControl(target) else {
+        fail(
+            "No standard UVC controls found for \(target). " +
+            "Built-in and Continuity cameras do not expose USB UVC controls."
+        )
+    }
+    defer { MidsceneUVCDeviceDestroy(device) }
+
+    writeControlResponse(
+        ControlResponse(id: "ready", ok: true, controls: nil, error: nil)
+    )
+    while let line = readLine() {
+        let request: ControlRequest
+        do {
+            guard let data = line.data(using: .utf8) else {
+                throw NSError(
+                    domain: "MidsceneCameraControl",
+                    code: 5,
+                    userInfo: [NSLocalizedDescriptionKey:
+                        "Camera control request is not UTF-8"]
+                )
+            }
+            request = try JSONDecoder().decode(ControlRequest.self, from: data)
+        } catch {
+            writeControlResponse(
+                ControlResponse(
+                    id: "",
+                    ok: false,
+                    controls: nil,
+                    error: error.localizedDescription
+                )
+            )
+            continue
+        }
+
+        do {
+            switch request.action {
+            case "query":
+                let response = try queryUVCControls(device)
+                writeControlResponse(
+                    ControlResponse(
+                        id: request.id,
+                        ok: true,
+                        controls: response.controls,
+                        error: nil
+                    )
+                )
+            case "set":
+                guard let property = request.property,
+                      let value = request.value,
+                      let mode = request.mode,
+                      mode == "auto" || mode == "manual" else {
+                    throw NSError(
+                        domain: "MidsceneCameraControl",
+                        code: 6,
+                        userInfo: [NSLocalizedDescriptionKey:
+                            "Camera control value is invalid"]
+                    )
+                }
+                try setUVCControl(
+                    device,
+                    property: property,
+                    value: value,
+                    mode: mode
+                )
+                writeControlResponse(
+                    ControlResponse(
+                        id: request.id,
+                        ok: true,
+                        controls: nil,
+                        error: nil
+                    )
+                )
+            case "shutdown":
+                writeControlResponse(
+                    ControlResponse(
+                        id: request.id,
+                        ok: true,
+                        controls: nil,
+                        error: nil
+                    )
+                )
+                exit(0)
+            default:
+                throw NSError(
+                    domain: "MidsceneCameraControl",
+                    code: 7,
+                    userInfo: [NSLocalizedDescriptionKey:
+                        "Unknown camera control action: \(request.action)"]
+                )
+            }
+        } catch {
+            writeControlResponse(
+                ControlResponse(
+                    id: request.id,
+                    ok: false,
+                    controls: nil,
+                    error: error.localizedDescription
+                )
+            )
+        }
+    }
+    exit(0)
 }
 
 func captureFrameDuration(fps: Double, minDuration: CMTime, maxDuration: CMTime) -> CMTime {
@@ -166,7 +456,11 @@ final class JpegReceiver: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
 }
 
 let args = CommandLine.arguments
+if args.count == 3 && args[1] == "control" {
+    runControl(args[2])
+}
 if args.count == 2 && args[1] == "list" {
+    let uvc = uvcDevices()
     let devices = cameras().map { device in
         let formats = device.formats.flatMap { format -> [CaptureMode] in
             let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
@@ -175,8 +469,13 @@ if args.count == 2 && args[1] == "list" {
                             minFps: range.minFrameRate, maxFps: range.maxFrameRate)
             }
         }
-        return DeviceInfo(uid: device.uniqueID, name: device.localizedName,
-                          deviceType: device.deviceType.rawValue, formats: formats)
+        return DeviceInfo(
+            uid: device.uniqueID,
+            name: device.localizedName,
+            deviceType: device.deviceType.rawValue,
+            formats: formats,
+            usbLocationId: matchingUVCDevice(for: device, devices: uvc)?.locationId
+        )
     }
     do {
         let data = try JSONEncoder().encode(devices)
@@ -189,7 +488,7 @@ if args.count == 2 && args[1] == "list" {
 
 let appCapture = args.count == 10 && args[8] == "--socket"
 guard (args.count == 8 || appCapture), args[1] == "capture" else {
-    fail("Usage: macos-camera list | capture <uid> <width> <height> <fps> <horizontalFlip> <verticalFlip>")
+    fail("Usage: macos-camera list | control <uid-or-uvc-location> | capture <uid> <width> <height> <fps> <horizontalFlip> <verticalFlip>")
 }
 if appCapture {
     connectToService(args[9])

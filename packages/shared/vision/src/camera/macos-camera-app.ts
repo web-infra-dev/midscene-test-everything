@@ -1,5 +1,4 @@
 import { execFile, spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { EventEmitter, once } from 'node:events';
 import {
   access,
@@ -16,22 +15,20 @@ import { setTimeout } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { JpegStreamParser } from './jpeg-stream-parser.js';
+import {
+  compileMacosCameraExecutable,
+  macosCameraEntitlements,
+  macosCameraInfoPlist,
+  macosCameraSourceHash,
+} from './macos-camera-native.js';
 import type { CameraSource } from './types.js';
 
 const exec = promisify(execFile);
-const native = new URL('../../native/', import.meta.url);
 
 export async function buildCameraApp(directory: string) {
-  const source = new URL('macos-camera.swift', native);
-  const info = await readFile(new URL('macos-camera-Info.plist', native));
-  const entitlements = new URL('macos-camera-entitlements.plist', native);
-  const digest = createHash('sha256')
-    .update(await readFile(source))
-    .update(info)
-    .update(await readFile(entitlements))
-    .update(process.arch)
-    .digest('hex')
-    .slice(0, 16);
+  const info = await readFile(macosCameraInfoPlist);
+  const entitlements = await readFile(macosCameraEntitlements);
+  const digest = await macosCameraSourceHash([info, entitlements]);
   const app = join(directory, digest, 'Midscene Camera.app');
   const executable = 'Contents/MacOS/MidsceneCamera';
   try {
@@ -40,17 +37,16 @@ export async function buildCameraApp(directory: string) {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
-  await mkdir(join(directory, digest), { recursive: true, mode: 0o700 });
+  await mkdir(join(directory, digest), {
+    recursive: true,
+    mode: 0o700,
+  });
   const temporary = await mkdtemp(join(directory, digest, 'build-'));
   try {
     const candidate = join(temporary, 'Midscene Camera.app');
     await mkdir(join(candidate, 'Contents/MacOS'), { recursive: true });
     await writeFile(join(candidate, 'Contents/Info.plist'), info);
-    await exec(
-      '/usr/bin/swiftc',
-      ['-O', fileURLToPath(source), '-o', join(candidate, executable)],
-      { timeout: 120_000 },
-    );
+    await compileMacosCameraExecutable(join(candidate, executable));
     await exec(
       '/usr/bin/codesign',
       [
@@ -60,7 +56,7 @@ export async function buildCameraApp(directory: string) {
         '--options',
         'runtime',
         '--entitlements',
-        fileURLToPath(entitlements),
+        fileURLToPath(macosCameraEntitlements),
         candidate,
       ],
       { timeout: 30_000 },

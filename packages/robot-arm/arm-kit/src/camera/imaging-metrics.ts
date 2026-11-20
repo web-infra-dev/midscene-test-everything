@@ -16,6 +16,8 @@ const FOCUS_TILE_COLUMNS = 6;
 const FOCUS_TILE_ROWS = 12;
 const TONE_PATCH_WIDTH = 36;
 const TONE_PATCH_HEIGHT = 18;
+const WHITE_BALANCE_MIN_PATCHES = 3;
+const WHITE_BALANCE_MIN_LEVEL_SPREAD = 45;
 
 export interface NormalizedImageRegion {
   left: number;
@@ -580,6 +582,7 @@ export async function measureWhiteBalance(
     )
       return [];
     const patches: Array<{
+      level: number;
       redGreenRatio: number;
       blueGreenRatio: number;
     }> = [];
@@ -605,11 +608,17 @@ export async function measureWhiteBalance(
       )
         continue;
       patches.push({
+        level,
         redGreenRatio: r / g,
         blueGreenRatio: b / g,
       });
     }
-    if (patches.length < 2) return [];
+    const levels = patches.map((patch) => patch.level);
+    if (
+      patches.length < WHITE_BALANCE_MIN_PATCHES ||
+      Math.max(...levels) - Math.min(...levels) < WHITE_BALANCE_MIN_LEVEL_SPREAD
+    )
+      return [];
     const errors = patches.map(
       ({ redGreenRatio, blueGreenRatio }) =>
         Math.abs(Math.log(Math.max(0.001, redGreenRatio))) +
@@ -796,6 +805,24 @@ export async function measureExposure(
     })),
     updatedAt: Date.now(),
   };
+}
+
+/**
+ * Exposure calibration is defined by the calibration pattern's white sample,
+ * not by coverage of that sample in the complete camera frame.
+ */
+export async function measureCalibrationExposure(
+  jpeg: Buffer,
+  screens: readonly ImagingScreen[],
+) {
+  const reading = await measureExposure(jpeg, screens, {
+    region: CALIBRATION_EXPOSURE_REGION,
+  });
+  if (!reading.screenReadings.length)
+    throw new Error(
+      'Exposure calibration requires a corrected calibration-screen region',
+    );
+  return reading;
 }
 
 async function decodeFocusFrame(jpeg: Buffer): Promise<GrayImage> {
