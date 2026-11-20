@@ -538,6 +538,8 @@ export interface AutomaticCaptureHost {
         direction: 'approach' | 'return';
         leg: 'lift' | 'traverse' | 'lower' | 'direct';
       };
+      /** Identifies the first actual translation in a shared parking search. */
+      sharedParkingTravel?: { rank: number; leg: string };
     },
   ): Promise<CartesianPose | undefined>;
 }
@@ -743,6 +745,7 @@ export interface CalibrationBatchCommand {
     | 'record-safe-position'
     | 'confirm-shared-parking'
     | 'debug-shared-parking'
+    | 'recheck-shared-parking'
     | 'enter-drag'
     | 'exit-drag';
 }

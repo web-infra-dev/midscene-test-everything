@@ -21,6 +21,13 @@ import {
 // Match the 0.5 mm measured arrival tolerance for the start of the route only.
 const BOUNDARY_READBACK_NOISE_MM = 0.5;
 
+export function sameTravelPose(a: CartesianPose, b: CartesianPose): boolean {
+  return (
+    distance(a.positionMm, b.positionMm) <= 1e-6 &&
+    quaternionDistance(a.orientation, b.orientation) <= 1e-6
+  );
+}
+
 export function insideTaughtTravelSpace(
   tip: Vector3,
   teaching: InstallationTeaching,
@@ -91,8 +98,7 @@ export async function moveToTaughtPosition(
     const pose = route[index];
     try {
       if (
-        distance(reached.positionMm, pose.positionMm) <= 1e-6 &&
-        quaternionDistance(reached.orientation, pose.orientation) <= 1e-6 &&
+        sameTravelPose(reached, pose) &&
         // An out-of-bounds readback still needs the corrective lift.
         !(index === 0 && excess > CAMERA_BOUNDARY_EPSILON_MM)
       )

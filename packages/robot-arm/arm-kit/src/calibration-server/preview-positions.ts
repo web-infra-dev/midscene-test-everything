@@ -5,6 +5,7 @@ import type {
   CalibrationPreviewPositions,
 } from '../assisted-contracts.js';
 import { screenContact } from '../calibration/geometry.js';
+import { savedCalibrationReference } from '../calibration/reference-position.js';
 import type { CameraSession } from '../camera/session.js';
 import {
   applyHomography,
@@ -181,41 +182,20 @@ export function calibrationPreviewPositions(
           ),
     );
   }
-  const taught =
-    teaching?.referenceDeviceId === deviceId
-      ? teaching.referencePose
-      : undefined;
   const draft = options.teachingView
     ? runtime.installationTeachingDraft({ ...setup, screenProfileId: deviceId })
     : undefined;
-  let reference = draft?.poses.reference ?? taught;
-  if (!reference && (fit || teaching)) {
-    const profiles = store.list();
-    reference =
-      fit &&
-      profiles.sessions?.find(
-        (s) =>
-          s.status === 'completed' && s.candidate?.id === fit.calibration.id,
-      )?.auto?.startPose;
-    // Older teachings lack a reference screen ID. Use them only when the
-    // current device is the sole possible owner on this camera.
-    if (!reference && teaching && !teaching.referenceDeviceId) {
-      const otherTarget = profiles.screenTargets?.some(
-        (target) =>
-          !target.archived &&
-          target.cameraId === setup.cameraId &&
-          target.id !== deviceId,
-      );
-      const otherDevice = [
-        ...(profiles.calibrationSetups ?? []),
-        ...(profiles.devices ?? []),
-      ].some(
-        (item) =>
-          item.cameraId === setup.cameraId && item.deviceId !== deviceId,
-      );
-      if (!otherTarget && !otherDevice) reference = teaching.referencePose;
-    }
-  }
+  const reference =
+    draft?.poses.reference ??
+    (fit || teaching
+      ? savedCalibrationReference(
+          () => store.list(),
+          deviceId,
+          setup.cameraId,
+          fit?.calibration.id,
+          teaching,
+        )?.pose
+      : undefined);
   const safe = fit?.calibration.observationPose;
   // A fresh teaching draft clears its previous boundary when the reference is re-recorded.
   const cameraBoundary = draft

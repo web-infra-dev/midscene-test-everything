@@ -62,8 +62,8 @@ const teachingBoundaryZh: Record<string, string> = {
     '尚未确认已保存的工具负载。请在机械臂状态栏同步工具负载后再开始。',
   'Automatic acceptance requires complete contact and plane evidence for the selected sampling mode':
     '自动验收要求接触证据完整，并满足所选采样模式的平面质量要求。',
-  'The shared Safe Position must clear the entire screen group at the confirmed travel height.':
-    '共用安全位必须避开整组屏幕及屏间区域，并满足已确认的通行高度。',
+  'The shared Safe Position must be outside the screen group and meet the minimum parking height.':
+    '共用安全位必须位于整组屏幕范围之外，并达到最低停靠高度。',
   'The route to the shared Safe Position is outside the confirmed corridor.':
     '前往共用安全位的路线超出已确认的通行区域。',
   'Installation teaching and motion settings are required for batch parking.':
@@ -87,6 +87,22 @@ const teachingBoundaryZh: Record<string, string> = {
     '相机未能确认所有屏幕可见。请检查实时画面中是否有反光或遮挡。',
   'No reachable camera-clear Safe Position was found within the bounded search.':
     '在限定范围内未找到相机视野清晰且可达的安全位。',
+  'Shared parking needs the taught tool orientation. The tool is off by {0}° (allowed {1}°). Align it at a confirmed safe position and retry.':
+    '工具朝向偏离示教值 {0}°，允许偏差为 {1}°。请在已确认的安全位置对齐工具朝向后重试。',
+  'Recheck historical Safe Position': '复验历史共用安全位',
+  'Start recheck': '开始复验',
+  'No verified historical Safe Position matches the current calibration.':
+    '没有找到与当前标定匹配的历史已验证安全位。',
+  'The tool orientation changed during the shared parking search. Retry from a stable position.':
+    '寻找共用安全位时检测到工具朝向发生变化，请让机械臂停稳后重试。',
+  'The historical Safe Position is outside the current parking envelope.':
+    '历史安全位超出当前工位允许的避让范围。',
+  'No safe route to the historical Safe Position passed preflight from the current pose.':
+    '从当前位置到历史安全位的路径未通过安全预检。',
+  'The measured arrival was outside the tolerance for the historical Safe Position.':
+    '机械臂的实测到位误差超过历史安全位允许的范围。',
+  'The tool position changed during shared parking orientation alignment.':
+    '共用安全位自动对齐时检测到工具位置变化，已中止本次搜索。',
   'The arm reached a candidate Safe Position, but the camera could not verify every screen.':
     '机械臂已到达候选安全位，但相机未能确认所有屏幕清晰可见。',
   'The camera could not verify every screen after automatic parking. Check the live view or record a Safe Position manually.':

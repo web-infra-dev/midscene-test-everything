@@ -55,8 +55,15 @@ export function insideCameraParkingFootprint(
   tip: PlanePoint,
   points: readonly PlanePoint[],
 ): boolean {
+  return points.length > 0 && parkingFootprintClearance(tip, points) <= 0;
+}
+
+export function parkingFootprintClearance(
+  tip: PlanePoint,
+  points: readonly PlanePoint[],
+) {
   const { minX, maxX, minY, maxY } = cameraParkingFootprint(points);
-  return tip.x >= minX && tip.x <= maxX && tip.y >= minY && tip.y <= maxY;
+  return Math.max(minX - tip.x, tip.x - maxX, minY - tip.y, tip.y - maxY);
 }
 
 export function assertParkingCorridor(
@@ -82,17 +89,20 @@ const distance = (
   right: { x: number; y: number },
 ): number => Math.hypot(left.x - right.x, left.y - right.y);
 
-export function screenCenterDistanceSum(
+export function screenReferenceDistanceSum(
   tip: PlanePoint,
-  centers: readonly PlanePoint[],
+  references: readonly PlanePoint[],
 ): number {
-  return centers.reduce((sum, center) => sum + distance(tip, center), 0);
+  return references.reduce(
+    (sum, reference) => sum + distance(tip, reference),
+    0,
+  );
 }
 
 /** Search just outside the full screen group and give visibility a wider fallback. */
 export function sharedParkingPoints(
   footprintPoints: readonly PlanePoint[],
-  centers: readonly PlanePoint[],
+  references: readonly PlanePoint[],
   corridor:
     | NonNullable<CalibrationBatchPlan['transfer']>['corridor']
     | undefined,
@@ -100,9 +110,56 @@ export function sharedParkingPoints(
 ): PlanePoint[] {
   const footprint = cameraParkingFootprint(footprintPoints);
   const points: PlanePoint[] = [];
+  const add = (point: PlanePoint) => {
+    if (points.every((existing) => distance(existing, point) >= 2))
+      points.push(point);
+  };
+  const nearPadding = 2;
+  if (references.length === 2) {
+    const [a, b] = references;
+    const outside = (point: PlanePoint) => [
+      footprint.minX - nearPadding - point.x,
+      point.x - footprint.maxX - nearPadding,
+      footprint.minY - nearPadding - point.y,
+      point.y - footprint.maxY - nearPadding,
+    ];
+    const excess = (point: PlanePoint, side: number) => [
+      -outside(point)[side],
+      cameraExcess(point),
+      ...(corridor
+        ? [
+            corridor.minX - point.x,
+            point.x - corridor.maxX,
+            corridor.minY - point.y,
+            point.y - corridor.maxY,
+          ]
+        : []),
+    ];
+    // The distance sum is constant on the segment. Take the middle of each
+    // feasible interval to leave room at both ends.
+    for (let side = 0; side < 4; side++) {
+      let low = 0;
+      let high = 1;
+      const end = excess(b, side);
+      for (const [index, start] of excess(a, side).entries()) {
+        const finish = end[index];
+        if (start > 0 && finish > 0) {
+          low = 1;
+          high = 0;
+          break;
+        }
+        if (start > 0) low = Math.max(low, start / (start - finish));
+        if (finish > 0) high = Math.min(high, start / (start - finish));
+      }
+      if (low <= high) {
+        const t = (low + high) / 2;
+        add({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+      }
+    }
+  }
   // The near edge leaves room for arrival error. The second edge and
   // neighbouring points allow for occlusion by the arm away from its tip.
-  for (const padding of [2, 20]) {
+  for (const padding of [nearPadding, 20]) {
     const minX = footprint.minX - padding;
     const maxX = footprint.maxX + padding;
     const minY = footprint.minY - padding;
@@ -147,19 +204,18 @@ export function sharedParkingPoints(
           const a = (left * 2 + right) / 3;
           const b = (left + right * 2) / 3;
           if (
-            screenCenterDistanceSum(pointAt(a), centers) <=
-            screenCenterDistanceSum(pointAt(b), centers)
+            screenReferenceDistanceSum(pointAt(a), references) <=
+            screenReferenceDistanceSum(pointAt(b), references)
           )
             right = b;
           else left = a;
         }
         const closest = (left + right) / 2;
-        for (const offset of [0, -20, 20]) {
+        for (const offset of [0, -5, 5, -20, 20]) {
           const point = pointAt(
             Math.max(low, Math.min(high, closest + offset)),
           );
-          if (points.every((existing) => distance(existing, point) >= 1))
-            points.push(point);
+          add(point);
         }
       }
     }

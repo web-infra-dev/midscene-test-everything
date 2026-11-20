@@ -402,9 +402,10 @@ export class CalibrationBatch {
       last?: CalibrationProfile;
       operatorConfirmedParking?: boolean;
       debug?: SharedParkingDebug;
+      recheck?: boolean;
     },
   ) {
-    const { last, operatorConfirmedParking, debug } = options;
+    const { last, operatorConfirmedParking, debug, recheck } = options;
     await this.assertPerspectives(state.cameraId!);
     this.check(signal);
     const selection = this.selection(state.cameraId!);
@@ -466,20 +467,20 @@ export class CalibrationBatch {
         );
     };
     guard();
+    const confirmedCorridor = state.transfer?.corridorConfirmed
+      ? state.transfer
+      : undefined;
     const parked = await this.runtime.parkScreenGroup(
       source,
       source.id,
       {
-        pose: state.sharedSafePosition,
         obstacles,
         estimatedObstacles,
         complete: obstacles.length === otherScreens.length,
-        corridor: state.transfer?.corridor,
+        corridor: confirmedCorridor?.corridor,
+        corridorTravelTipZMm: confirmedCorridor?.travelTipZMm,
       },
-      Math.max(
-        knownScreenTravelHeight(store.list(), selection),
-        state.transfer?.travelTipZMm ?? Number.NEGATIVE_INFINITY,
-      ),
+      knownScreenTravelHeight(store.list(), selection),
       async (signal) => {
         const { phones, frame, check } = await this.visibilityInputs(
           state.cameraId!,
@@ -506,7 +507,15 @@ export class CalibrationBatch {
       },
       {
         operatorConfirmed: operatorConfirmedParking,
-        requireTravel: Boolean(debug),
+        debug: Boolean(debug),
+        contextVersion,
+        recheck: recheck
+          ? {
+              savedVerifiedPose: state.sharedSafePositionVerified
+                ? state.sharedSafePosition
+                : undefined,
+            }
+          : undefined,
         clearanceProfileIds: profiles.map(({ id }) => id),
       },
     );
@@ -796,7 +805,6 @@ export class CalibrationBatch {
       await this.runtime.assertCalibrationMotionReady(selected.toolProfileId);
       const contextVersion = this.contextVersion(input.cameraId);
       const sharedSafePosition = this.savedSharedPosition(input.cameraId);
-      const tool = this.runtime.profileStore.getTool(selected.toolProfileId);
       this.assertLaunchCurrent(launchRevision);
       this.stopRevision = this.runtime.stopRevision;
       this.transfer = plan.transfer;
@@ -811,12 +819,7 @@ export class CalibrationBatch {
         samplingMode,
         compliantSetupConfirmed: samplingMode === 'slide' ? true : undefined,
         usesSharedSafePosition: true,
-        sharedSafePosition:
-          sharedSafePosition &&
-          contactPoint(sharedSafePosition, tool.offsetMm).z >=
-            (plan.transfer?.travelTipZMm ?? Number.NEGATIVE_INFINITY)
-            ? sharedSafePosition
-            : undefined,
+        sharedSafePosition,
         acceptance: input.acceptance ?? 'automatic',
         planVersion: plan.version,
         contextVersion,
@@ -843,7 +846,7 @@ export class CalibrationBatch {
   }
   private launch(
     revision: number,
-    mode: 'automatic' | 'manual' | 'debug' = 'automatic',
+    mode: 'automatic' | 'manual' | 'debug' | 'recheck' = 'automatic',
   ) {
     this.assertLaunchCurrent(revision);
     const state = this.state!;
@@ -852,7 +855,9 @@ export class CalibrationBatch {
     this.safetyStop = undefined;
     this.stopFailed = false;
     const debug: SharedParkingDebug | undefined =
-      mode === 'debug' ? { status: 'running' } : undefined;
+      mode === 'debug' || mode === 'recheck'
+        ? { status: 'running' }
+        : undefined;
     this.sharedParkingDebug = debug;
     this.task = this.devices.arm
       .calibrationBatchForDevices(
@@ -874,6 +879,7 @@ export class CalibrationBatch {
                 signal,
                 {
                   debug,
+                  recheck: mode === 'recheck',
                 },
               );
               guard();
@@ -1487,7 +1493,10 @@ export class CalibrationBatch {
         state.items.some((item) => item.status === 'completed') &&
         state.items.every((item) => terminal(item.status));
       const row = this.state!.items[this.state!.currentIndex];
-      if (action === 'debug-shared-parking') {
+      if (
+        action === 'debug-shared-parking' ||
+        action === 'recheck-shared-parking'
+      ) {
         if (
           !parkingOnly ||
           !['completed', 'failed', 'stopped'].includes(state.status)
@@ -1501,7 +1510,10 @@ export class CalibrationBatch {
         await this.assertResumeContext();
         this.assertLaunchCurrent(launchRevision);
         this.stopRevision = this.runtime.stopRevision;
-        this.launch(launchRevision, 'debug');
+        this.launch(
+          launchRevision,
+          action === 'recheck-shared-parking' ? 'recheck' : 'debug',
+        );
       } else if (action === 'confirm-shared-parking') {
         if (
           !parkingOnly ||

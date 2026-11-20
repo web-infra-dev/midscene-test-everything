@@ -12,15 +12,19 @@ import type {
 } from './assisted-contracts.js';
 import { assertParkingCorridor } from './calibration/camera-avoidance.js';
 import { screenContactMm, screenPoseMm } from './calibration/geometry.js';
+import { savedCalibrationReference } from './calibration/reference-position.js';
 import { contactDepthMm, surfaceClearanceMm } from './calibration/surface.js';
 import { moveToTaughtPosition } from './calibration/taught-position.js';
 import {
   type CameraAvoidanceState,
+  PARKING_ORIENTATION_TOLERANCE_RAD,
   assertBatchParking,
   assertParkingScreenClearances,
   avoidCamera,
+  hasCoaxialMg400Tool,
 } from './calibration/verification/camera-avoidance.js';
 import { applyCalibrationCommand } from './calibration/verification/commands.js';
+import { recentVerifiedParking } from './calibration/verification/parking-history.js';
 import {
   calibrationSessionStatus,
   emptyBoundaryVerification,
@@ -312,7 +316,9 @@ export class RobotArmRuntime extends RobotKernel {
       input.onPayloadRecheck?.(waiting);
     };
     let marked = false;
-    let referenceAttemptId: string | undefined;
+    let failedTravel:
+      | { attemptId: string; detail: { stage: string } }
+      | undefined;
     let retriedStationaryStart = false;
     const stopRevision = this.stopRevision;
     try {
@@ -365,19 +371,39 @@ export class RobotArmRuntime extends RobotKernel {
           assertOrientation(pose, this.capabilities);
           const options = captureMotion(probeOptions);
           const travel = probeOptions?.referenceTravel;
+          const parkingTravel = probeOptions?.sharedParkingTravel;
           const detectStartFailure =
-            !calibrationSessionId && travel?.direction === 'approach';
+            !calibrationSessionId &&
+            (travel?.direction === 'approach' || parkingTravel !== undefined);
           const crossesWorkArea =
             travel?.leg === 'traverse' || travel?.leg === 'direct';
-          const trace =
-            this.auditStore && (detectStartFailure || crossesWorkArea)
-              ? travel
-              : undefined;
           if (detectStartFailure) options.detectStartFailure = true;
           const extraReadback =
             travel?.direction === 'approach' &&
             crossesWorkArea &&
             process.env.MIDSCENE_ARM_DIAGNOSTIC_PAYLOAD_READBACK === '1';
+          const trace =
+            this.auditStore && (detectStartFailure || crossesWorkArea)
+              ? travel
+                ? {
+                    attemptId: travel.attemptId,
+                    detail: {
+                      stage: 'reference-travel',
+                      direction: travel.direction,
+                      leg: travel.leg,
+                      extraReadback,
+                    },
+                  }
+                : parkingTravel
+                  ? {
+                      attemptId: operationId,
+                      detail: {
+                        stage: 'shared-parking-travel',
+                        ...parkingTravel,
+                      },
+                    }
+                  : undefined
+              : undefined;
           if (trace) options.traceCompletion = true;
           if (extraReadback)
             options.freshPayloadReadbackKg = tool.payload?.massKg;
@@ -417,25 +443,19 @@ export class RobotArmRuntime extends RobotKernel {
             if ((options.arrivalSamples ?? 0) >= 2) arrivedPose = result.pose;
             if (trace)
               this.audit('calibration', trace.attemptId, 'completed', {
-                stage: 'reference-travel',
-                direction: trace.direction,
-                leg: trace.leg,
-                extraReadback,
+                ...trace.detail,
                 operationId,
                 completionTrace: result.completionTrace,
               });
           } catch (error) {
             if (trace) {
-              referenceAttemptId = trace.attemptId;
+              failedTravel = trace;
               this.audit(
                 'calibration',
                 trace.attemptId,
                 'failed',
                 {
-                  stage: 'reference-travel',
-                  direction: trace.direction,
-                  leg: trace.leg,
-                  extraReadback,
+                  ...trace.detail,
                   operationId,
                 },
                 error,
@@ -550,12 +570,21 @@ export class RobotArmRuntime extends RobotKernel {
                   );
                 await this.ready(tool, setPayloadRecheck);
                 guard();
-                if (referenceAttemptId)
-                  this.audit('calibration', referenceAttemptId, 'completed', {
-                    stage: 'reference-travel-recovery',
-                    operationId,
-                    retrying: true,
-                  });
+                if (failedTravel)
+                  this.audit(
+                    'calibration',
+                    failedTravel.attemptId,
+                    'completed',
+                    {
+                      ...failedTravel.detail,
+                      stage: `${failedTravel.detail.stage}-recovery`,
+                      operationId,
+                      retrying: true,
+                      startPose,
+                      stoppedPose: stablePose,
+                    },
+                  );
+                failedTravel = undefined;
                 continue;
               }
               if (
@@ -623,22 +652,23 @@ export class RobotArmRuntime extends RobotKernel {
               !payloadEvidenceGap(error)
             )
               this.requireRecovery('interruption');
-            if (referenceAttemptId) {
+            if (failedTravel) {
               const recoveryDetail: Record<string, unknown> = {
-                stage: 'reference-travel-recovery',
+                ...failedTravel.detail,
+                stage: `${failedTravel.detail.stage}-recovery`,
                 operationId,
                 startedAt: Date.now(),
               };
               try {
                 await this.controlledStop();
-                this.audit('calibration', referenceAttemptId, 'completed', {
+                this.audit('calibration', failedTravel.attemptId, 'completed', {
                   ...recoveryDetail,
                   stopConfirmedAt: Date.now(),
                 });
               } catch (stopError) {
                 this.audit(
                   'calibration',
-                  referenceAttemptId,
+                  failedTravel.attemptId,
                   'failed',
                   recoveryDetail,
                   stopError,
@@ -3582,7 +3612,7 @@ export class RobotArmRuntime extends RobotKernel {
     parking: NonNullable<
       NonNullable<CalibrationSession['auto']>['batchParking']
     >,
-    minimumTravelTipZMm: number,
+    minimumParkingTipZMm: number,
     verifyVisibility: (
       signal: AbortSignal,
     ) => Promise<ScreenVisibilityEvidence>,
@@ -3590,11 +3620,14 @@ export class RobotArmRuntime extends RobotKernel {
     confirmPages: () => Promise<void>,
     options: {
       operatorConfirmed?: boolean;
-      requireTravel?: boolean;
+      debug?: boolean;
+      contextVersion?: string;
+      recheck?: { savedVerifiedPose?: CartesianPose };
       clearanceProfileIds?: readonly string[];
     } = {},
   ): Promise<{ pose: CartesianPose; visibility: SharedParkingEvidence }> {
-    const { operatorConfirmed, requireTravel } = options;
+    const { operatorConfirmed, debug, contextVersion, recheck } = options;
+    const mode = recheck ? 'history-recheck' : debug ? 'debug' : 'automatic';
     const profile = this.profileStore.getCalibration(calibrationId);
     const screens = options.clearanceProfileIds?.map((id) => {
       const geometry = this.profileStore.getCalibration(id);
@@ -3605,16 +3638,10 @@ export class RobotArmRuntime extends RobotKernel {
       geometry,
       clearanceMm: screen.safeHeightMm,
     }));
-    const screenCenters = screens?.map(({ geometry, screen }) =>
-      screenContactMm(geometry, {
-        x: screen.physicalWidthMm / 2,
-        y: screen.physicalHeightMm / 2,
-      }),
-    );
     const ctx = this.context(binding);
     ctx.minimumTravelTipZMm = Math.max(
       ctx.minimumTravelTipZMm ?? Number.NEGATIVE_INFINITY,
-      minimumTravelTipZMm,
+      minimumParkingTipZMm,
     );
     if (
       !calibrationAccepted(
@@ -3630,7 +3657,36 @@ export class RobotArmRuntime extends RobotKernel {
     this.validateCalibration(profile, binding, ctx, false);
     if (!operatorConfirmed) await confirmPages();
     guard();
-    const input = { ...binding, cameraId: ctx.installationTeaching?.cameraId };
+    const teaching = ctx.installationTeaching;
+    const profiles = this.profileStore.list();
+    const screenReferences = screens?.map(({ geometry, screen }) => {
+      const device = profiles.devices?.find(
+        (device) =>
+          device.calibrationProfileId === geometry.id &&
+          device.cameraId === teaching?.cameraId,
+      );
+      const reference = savedCalibrationReference(
+        () => profiles,
+        device?.deviceId,
+        teaching?.cameraId,
+        geometry.id,
+        teaching,
+      );
+      const point = reference
+        ? contactPoint(reference.pose, ctx.tool.offsetMm)
+        : screenContactMm(geometry, {
+            x: screen.physicalWidthMm / 2,
+            y: screen.physicalHeightMm / 2,
+          });
+      return {
+        calibrationId: geometry.id,
+        deviceId: device?.deviceId,
+        source: reference?.source ?? 'screen-center',
+        x: point.x,
+        y: point.y,
+      };
+    });
+    const input = { ...binding, cameraId: teaching?.cameraId };
     return this.collectAutomaticPoints(input, async (host) => {
       const check = () => {
         guard();
@@ -3639,15 +3695,14 @@ export class RobotArmRuntime extends RobotKernel {
       const state: CameraAvoidanceState = {
         candidate: structuredClone(profile),
         stage: 'verification',
-        requireTravel,
+        parkingWorkspace: this.adapter.capabilities.workspace,
         screenClearances,
-        screenCenters,
+        screenReferences,
         auto: { batchParking: parking },
       };
       if (operatorConfirmed) {
         check();
         const pose = await host.read();
-        const teaching = ctx.installationTeaching;
         if (
           !teaching ||
           cameraBoundaryExcessMm(pose.positionMm, teaching) > -20 ||
@@ -3673,9 +3728,68 @@ export class RobotArmRuntime extends RobotKernel {
         };
       }
       const auditId = this.operation?.requestId ?? randomUUID();
+      if (recheck) {
+        check();
+        if (teaching && contextVersion) {
+          const allowOtherYaw = hasCoaxialMg400Tool(ctx);
+          state.parkingRecheck = recentVerifiedParking(
+            this.auditStore?.recent(200) ?? [],
+            contextVersion,
+            options.clearanceProfileIds ?? [],
+            teaching.referencePose.orientation,
+            PARKING_ORIENTATION_TOLERANCE_RAD,
+            allowOtherYaw,
+          );
+          const saved = recheck.savedVerifiedPose;
+          if (
+            !state.parkingRecheck &&
+            saved &&
+            ((allowOtherYaw &&
+              saved.orientation.x === 0 &&
+              saved.orientation.y === 0) ||
+              quaternionDistance(
+                saved.orientation,
+                teaching.referencePose.orientation,
+              ) <= PARKING_ORIENTATION_TOLERANCE_RAD)
+          )
+            state.parkingRecheck = { pose: saved, source: 'saved' };
+        }
+        if (!state.parkingRecheck) {
+          const error = new RobotArmError(
+            'HISTORICAL_PARKING_UNAVAILABLE',
+            'No verified historical Safe Position matches the current calibration.',
+            409,
+          );
+          this.audit(
+            'calibration',
+            auditId,
+            'failed',
+            {
+              stage: 'shared-parking-preparation',
+              mode,
+              contextVersion,
+              result: 'historical-pose-unavailable',
+            },
+            error,
+          );
+          throw error;
+        }
+      }
+      let recheckArrivalOutsideTolerance = false;
       const found = await avoidCamera(
         {
           profileStore: this.profileStore,
+          auditParking: (detail, error) => {
+            if (recheck && detail.result === 'arrival-outside-tolerance')
+              recheckArrivalOutsideTolerance = true;
+            this.audit(
+              'calibration',
+              auditId,
+              error === undefined ? 'completed' : 'failed',
+              { ...detail, mode, contextVersion },
+              error,
+            );
+          },
           check,
           interrupted: () => host.signal.aborted,
           stationaryPose: async () => {
@@ -3692,11 +3806,12 @@ export class RobotArmRuntime extends RobotKernel {
             );
             check();
           },
-          move: (pose, _context, speed, acceleration) => {
+          move: (pose, _context, speed, acceleration, sharedParkingTravel) => {
             check();
             return host.move(pose, {
               speed,
               acceleration,
+              sharedParkingTravel,
               beforeSubmit: check,
             });
           },
@@ -3706,7 +3821,12 @@ export class RobotArmRuntime extends RobotKernel {
               .then(() => undefined),
           verifyCameraVisibility: async (pose) => {
             check();
-            const detail = { stage: 'shared-parking-visibility', pose };
+            const detail = {
+              stage: 'shared-parking-visibility',
+              pose,
+              mode,
+              contextVersion,
+            };
             try {
               const evidence = await verifyVisibility(host.signal);
               check();
@@ -3723,7 +3843,24 @@ export class RobotArmRuntime extends RobotKernel {
         },
         state,
         ctx,
-      );
+      ).catch((error) => {
+        this.audit(
+          'calibration',
+          auditId,
+          'failed',
+          {
+            stage:
+              isRobotArmError(error) &&
+              error.code === 'CALIBRATION_MOTION_NOT_STARTED'
+                ? 'shared-parking-motion-not-started'
+                : 'shared-parking-failure',
+            mode,
+            contextVersion,
+          },
+          error,
+        );
+        throw error;
+      });
       check();
       if (!found && state.auto?.cameraVisibility)
         throw new RobotArmError(
@@ -3736,10 +3873,18 @@ export class RobotArmRuntime extends RobotKernel {
               .map(({ id }) => ({ id })),
           },
         );
+      if (recheckArrivalOutsideTolerance)
+        throw new RobotArmError(
+          'HISTORICAL_PARKING_ARRIVAL',
+          'The measured arrival was outside the tolerance for the historical Safe Position.',
+          409,
+        );
       if (!found || !state.auto?.cameraVisibility?.clear)
         throw new RobotArmError(
           'CAMERA_AVOIDANCE_FAILED',
-          'No reachable camera-clear Safe Position was found within the bounded search.',
+          recheck
+            ? 'No safe route to the historical Safe Position passed preflight from the current pose.'
+            : 'No reachable camera-clear Safe Position was found within the bounded search.',
           409,
         );
       return {

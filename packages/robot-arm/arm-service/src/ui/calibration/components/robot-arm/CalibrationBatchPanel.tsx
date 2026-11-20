@@ -611,26 +611,42 @@ export const CalibrationBatchPanel = forwardRef<
         )}
       <details>
         <summary>{t('Advanced debugging')}</summary>
-        <Popconfirm
-          title={t('Confirm the motion area is clear. The robot will move.')}
-          okText={t('Start search')}
-          cancelText={t('Cancel')}
-          onConfirm={() => command('debug-shared-parking')}
-        >
-          <Button
-            disabled={
-              disabled ||
-              working ||
-              busyBatch ||
-              !parkingOnly ||
-              batch?.cameraId !== cameraId
-            }
-            size="small"
-            type="link"
+        {(
+          [
+            [
+              'debug-shared-parking',
+              'Debug shared Safe Position search',
+              'Start search',
+            ],
+            [
+              'recheck-shared-parking',
+              'Recheck historical Safe Position',
+              'Start recheck',
+            ],
+          ] as const
+        ).map(([action, label, confirmation]) => (
+          <Popconfirm
+            key={action}
+            title={t('Confirm the motion area is clear. The robot will move.')}
+            okText={t(confirmation)}
+            cancelText={t('Cancel')}
+            onConfirm={() => command(action)}
           >
-            {t('Debug shared Safe Position search')}
-          </Button>
-        </Popconfirm>
+            <Button
+              disabled={
+                disabled ||
+                working ||
+                busyBatch ||
+                !parkingOnly ||
+                batch?.cameraId !== cameraId
+              }
+              size="small"
+              type="link"
+            >
+              {t(label)}
+            </Button>
+          </Popconfirm>
+        ))}
         {debugging && (
           <Space wrap>
             <output>

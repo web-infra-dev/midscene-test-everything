@@ -20,6 +20,15 @@ export function t(
   );
 }
 export function calibrationErrorText(message: string): string {
+  const parkingOrientation =
+    /^Shared parking needs the taught tool orientation\. The tool is off by ([\d.]+)° \(allowed ([\d.]+)°\)\. Align it at a confirmed safe position and retry\.$/.exec(
+      message,
+    );
+  if (parkingOrientation)
+    return t(
+      'Shared parking needs the taught tool orientation. The tool is off by {0}° (allowed {1}°). Align it at a confirmed safe position and retry.',
+      parkingOrientation.slice(1),
+    );
   const unstableCorner =
     /^Fast calibration point (\d+) did not sustain touch within the safe depth/.exec(
       message,

@@ -2,6 +2,7 @@ import { expect, it, rstest } from '@rstest/core';
 import type { ApplicationContext } from '../src/application/context.js';
 import {
   cameraAvoidanceTargets,
+  sharedParkingPoints,
   taughtCameraSide,
 } from '../src/calibration/camera-avoidance.js';
 import {
@@ -14,6 +15,8 @@ import type {
   InstallationTeaching,
 } from '../src/contracts.js';
 import { fixture, pose } from './fixtures.js';
+
+type CameraAvoidanceMove = Parameters<typeof avoidCamera>[0]['move'];
 
 async function setup(initial = pose(100, -50, 80)) {
   const f = await fixture();
@@ -50,10 +53,12 @@ async function setup(initial = pose(100, -50, 80)) {
   const preflight = rstest.fn(
     async (_targets: Parameters<CalibrationHost['preflight']>[0]) => {},
   );
-  const move = rstest.fn(async (target: ReturnType<typeof pose>) => {
-    actual = target;
-    return {} as never;
-  });
+  const move = rstest.fn(
+    async (...[target]: Parameters<CameraAvoidanceMove>) => {
+      actual = target;
+      return {} as never;
+    },
+  );
   const host = {
     profileStore: f.store,
     check() {},
@@ -110,14 +115,62 @@ it('tries the next exit after occlusion and replans from the measured current po
     await f.cleanup();
   }
 });
-it('moves to a candidate during a debug search even when the starting pose is already clear', async () => {
-  const start = pose(100, -125, 80);
-  const target = pose(100, -180, 100);
-  const f = await setup(start);
+it('keeps candidate poses and ranks fixed and verifies in place on a repeated search', async () => {
+  const f = await setup(pose(100, -50, 100));
   try {
     f.session.auto!.batchParking = {
-      pose: target,
       obstacles: [],
+      corridor: { minX: 80, maxX: 120, minY: -150, maxY: 0 },
+      complete: true,
+    };
+    const verify = rstest.fn(async () => ({
+      clear: true,
+      checkedAt: new Date().toISOString(),
+      screens: [],
+    }));
+    const auditParking = rstest.fn((_detail: Record<string, unknown>) => {});
+    const host = { ...f.host, verifyCameraVisibility: verify, auditParking };
+    expect(await avoidCamera(host, f.session, f.ctx)).toBe(true);
+    const selected = f.session.candidate!.observationPose;
+    expect(selected.positionMm.z).toBeCloseTo(80.5);
+    expect(f.move.mock.calls.map(([target]) => target)).toEqual([
+      { ...selected, positionMm: { ...selected.positionMm, z: 100 } },
+      selected,
+    ]);
+    expect(f.move.mock.calls.map(([, , , , travel]) => travel)).toEqual([
+      { rank: 1, leg: 'Shared parking traverse' },
+      undefined,
+    ]);
+    const selection = auditParking.mock.calls
+      .map(([detail]) => detail)
+      .find(
+        ({ stage, result }) =>
+          stage === 'shared-parking-candidate' && result === 'selected',
+      );
+    expect(selection?.skippedLegs).toEqual(['Shared parking lift']);
+
+    f.move.mockClear();
+    verify.mockClear();
+    expect(await avoidCamera(host, f.session, f.ctx)).toBe(true);
+    expect(verify).toHaveBeenCalledWith(selected);
+    expect(f.move).not.toHaveBeenCalled();
+    const plans = auditParking.mock.calls
+      .map(([detail]) => detail)
+      .filter(({ stage }) => stage === 'shared-parking-candidates');
+    expect(plans).toHaveLength(2);
+    expect(plans[1].start).not.toEqual(plans[0].start);
+    expect(plans[1].candidates).toEqual(plans[0].candidates);
+  } finally {
+    await f.cleanup();
+  }
+});
+it('uses the corridor height for traversal and settles at the independent parking height', async () => {
+  const f = await setup(pose(100, -50, 90));
+  try {
+    f.session.auto!.batchParking = {
+      obstacles: [],
+      corridor: { minX: 80, maxX: 120, minY: -150, maxY: 0 },
+      corridorTravelTipZMm: 110,
       complete: true,
     };
     const verify = rstest.fn(async () => ({
@@ -126,25 +179,22 @@ it('moves to a candidate during a debug search even when the starting pose is al
       screens: [],
     }));
     f.host.verifyCameraVisibility = verify;
-    expect(await avoidCamera(f.host, f.session, f.ctx)).toBe(true);
-    expect(verify).toHaveBeenCalledWith(start);
-    expect(f.move).not.toHaveBeenCalled();
 
-    verify.mockClear();
-    const debug = { ...f.session, requireTravel: true };
-    expect(await avoidCamera(f.host, debug, f.ctx)).toBe(true);
-    expect(f.move.mock.calls.at(-1)?.[0]).toEqual(target);
-    expect(verify.mock.calls).toEqual([[target]]);
+    expect(await avoidCamera(f.host, f.session, f.ctx)).toBe(true);
+    expect(f.move.mock.calls.map(([target]) => target.positionMm.z)).toEqual([
+      110.5, 110.5, 80.5,
+    ]);
+    expect(verify).toHaveBeenCalledWith(f.session.candidate!.observationPose);
   } finally {
     await f.cleanup();
   }
 });
-it('continues shared parking at a higher position when another screen lacks clearance', async () => {
-  const f = await setup(pose(100, -125, 80));
+it('raises the planned observation above every fitted screen clearance', async () => {
+  const f = await setup();
   try {
     f.session.auto!.batchParking = {
-      pose: pose(100, -180, 80),
       obstacles: [],
+      corridor: { minX: 80, maxX: 120, minY: -150, maxY: 0 },
       complete: true,
     };
     const state: CameraAvoidanceState = {
@@ -165,49 +215,122 @@ it('continues shared parking at a higher position when another screen lacks clea
       screens: [],
     }));
     f.host.verifyCameraVisibility = verify;
+
     expect(await avoidCamera(f.host, state, f.ctx)).toBe(true);
-    expect(f.move.mock.calls.map(([target]) => target)).toEqual([
-      pose(100, -125, 82.5),
-      pose(100, -180, 82.5),
-    ]);
-    expect(verify.mock.calls).toEqual([[pose(100, -180, 82.5)]]);
+    const selected = f.session.candidate!.observationPose;
+    expect(selected.positionMm.z).toBeCloseTo(82.5);
+    expect(verify).toHaveBeenCalledWith(selected);
   } finally {
     await f.cleanup();
   }
 });
-it('prefers the closer shared parking pose in XY even when it is higher', async () => {
-  const f = await setup();
+it('stops once during preparation when the current orientation differs from teaching', async () => {
+  const initial = pose(100, -50, 100);
+  initial.orientation = { x: 0, y: 0, z: Math.sin(0.015), w: Math.cos(0.015) };
+  const f = await setup(initial);
   try {
-    const saved = pose(210, -111, 180);
-    const screenCenters = [
-      { x: 100, y: -50, z: 30 },
-      { x: 320, y: -50, z: 30 },
-    ];
+    f.session.auto!.batchParking = { obstacles: [], complete: true };
+    const verifyCameraVisibility = rstest.fn();
+    const auditParking = rstest.fn((_detail: Record<string, unknown>) => {});
+    await expect(
+      avoidCamera(
+        { ...f.host, verifyCameraVisibility, auditParking },
+        f.session,
+        f.ctx,
+      ),
+    ).rejects.toMatchObject({ code: 'PARKING_ORIENTATION_REQUIRED' });
+    expect(f.preflight).not.toHaveBeenCalled();
+    expect(f.move).not.toHaveBeenCalled();
+    expect(verifyCameraVisibility).not.toHaveBeenCalled();
+    expect(
+      auditParking.mock.calls.filter(
+        ([detail]) => detail.stage === 'shared-parking-preparation',
+      ),
+    ).toHaveLength(1);
+  } finally {
+    await f.cleanup();
+  }
+});
+it('keeps a coaxial MG400 at its measured yaw throughout an ordinary parking search', async () => {
+  const initial = pose(100, -50, 100);
+  initial.orientation = { x: 0, y: 0, z: Math.sin(0.3), w: Math.cos(0.3) };
+  const f = await setup(initial);
+  try {
+    const ctx = {
+      ...f.ctx,
+      robot: { ...f.ctx.robot, adapterId: 'dobot-mg400' },
+      tool: { ...f.ctx.tool, offsetMm: { x: 0, y: 0, z: -15 } },
+    };
     f.session.auto!.batchParking = {
-      pose: saved,
-      obstacles: [
-        [
-          { x: 220, y: 0 },
-          { x: 420, y: 0 },
-          { x: 420, y: -100 },
-          { x: 220, y: -100 },
-        ],
-      ],
+      obstacles: [],
+      corridor: { minX: 80, maxX: 120, minY: -150, maxY: 0 },
       complete: true,
     };
-    const verify = rstest.fn(async () => ({
+    f.host.verifyCameraVisibility = rstest.fn(async () => ({
       clear: true,
       checkedAt: new Date().toISOString(),
       screens: [],
     }));
-    f.host.verifyCameraVisibility = verify;
-
+    expect(await avoidCamera(f.host, f.session, ctx)).toBe(true);
+    expect(f.move).toHaveBeenCalled();
+    for (const [target] of f.move.mock.calls)
+      expect(target.orientation).toEqual(initial.orientation);
+    expect(f.host.verifyCameraVisibility).toHaveBeenCalledWith(
+      expect.objectContaining({ orientation: initial.orientation }),
+    );
+  } finally {
+    await f.cleanup();
+  }
+});
+it('refuses an MG400 yaw correction below the parking travel height', async () => {
+  const initial = pose(100, -50, 70);
+  initial.orientation = { x: 0, y: 0, z: Math.sin(0.015), w: Math.cos(0.015) };
+  const f = await setup(initial);
+  try {
+    const ctx = {
+      ...f.ctx,
+      robot: { ...f.ctx.robot, adapterId: 'dobot-mg400' },
+    };
+    f.session.auto!.batchParking = { obstacles: [], complete: true };
+    f.host.verifyCameraVisibility = rstest.fn();
+    const state: CameraAvoidanceState = {
+      ...f.session,
+      parkingRecheck: { pose: pose(90, -130, 90), source: 'audit' },
+    };
+    await expect(avoidCamera(f.host, state, ctx)).rejects.toMatchObject({
+      code: 'PARKING_ORIENTATION_REQUIRED',
+    });
+    expect(f.preflight).not.toHaveBeenCalled();
+    expect(f.move).not.toHaveBeenCalled();
+  } finally {
+    await f.cleanup();
+  }
+});
+it('rechecks the full historical pose at its original height', async () => {
+  const initial = pose(100, -50, 100);
+  initial.orientation = { x: 0, y: 0, z: Math.sin(0.015), w: Math.cos(0.015) };
+  const f = await setup(initial);
+  try {
+    const ctx = {
+      ...f.ctx,
+      robot: { ...f.ctx.robot, adapterId: 'dobot-mg400' },
+    };
+    const target = pose(90, -130, 90);
+    f.session.auto!.batchParking = { obstacles: [], complete: true };
+    const verifyCameraVisibility = rstest.fn(async () => ({
+      clear: true,
+      checkedAt: new Date().toISOString(),
+      screens: [],
+    }));
+    const state: CameraAvoidanceState = {
+      ...f.session,
+      parkingRecheck: { pose: target, source: 'audit' },
+    };
     expect(
-      await avoidCamera(f.host, { ...f.session, screenCenters }, f.ctx),
+      await avoidCamera({ ...f.host, verifyCameraVisibility }, state, ctx),
     ).toBe(true);
-    expect(f.session.candidate!.observationPose).toEqual(saved);
-    expect(verify).toHaveBeenCalledTimes(1);
-    expect(verify).toHaveBeenCalledWith(saved);
+    expect(f.move.mock.calls[0][0]).toEqual(pose(100, -50, 100));
+    expect(verifyCameraVisibility).toHaveBeenCalledWith(target);
   } finally {
     await f.cleanup();
   }
@@ -235,7 +358,7 @@ it('tries the closest point along the group edge and stops after four occluded p
     f.host.verifyCameraVisibility = verify;
     const state: CameraAvoidanceState = {
       ...f.session,
-      screenCenters: [
+      screenReferences: [
         { x: 100, y: -50 },
         { x: 320, y: -50 },
       ],
@@ -250,6 +373,53 @@ it('tries the closest point along the group edge and stops after four occluded p
   } finally {
     await f.cleanup();
   }
+});
+it.each([
+  { confirmed: true, expectedY: -112 },
+  { confirmed: false, expectedY: -130 },
+])(
+  'uses the fixed camera margin only within a confirmed corridor ($confirmed)',
+  async ({ confirmed, expectedY }) => {
+    const f = await setup(pose(100, -125, 100));
+    try {
+      f.session.auto!.batchParking = {
+        obstacles: [],
+        corridor: confirmed
+          ? { minX: 80, maxX: 120, minY: -150, maxY: 0 }
+          : undefined,
+        complete: true,
+      };
+      f.host.verifyCameraVisibility = rstest.fn(async () => ({
+        clear: true,
+        checkedAt: new Date().toISOString(),
+        screens: [],
+      }));
+      expect(await avoidCamera(f.host, f.session, f.ctx)).toBe(true);
+      expect(f.session.candidate!.observationPose.positionMm.y).toBeCloseTo(
+        expectedY,
+      );
+    } finally {
+      await f.cleanup();
+    }
+  },
+);
+
+it('includes an interior point on the reference segment where it clears the screen group', () => {
+  const points = sharedParkingPoints(
+    [
+      { x: 0, y: 0 },
+      { x: 100, y: 100 },
+    ],
+    [
+      { x: 30, y: 20 },
+      { x: 30, y: -60 },
+    ],
+    { minX: 0, maxX: 100, minY: -50, maxY: 100 },
+    (point) => point.y + 30,
+  );
+
+  // The feasible portion of the segment runs from y = -50 to y = -30.
+  expect(points).toContainEqual({ x: 30, y: -40 });
 });
 it('keeps manual fallback when every candidate is refused; a submitted movement failure never tries another exit', async () => {
   const f = await setup();

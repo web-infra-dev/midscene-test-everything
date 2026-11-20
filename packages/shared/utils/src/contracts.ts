@@ -1038,6 +1038,8 @@ export interface CalibrationSession extends ProfileBinding {
       obstacles: Array<Array<Pick<Vector3, 'x' | 'y'>>>;
       estimatedObstacles?: Array<Array<Pick<Vector3, 'x' | 'y'>>>;
       complete: boolean;
+      /** Additional tip clearance for moving through the confirmed corridor. */
+      corridorTravelTipZMm?: number;
       corridor?: NonNullable<
         import('./assisted-contracts.js').CalibrationBatchPlan['transfer']
       >['corridor'];

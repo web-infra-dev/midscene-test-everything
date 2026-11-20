@@ -44,6 +44,65 @@ it.each(['lift', 'traverse', 'lower'] as const)(
   },
 );
 
+it('replans and retries a shared parking move confirmed not to have started', async () => {
+  const f = await fixture();
+  const startPose = await f.adapter.getPose();
+  const target = pose(110, -50, 100);
+  const move = rstest
+    .spyOn(RobotDriverBoundary.prototype, 'moveLinear')
+    .mockRejectedValueOnce(
+      new RobotArmError(
+        'CALIBRATION_MOTION_NOT_STARTED',
+        'The calibration move did not start',
+        409,
+        { startPose },
+      ),
+    );
+  try {
+    const starts: (typeof startPose)[] = [];
+    await f.runtime.collectAutomaticPoints(f.binding, async (host) => {
+      starts.push(await host.read());
+      await host.preflight([target]);
+      await host.move(target, {
+        sharedParkingTravel: { rank: 4, leg: 'Shared parking traverse' },
+      });
+    });
+    expect(starts).toEqual([startPose, startPose]);
+    expect(move).toHaveBeenCalledTimes(2);
+    expect(move.mock.calls[0]?.[1]).toMatchObject({ detectStartFailure: true });
+    expect(f.adapter.movements).toEqual([target]);
+  } finally {
+    move.mockRestore();
+    await f.cleanup();
+  }
+});
+
+it('does not repeat a shared parking move when command completion is unknown', async () => {
+  const f = await fixture();
+  const move = rstest
+    .spyOn(RobotDriverBoundary.prototype, 'moveLinear')
+    .mockRejectedValueOnce(
+      new RobotArmError(
+        'COMMAND_TIMEOUT',
+        'Command completion is unknown',
+        504,
+      ),
+    );
+  try {
+    await expect(
+      f.runtime.collectAutomaticPoints(f.binding, (host) =>
+        host.move(pose(110, -50, 100), {
+          sharedParkingTravel: { rank: 4, leg: 'Shared parking traverse' },
+        }),
+      ),
+    ).rejects.toMatchObject({ code: 'COMMAND_TIMEOUT' });
+    expect(move).toHaveBeenCalledTimes(1);
+  } finally {
+    move.mockRestore();
+    await f.cleanup();
+  }
+});
+
 it('rebuilds the calibration approach after a disconnect known to precede dispatch', async () => {
   const f = await fixture();
   const move = rstest
