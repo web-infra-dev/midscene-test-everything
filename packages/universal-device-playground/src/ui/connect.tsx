@@ -151,12 +151,17 @@ function ConnectionForm({ initialNotice }: { initialNotice?: string }) {
     setConnecting(true);
     setNotice(undefined);
     try {
-      await post('/session', {
+      const connectionId = Array.from(
+        crypto.getRandomValues(new Uint8Array(16)),
+        (byte) => byte.toString(16).padStart(2, '0'),
+      ).join('');
+      const route = `/devices/${encodeURIComponent(deviceId)}/${connectionId}`;
+      await post(`${route}/session`, {
         host: host.trim(),
         token: token.trim(),
         deviceId,
       });
-      location.reload();
+      location.assign(route);
     } catch (error) {
       setNotice(errorMessage(error));
       setConnecting(false);
@@ -314,6 +319,9 @@ function Disconnect() {
               )
             : undefined)}
       </output>
+      <Button href="/" target="_blank" rel="noopener">
+        {t('连接另一台设备', 'Connect another device')}
+      </Button>
       <Button
         loading={disconnecting}
         onClick={async () => {
@@ -321,7 +329,7 @@ function Disconnect() {
           setNotice(undefined);
           try {
             await request('/session', { method: 'DELETE' });
-            location.reload();
+            location.assign('/');
           } catch (error) {
             setNotice(errorMessage(error));
             setDisconnecting(false);

@@ -37,7 +37,6 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '24'
-          registry-url: https://registry.npmjs.org
           package-manager-cache: false
 
       - run: pnpm install --frozen-lockfile
@@ -80,7 +79,7 @@ jobs:
             exit 0
           fi
           if [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
-            if ! git log "${BEFORE}..${AFTER}" --format=%s | grep -qx "chore(release): v${current_version}"; then
+            if ! git log "${BEFORE}..${AFTER}" --format=%s | grep -Eq "^chore\(release\): v${current_version//./\\.}( \(#[0-9]+\))?$"; then
               echo "should_publish=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
@@ -123,7 +122,6 @@ jobs:
         if: steps.check.outputs.should_publish == 'true'
         with:
           node-version: '24'
-          registry-url: https://registry.npmjs.org
           package-manager-cache: false
 
       - if: steps.check.outputs.should_publish == 'true'

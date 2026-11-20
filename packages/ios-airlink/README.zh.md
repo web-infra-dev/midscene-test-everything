@@ -30,14 +30,16 @@
 ## 🔌 工作原理
 
 ```text
-┌────────────────────┐                    ┌─────────────────────────┐                                   ┌────────┐
-│                    │ <-- Screenshots -- │ Universal Device (HTTP) │                                   │        │
-│                    │ ---- Actions ----> │                         │                                   │        │
-│ Midscene GUI Agent │                    ├─────────────────────────┤ <-- USB ------------------------- │ iPhone │
-│                    │                    │                         │ <-- AirPlay --------------------- │        │
-│                    │                    │    iOS AirLink (Mac)    │ <-- Camera (Perspective) -------- │        │
-│                    │                    │                         │ --------- Bluetooth HID --------> │        │
-└────────────────────┘                    └─────────────────────────┘                                   └────────┘
+ Midscene GUI Agent / Codex / Claude Code / Cursor
+               ▲    │
+   Screenshots │    │ Actions
+               │    ▼
+┌──────────────────────────┐                                                        ┌────────┐
+│ Universal Device (HTTP)  │                                                        │        │
+├──────────────────────────┤ <-- Screen: USB | AirPlay | Camera (Perspective) ----- │ iPhone │
+│    iOS AirLink (Mac)     │                                                        │        │
+│                          │ ------------------- Bluetooth HID -------------------> │        │
+└──────────────────────────┘                                                        └────────┘
 ```
 
 - **画面采集**：支持 USB、AirPlay 和独立摄像头三种方式（USB 线仅传输画面）。
