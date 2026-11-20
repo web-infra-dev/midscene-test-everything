@@ -894,20 +894,28 @@ function GuidedContent({
   };
   const waitForImagingCalibration = useCallback(async () => {
     const deadline = Date.now() + 30_000;
-    for (;;) {
-      const setup = await client.assistedCalibrationSetup();
-      const imaging = setup.imaging;
-      if (imaging?.state === 'ready' || imaging?.state === 'unsupported')
-        return;
-      if (imaging?.state === 'error')
-        throw new Error(
-          imaging.message ?? 'Could not calibrate the camera image.',
+    try {
+      while (currentBase.current === base) {
+        const { imaging } = await client.assistedCalibrationSetup();
+        if (imaging?.state === 'ready' || imaging?.state === 'unsupported')
+          return;
+        if (imaging?.state === 'error')
+          throw new Error(
+            imaging.message ?? 'Could not calibrate the camera image.',
+          );
+        if (Date.now() >= deadline)
+          throw new Error('Timed out while calibrating the camera image.');
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    } catch (cause) {
+      if (currentBase.current === base)
+        void message.warning(
+          calibrationErrorText(
+            cause instanceof Error ? cause.message : String(cause),
+          ),
         );
-      if (Date.now() >= deadline)
-        throw new Error('Timed out while calibrating the camera image.');
-      await new Promise((resolve) => setTimeout(resolve, 100));
     }
-  }, [client]);
+  }, [base, client, message]);
   const detected = useCallback(
     async (
       _session: unknown,
@@ -966,6 +974,7 @@ function GuidedContent({
         if (failures.length) throw new Error(failures.join('\n'));
         mappingApplied = true;
         await waitForImagingCalibration();
+        if (currentBase.current !== base) return;
         void message.success(t('Camera mapping applied automatically'));
         pendingAddedScreen.current = undefined;
         await refresh();
@@ -1639,7 +1648,6 @@ function GuidedContent({
                       onConfirm={async () => {
                         try {
                           await controller.map(config.output);
-                          await waitForImagingCalibration();
                         } catch (cause) {
                           if (currentBase.current === base)
                             setMappingError(
@@ -1649,8 +1657,10 @@ function GuidedContent({
                             );
                           return;
                         }
-                        if (currentBase.current === base)
-                          setMappingError(undefined);
+                        if (currentBase.current !== base) return;
+                        await waitForImagingCalibration();
+                        if (currentBase.current !== base) return;
+                        setMappingError(undefined);
                         await refresh();
                       }}
                       onClear={clearCorrection}
@@ -2076,6 +2086,7 @@ function GuidedContent({
               if (failures.length) setError(failures.join('\n'));
               if (failures.length) throw new Error(failures.join('\n'));
               await waitForImagingCalibration();
+              if (currentBase.current !== base) return;
               pendingAddedScreen.current = undefined;
               await refresh();
               if (currentBase.current !== base) return;

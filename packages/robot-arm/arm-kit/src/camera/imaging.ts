@@ -579,7 +579,7 @@ export class CameraImagingController {
         exposure: exposure?.value,
         gain: gain?.value,
         ...(whiteBalance ? { whiteBalance: whiteBalance.value } : {}),
-        message: 'Optimizing camera image quality',
+        message: 'Adjusting camera parameters across all screen ROIs',
         updatedAt: Date.now(),
       };
       const autoFocus = (await controls.read()).focus;

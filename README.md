@@ -25,63 +25,107 @@
 
 ## 💡 Why this project
 
-[Midscene.js](https://github.com/web-infra-dev/midscene) is a **vision-driven E2E testing framework**. Instead of relying on DOM trees, selectors, or accessibility labels, it looks at screenshots the way a user does: it finds elements by appearance, acts on what it sees, and verifies the visible result. Midscene already covers Web, Android, iOS, HarmonyOS, and desktop.
+[Midscene.js](https://github.com/web-infra-dev/midscene) is a **vision-driven E2E testing framework**: it interacts with screens visually like a human, without relying on DOM trees or OS accessibility labels.
 
-But plenty of interfaces have no test driver at all — an in-car touchscreen, a kiosk, a smart-home panel, a locked-down iPhone. As long as an interface can be **seen** (a screenshot, a capture card, a camera) and **operated** (an API, a HID device, a robot arm), a vision model can test it.
+However, many interfaces (car touchscreens, embedded panels, or locked-down iPhones) have no software test driver at all. As long as a screen can be **seen** (screenshots, cameras) and **operated** (HID, robot arms), vision models can test it.
 
-This repository is where we explore **general-purpose ways to connect any interface** to Midscene, so developers can use vision models to run E2E tests on whatever screen they need to test:
-
-```text
- Natural-language test  ──▶  Midscene GUI Agent (vision model)
-                                     │
-                         Universal Device protocol (HTTP)
-                    discovery · sessions · screenshots · input
-                                     │
-         ┌───────────────────────────┼───────────────────────────┐
-   Robot arm + camera        Bluetooth HID + mirroring       Your own device
-   (car screens, panels)     (physical iPhone)               (anything with a screen)
-```
-
-## 🔥 Features
-
-- **Test interfaces you can't instrument.** No SDK, debug mode, or code change on the device under test — screen capture plus physical or HID input is enough.
-- **One open protocol for any device.** Expose device discovery, screenshots, and input over HTTP, and every Midscene capability works on top of it.
-- **Natural-language tests, the same API everywhere.** Use `aiAct`, `aiAssert`, `aiQuery`, and the rest of the [Midscene Agent API](https://midscenejs.com/) on any connected device.
-- **Ready for AI agents.** Connect a device to Codex, Claude Code, Cursor, and other agents through the built-in MCP server and Skills.
+This repository explores **universal physical & device integrations**, bringing vision AI testing to any screen.
 
 ## 🎬 Showcase
 
-### 🦾 Robot arm × in-car touchscreen
+### 🦾 Robot Arm × Physical Touchscreen (Car Screens & Beyond)
 
-A DOBOT MG400 robot arm taps and swipes a real in-car screen while an overhead camera captures the display. Midscene reads the screen, decides where to touch, and verifies the result — without touching the car's software.
+Automotive cockpits and industrial panels rarely expose debug bridges. Our approach is **using a robotic arm paired with a camera to operate and observe physical screens just like a human**.
+
+We explored and validated a complete physical automation workflow (camera calibration, coordinate mapping, and motion control) as reusable infrastructure. We provide an end-to-end reference demo based on the **DOBOT MG400**; you can replicate this setup directly, or assemble like LEGO by plugging in any robot arm via [`arm-kit`](./packages/robot-arm/arm-kit/README.md).
 
 <!-- TODO: Replace with the robot arm demo video (upload to GitHub to get a user-attachments URL). -->
 > 🎥 _Video placeholder: robot arm demo coming soon._
 
 > [!NOTE]
-> **This approach is contributed by the [AVATR Robotic team](https://github.com/avatr-robot).**
+> **Special thanks to our community contributor — [AVATR Robotic team](https://www.avatr.com)**
 >
-> <!-- TODO(AVATR Robotic team): Introduce the team, the in-vehicle testing scenarios behind this solution, and how it is used in production. -->
-> _Placeholder: an introduction from the AVATR Robotic team is coming soon._
+> The core architecture and real-world production rollout of this robot arm testing solution were led and open-sourced by the AVATR team. Their extensive hands-on experience and calibration engineering in automotive cockpits made this universal infrastructure possible.
+>
+> *Note: The DOBOT MG400 robotic arm shown in the demo is strictly a reference implementation to showcase the end-to-end workflow, not a hardware endorsement or purchase recommendation. Developers are encouraged to choose hardware tailored to their own requirements.*
 
-Follow the [MG400 setup guide](./packages/robot-arm/arm-service/README.md) or integrate your own arm with [`arm-kit`](./packages/robot-arm/arm-kit/README.md).
+### 📱 Bluetooth HID × Physical iPhone
 
-### 📱 iOS AirLink × physical iPhone
-
-Run automated tests on a physical iPhone from a Mac over Bluetooth HID — no jailbreak, no Developer Mode. Use USB, AirPlay, or an external camera as the screen source.
+Run automated tests on physical iPhones over Mac Bluetooth HID with zero jailbreak or Developer Mode. Uses USB, AirPlay, or cameras for screen capture.
 
 <!-- TODO: Replace with the iOS AirLink demo video (upload to GitHub to get a user-attachments URL). -->
 > 🎥 _Video placeholder: iOS AirLink demo coming soon._
 
-Get started: [`ios-airlink`](./packages/ios-airlink/README.md) · [Setup guide](https://midscenejs.com/universal-device/quick-start#ios-airlink)
+Get started: [`ios-airlink`](./packages/ios-airlink/README.md)
 
-### 🧩 Your device next
+### 🤝 Showcase your solution
 
-Have a screen Midscene can't reach yet? Implement the Universal Device protocol with `createDeviceHandler()` from `@midscene/universal-device/server`, and your device gets the full Midscene toolkit. [Contributions are welcome](./CONTRIBUTING.md).
+We warmly welcome community contributions of successful integrations across different devices and scenarios! If you have built an alternative hardware solution, connectivity protocol, or unique platform practice, feel free to [open an issue](https://github.com/web-infra-dev/midscene-test-everything/issues/new) to let us know. We would love to feature and link your project right here for the community to see.
 
-## ⚡ Quick start
+## 🏗️ Architecture & Workflow
 
-Once a device service is running, write tests against it in natural language:
+Testing real-world physical devices and screens is inherently complex and involves both hardware and software coordination — it is rarely a trivial task. To make integration as clean and approachable as possible, we maintain a clear separation of concerns: **the framework handles all generic AI testing infrastructure, while developers only implement hardware-specific sensing and control.**
+
+```text
+┌────────────────────────────────────────────────────────┐
+│               Provided by this project (Infra)         │
+│  • Natural-language E2E tests (aiAct / aiAssert)       │
+│  • Web Playground (live visual inspection & debugging) │
+│  • Server foundation (session locks, auth, OpenAPI)    │
+│  • AI Agent tooling (built-in MCP Server, CLI, Skills) │
+└───────────────────────────┬────────────────────────────┘
+                            │ Universal Device Protocol (HTTP)
+┌───────────────────────────┴────────────────────────────┐
+│               Implemented by developers (Core API)     │
+│  • screenshot(): capture screen frame (JPEG Buffer)    │
+│  • execute(action): execute physical tap/swipe actions │
+│  • listDevices(): report device info & supported actions│
+└────────────────────────────────────────────────────────┘
+```
+
+### 1. Prerequisites: What you need to prepare
+
+A complete physical test pipeline typically requires three fundamental components:
+- **Target Screen**: The physical display under test (e.g. in-car screen, physical smartphone, industrial panel);
+- **Visual Sensing**: A reliable way to capture the display (an overhead camera, HDMI/USB capture card, or screen mirroring);
+- **Input Actuator**: A mechanism to interact with the screen (a robotic arm, Bluetooth HID module, stylus, or dedicated control API).
+
+### 2. End-to-End Demos
+
+#### Demo 1: Implementing a Device Service
+
+Wrap your screen capture and actuator logic into a standard service with `@midscene/universal-device/server`:
+
+```ts
+import { createServer } from 'node:http';
+import { createDeviceHandler } from '@midscene/universal-device/server';
+
+const api = createDeviceHandler({
+  token: process.env.MIDSCENE_UNIVERSAL_DEVICE_SERVICE_TOKEN ?? 'my-token',
+  listDevices: () => [{ id: 'my-screen', name: 'My Screen', status: 'available', actions: ['tap'] }],
+  readyDevice: (id) => ({
+    signal: new AbortController().signal,
+    // 1. Visual sensing: return current screen frame
+    screenshot: async () => ({ jpeg: getScreenJpeg(), width: 1920, height: 1080, sequence: 1, receivedAt: Date.now() }),
+    // 2. Action execution: trigger hardware tap/swipe
+    execute: async (action) => { if (action.type === 'tap') await myHardware.tap(action.point.x, action.point.y); },
+  }),
+});
+
+createServer((req, res) => { if (!api.handle(req, res)) res.writeHead(404).end(); }).listen(5801);
+```
+
+#### Demo 2: Visual Debugging in Playground (Optional)
+
+Once the service is running, open the browser Playground to inspect live screen feeds and manually test hardware interactions:
+
+```sh
+npx @midscene/universal-device-playground
+```
+
+#### Demo 3: Writing Natural-Language E2E Tests
+
+With the device service ready, drive your tests in plain language via the Midscene Agent:
 
 ```ts
 import { agentFromUniversalDevice } from '@midscene/universal-device';
@@ -96,7 +140,7 @@ try {
 }
 ```
 
-See the [Universal Device documentation](https://midscenejs.com/universal-device/) for model configuration, device setup, the CLI, and the MCP server.
+See the [Universal Device documentation](./packages/universal-device/README.md) for complete protocol specs and advanced usage.
 
 ## 📦 Packages
 
@@ -114,7 +158,7 @@ See the [contributing guide](./CONTRIBUTING.md) for local setup and development 
 
 ## 🙏 Credits
 
-- Thanks to the [AVATR Robotic team](https://github.com/avatr-robot) for contributing the robot arm automation approach and its DOBOT MG400 implementation.
+- Special thanks to our community contributor, the [AVATR Robotic team](https://www.avatr.com), who spearheaded the development of the core architecture, camera calibration, and motion control for this physical testing solution, thoroughly validating it in real-world automotive cockpit scenarios.
 - [iphone-use](https://github.com/xhoantran/iphone-use) is the source of parts of the Bluetooth HID descriptors used in iOS AirLink.
 
 ## 📖 License

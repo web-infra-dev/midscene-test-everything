@@ -36,6 +36,13 @@ enum {
 };
 
 enum {
+    UVC_AE_MANUAL = 0x01,
+    UVC_AE_AUTO = 0x02,
+    UVC_AE_SHUTTER_PRIORITY = 0x04,
+    UVC_AE_APERTURE_PRIORITY = 0x08,
+};
+
+enum {
     UVC_PU_GAIN = 0x04,
     UVC_PU_WHITE_BALANCE_TEMPERATURE = 0x0a,
     UVC_PU_WHITE_BALANCE_TEMPERATURE_AUTO = 0x0b,
@@ -52,6 +59,20 @@ typedef struct {
     uint64_t defaultValue;
     size_t size;
 } UVCMeta;
+
+static uint8_t AutomaticExposureMode(const UVCMeta *meta) {
+    // For AE mode, GET_RES returns a bitmask of supported modes.
+    const uint8_t autoModes = UVC_AE_AUTO | UVC_AE_APERTURE_PRIORITY;
+    uint8_t supported = (uint8_t)meta->resolution;
+    if (supported == 0) {
+        supported = (uint8_t)(meta->current | meta->defaultValue) & autoModes;
+        if (supported == 0) supported = UVC_AE_AUTO;
+    }
+    uint8_t current = (uint8_t)meta->current & supported & autoModes;
+    if (current != 0) return current;
+    if ((supported & UVC_AE_AUTO) != 0) return UVC_AE_AUTO;
+    return supported & UVC_AE_APERTURE_PRIORITY;
+}
 
 static char *CopyJSON(id value) {
     NSError *error = nil;
@@ -374,10 +395,11 @@ static io_service_t USBServiceForLocation(uint32_t locationId) {
             NULL,
             UVC_CS_INTERFACE
         );
-    if (!descriptor || descriptor->bDescriptorSubType != UVC_VC_HEADER) return;
+    if (!descriptor || descriptor->bLength < 12) return;
 
     const uint8_t *base = (const uint8_t *)descriptor;
-    if (descriptor->bLength < 12) return;
+    // The UVC subtype follows the generic USB descriptor header.
+    if (base[2] != UVC_VC_HEADER) return;
     uint16_t totalLength = OSReadLittleInt16(base, 6);
     if (totalLength <= descriptor->bLength) return;
 
@@ -424,7 +446,11 @@ static io_service_t USBServiceForLocation(uint32_t locationId) {
                                  userInfo:@{
             NSLocalizedDescriptionKey:
                 [NSString stringWithFormat:
-                    @"UVC control request failed (IOKit 0x%08x).",
+                    @"UVC control request 0x%02x failed (unit %u, "
+                     "selector 0x%02x, IOKit 0x%08x).",
+                    request->bRequest,
+                    request->wIndex >> 8,
+                    request->wValue >> 8,
                     result]
         }];
     }
@@ -636,10 +662,14 @@ static io_service_t USBServiceForLocation(uint32_t locationId) {
             unitId:self.inputTerminalId
               size:1];
 
-    BOOL supportsAuto = automatic.available && automatic.supportsSet;
+    BOOL supportsAuto = automatic.available && automatic.supportsSet &&
+        AutomaticExposureMode(&automatic) != 0;
     BOOL supportsManual =
         exposure.supportsSet &&
-        (!automatic.available || automatic.supportsSet);
+        (!automatic.available ||
+            (automatic.supportsSet &&
+                (automatic.resolution == 0 ||
+                    (automatic.resolution & UVC_AE_MANUAL) != 0)));
     if (!supportsAuto && !supportsManual) return nil;
 
     double rawMin = MAX(1.0, (double)exposure.minimum);
@@ -651,7 +681,8 @@ static io_service_t USBServiceForLocation(uint32_t locationId) {
         @"property": @"exposure",
         @"value": @(log2(currentSeconds)),
         @"mode":
-            automatic.available && (automatic.current & 0x01) != 0
+            automatic.available &&
+                (automatic.current & (UVC_AE_MANUAL | UVC_AE_SHUTTER_PRIORITY)) != 0
                 ? @"manual"
                 : @"auto",
         @"min": @(log2(rawMin / 10000.0)),
@@ -864,12 +895,22 @@ static io_service_t USBServiceForLocation(uint32_t locationId) {
     }
 
     if ([mode isEqualToString:@"auto"]) {
-        return [self writeAutoValue:2
+        uint8_t automaticMode = AutomaticExposureMode(&automatic);
+        if (automaticMode == 0) {
+            *error = [NSError errorWithDomain:@"MidsceneUVC"
+                                         code:5
+                                     userInfo:@{
+                NSLocalizedDescriptionKey:
+                    @"UVC automatic exposure is unavailable."
+            }];
+            return NO;
+        }
+        return [self writeAutoValue:automaticMode
                            selector:UVC_CT_AE_MODE
                              unitId:self.inputTerminalId
                               error:error];
     }
-    if (![self writeAutoValue:1
+    if (![self writeAutoValue:UVC_AE_MANUAL
                      selector:UVC_CT_AE_MODE
                        unitId:self.inputTerminalId
                         error:error]) {

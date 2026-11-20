@@ -15,6 +15,18 @@ const baseCorrection = {
   },
 };
 
+it('draws the current outline without extra screen overlays', () => {
+  const html = renderToStaticMarkup(
+    createElement(CameraCornerEditor, {
+      value: baseCorrection,
+      src: '/live',
+      disabled: false,
+    }),
+  );
+
+  expect(html).toContain('<polygon points="50,80 450,80 450,700 50,700"');
+});
+
 it('draws every calibrated screen while editing one active outline', () => {
   const secondCorrection = {
     ...baseCorrection,

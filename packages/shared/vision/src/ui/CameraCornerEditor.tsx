@@ -6,6 +6,12 @@ import { label as defaultLabel } from './labels.js';
 const corners = ['topLeft', 'topRight', 'bottomRight', 'bottomLeft'] as const;
 const labels = ['TL', 'TR', 'BR', 'BL'];
 
+function outlinePoints({ points }: CameraCorrection) {
+  return corners
+    .map((corner) => `${points[corner].x},${points[corner].y}`)
+    .join(' ');
+}
+
 /** Screen rings and outline migrated from robot-vision's CalibrationPreview. */
 export function CameraCornerEditor({
   value,
@@ -73,6 +79,7 @@ export function CameraCornerEditor({
           viewBox={`0 0 ${value.sourceWidth} ${value.sourceHeight}`}
         >
           <title>{translate('Screen outline')}</title>
+          {overlays.length === 0 && <polygon points={outlinePoints(value)} />}
           {overlays.map((overlay) => (
             <polygon
               key={overlay.id}
@@ -81,12 +88,7 @@ export function CameraCornerEditor({
                   ? 'camera-corner-overlay camera-corner-overlay-active'
                   : 'camera-corner-overlay'
               }
-              points={corners
-                .map(
-                  (corner) =>
-                    `${overlay.value.points[corner].x},${overlay.value.points[corner].y}`,
-                )
-                .join(' ')}
+              points={outlinePoints(overlay.value)}
             >
               <title>{overlay.name}</title>
             </polygon>

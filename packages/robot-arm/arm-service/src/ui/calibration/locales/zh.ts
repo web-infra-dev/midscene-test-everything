@@ -2388,6 +2388,9 @@ export const zh: Record<string, string> = {
   'Timed out while calibrating the camera image.': '校准相机画面超时。',
   'Clear Applied Perspective': '清除当前透视（保留屏幕）',
   'Calibrating camera focus and exposure': '正在校准相机对焦与曝光',
+  'Adjusting camera parameters': '正在调整相机参数',
+  'Adjusting camera parameters across all screen ROIs':
+    '正在根据所有屏幕区域调整相机参数',
   ...setupZh,
   ...migratedZh,
   ...assistedCalibrationZh,
