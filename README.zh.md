@@ -86,11 +86,29 @@
 - **你获得什么**：无需关心视觉提示词、坐标识别和并发锁，开箱即享自然语言测试、Web Playground 调试与 Agent 集成。
 - **你只需实现**：通过 `createDeviceHandler()` 注入画面采集（`screenshot`）与硬件动作（`execute`）。
 
-## ⚡ 快速上手
+## 🧭 核心概念与工作流程
 
-### 1. 启动或对接设备服务
+真实物理设备与屏幕的自动化测试涉及软硬件协同，并非几分钟就能轻巧跑通的“Quick Start”。在正式接入前，你需要先理解整体流程与核心概念。
 
-要开始测试，首先需要有一个运行中的设备服务（提供画面与操作接口）。你可以直接使用现成方案（如真机 iPhone 的 [`ios-airlink`](./packages/ios-airlink/README.zh.md)），或者用 `@midscene/universal-device/server` 接入你的自定义硬件：
+### 1. 前置准备：你需要准备什么
+
+一套完整的物理测试链路通常需要具备以下三项要素：
+- **被测屏幕**：车机中控屏、物理手机、智能家居面板等目标设备；
+- **画面感知**：能稳定采集屏幕画面的途径（外置摄像头、HDMI/USB 采集卡、网络/蓝牙投屏等）；
+- **操作执行**：能对屏幕施加物理或逻辑操作的机构（机械臂、蓝牙 HID 芯片、物理触控笔或专属控制 API）。
+
+### 2. 核心概念：系统如何协同运转
+
+- **Device Service（设备服务）**：运行在本地或局域网的标准 HTTP 服务，将物理硬件封装为统一接口；
+- **Screenshot（画面感知）**：向视觉模型提供当前屏幕的图像帧（JPEG Buffer 与像素尺寸）；
+- **Execute（动作执行）**：模型在图像上定位出目标像素坐标 `(x, y)` 后，下发给你的驱动执行物理操作；
+- **Midscene Agent（测试智能体）**：驱动“观察 ➔ 推理 ➔ 操作 ➔ 断言”测试闭环的自然语言引擎。
+
+### 3. 端到端实现 Demo
+
+#### Demo 1：实现设备服务（封装硬件接口）
+
+使用 `@midscene/universal-device/server` 将上述准备好的感知与执行接口暴露为标准服务：
 
 ```ts
 import { createServer } from 'node:http';
@@ -101,9 +119,9 @@ const api = createDeviceHandler({
   listDevices: () => [{ id: 'my-screen', name: 'My Screen', status: 'available', actions: ['tap'] }],
   readyDevice: (id) => ({
     signal: new AbortController().signal,
-    // 核心接口 1：采集画面
+    // 1. 画面采集：返回当前屏幕截图
     screenshot: async () => ({ jpeg: getScreenBuffer(), width: 1920, height: 1080, sequence: 1, receivedAt: Date.now() }),
-    // 核心接口 2：执行动作
+    // 2. 动作执行：驱动硬件完成点击或滑动
     execute: async (action) => { if (action.type === 'tap') await myDeviceDriver.tap(action.point.x, action.point.y); },
   }),
 });
@@ -111,17 +129,17 @@ const api = createDeviceHandler({
 createServer((req, res) => { if (!api.handle(req, res)) res.writeHead(404).end(); }).listen(5801);
 ```
 
-### 2. 交互调试与画面验证（可选）
+#### Demo 2：使用 Playground 调试设备（可选）
 
-服务启动后，可在浏览器中打开 Playground 实时预览设备画面并手动点击调试：
+服务启动后，可在浏览器中打开 Playground 实时预览设备画面并手动点击调试，验证软硬件连通性：
 
 ```sh
 npx @midscene/universal-device-playground
 ```
 
-### 3. 编写并运行自然语言 E2E 测试
+#### Demo 3：编写并运行自然语言 E2E 测试
 
-设备就绪后，直接通过 Midscene Agent 用自然语言编写测试用例驱动该设备：
+设备服务与硬件就绪后，通过 Midscene Agent 用自然语言编写测试用例驱动该设备：
 
 ```ts
 import { agentFromUniversalDevice } from '@midscene/universal-device';

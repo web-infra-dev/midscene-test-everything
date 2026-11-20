@@ -86,11 +86,29 @@ We maintain a clean separation of concerns: **the framework handles all generic 
 - **What you get**: Zero prompt engineering, coordinate guessing, or concurrency headaches — turn-key natural language testing, browser playground, and Agent integrations out of the box.
 - **What you implement**: Plug your screen capture (`screenshot`) and hardware actions (`execute`) into `createDeviceHandler()`.
 
-## ⚡ Quick start
+## 🧭 Concepts & Workflow
 
-### 1. Start or connect a device service
+Testing real-world physical devices and screens is inherently complex and involves both hardware and software coordination — it is rarely a trivial "Quick Start". Before integrating your setup, it helps to understand the prerequisites and core concepts.
 
-To run tests, you first need a live device service providing screen capture and action interfaces. You can use an existing integration (e.g. [`ios-airlink`](./packages/ios-airlink/README.md) for physical iPhones) or expose your custom hardware via `@midscene/universal-device/server`:
+### 1. Prerequisites: What you need to prepare
+
+A complete physical test pipeline typically requires three fundamental components:
+- **Target Screen**: The physical display under test (e.g. in-car screen, physical smartphone, industrial panel);
+- **Visual Sensing**: A reliable way to capture the display (an overhead camera, HDMI/USB capture card, or screen mirroring);
+- **Input Actuator**: A mechanism to interact with the screen (a robotic arm, Bluetooth HID module, stylus, or dedicated control API).
+
+### 2. Core Concepts: How the system works together
+
+- **Device Service**: A lightweight HTTP daemon that wraps your physical hardware into a standardized protocol;
+- **Screenshot**: Provides current screen frames (JPEG Buffer and pixel dimensions) for vision model perception;
+- **Execute**: Translates resolved screen coordinates `(x, y)` from the vision model into physical hardware taps or swipes;
+- **Midscene Agent**: The natural-language testing engine driving the full "perceive ➔ reason ➔ act ➔ assert" test loop.
+
+### 3. End-to-End Demos
+
+#### Demo 1: Implementing a Device Service
+
+Wrap your screen capture and actuator logic into a standard service with `@midscene/universal-device/server`:
 
 ```ts
 import { createServer } from 'node:http';
@@ -101,9 +119,9 @@ const api = createDeviceHandler({
   listDevices: () => [{ id: 'my-screen', name: 'My Screen', status: 'available', actions: ['tap'] }],
   readyDevice: (id) => ({
     signal: new AbortController().signal,
-    // Core interface 1: Capture screen frame
+    // 1. Visual sensing: return current screen frame
     screenshot: async () => ({ jpeg: getScreenJpeg(), width: 1920, height: 1080, sequence: 1, receivedAt: Date.now() }),
-    // Core interface 2: Execute hardware action
+    // 2. Action execution: trigger hardware tap/swipe
     execute: async (action) => { if (action.type === 'tap') await myHardware.tap(action.point.x, action.point.y); },
   }),
 });
@@ -111,17 +129,17 @@ const api = createDeviceHandler({
 createServer((req, res) => { if (!api.handle(req, res)) res.writeHead(404).end(); }).listen(5801);
 ```
 
-### 2. Inspect and debug in Playground (Optional)
+#### Demo 2: Visual Debugging in Playground (Optional)
 
-Once your device service is running, launch the browser Playground to inspect the live screen feed and test manual interactions:
+Once the service is running, open the browser Playground to inspect live screen feeds and manually test hardware interactions:
 
 ```sh
 npx @midscene/universal-device-playground
 ```
 
-### 3. Write and run vision E2E tests
+#### Demo 3: Writing Natural-Language E2E Tests
 
-With the device ready, write tests in natural language using the Midscene Agent:
+With the device service ready, drive your tests in plain language via the Midscene Agent:
 
 ```ts
 import { agentFromUniversalDevice } from '@midscene/universal-device';
