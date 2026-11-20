@@ -60,7 +60,10 @@ test('code-configured arm connects, reports its own settings, retries and releas
     assert.equal(attempts, 0);
     const managerPage = await fetch(server.url);
     assert.equal(managerPage.status, 200);
-    assert.match(await managerPage.text(), /Arm Device Manager/);
+    assert.match(
+      await managerPage.text(),
+      /<title>Dobot MG400 Arm Service Manager<\/title>/,
+    );
     const phonePage = await fetch(`${server.url}/s`);
     assert.equal(phonePage.status, 200);
     assert.match(phonePage.headers.get('content-type'), /text\/html/);

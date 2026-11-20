@@ -43,5 +43,5 @@ export default defineConfig({
       ],
     },
   },
-  html: { title: 'Arm Device Manager' },
+  html: { title: 'Dobot MG400 Arm Service Manager' },
 });

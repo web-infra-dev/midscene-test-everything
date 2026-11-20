@@ -100,7 +100,7 @@ export function App(views: PlaygroundViews) {
               <div className="brand">
                 <img src={logo} alt="Midscene" />
                 <span className="brand-divider" />
-                <span translate="no">Arm Device Manager</span>
+                <span translate="no">Dobot MG400 Arm Service Manager</span>
               </div>
               <div className="header-actions">
                 <Dropdown
