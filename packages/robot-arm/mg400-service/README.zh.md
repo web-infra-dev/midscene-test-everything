@@ -2,7 +2,7 @@
 
 [English](./README.md) / 简体中文
 
-`@midscene/arm-service` 通过 Universal Device 将 DOBOT MG400 和俯视摄像头接入 Midscene。摄像头采集屏幕画面，机械臂带动触控笔在实体屏幕上点击和滑动，可用于测试车机和嵌入式界面，无需修改被测设备的软件。
+`@midscene/mg400-service` 通过 Universal Device 将 DOBOT MG400 和俯视摄像头接入 Midscene。摄像头采集屏幕画面，机械臂带动触控笔在实体屏幕上点击和滑动，可用于测试车机和嵌入式界面，无需修改被测设备的软件。
 
 ## 本地启动
 

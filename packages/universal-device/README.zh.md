@@ -39,7 +39,7 @@ Midscene Universal Device 是一套基于 HTTP 的开放协议，将任意可操
 - **Node.js**：`20.19+`、`22.12+` 或 `24+`。
 - **设备服务**：获取兼容服务的地址与访问 Token。若暂无现成服务，可先体验以下方案，或参考下文[接入自定义设备](#-接入自定义设备)：
   - **iOS AirLink**（iPhone 真机）：参考 [iOS AirLink 指南](../ios-airlink/README.zh.md)（默认地址 `http://localhost:5801`，可在管理页复制 Token）。
-  - **机械臂**（车机 / 触屏）：参考 [DOBOT MG400 设备服务指南](../robot-arm/arm-service/README.md)。
+  - **机械臂**（车机 / 触屏）：参考 [DOBOT MG400 设备服务指南](../robot-arm/mg400-service/README.md)。
 
 ## ⚡ 快速开始
 

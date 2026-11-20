@@ -192,7 +192,7 @@ importers:
         specifier: ^5.8.3
         version: 5.9.3
 
-  packages/robot-arm/arm-service:
+  packages/robot-arm/mg400-service:
     dependencies:
       '@clack/prompts':
         specifier: ^0.11.0

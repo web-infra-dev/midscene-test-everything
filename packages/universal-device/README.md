@@ -39,7 +39,7 @@ Midscene Universal Device is an open, HTTP-based protocol that connects any inte
 - **Node.js**: `20.19+`, `22.12+`, or `24+`.
 - **Device service**: Have a service URL and access token ready. If you do not have one yet, try one of the built-in services or [connect your own device](#-connect-your-own-device):
   - **iOS AirLink** (physical iPhone): See the [iOS AirLink guide](../ios-airlink/README.md) (default URL `http://localhost:5801`; copy the token in the manager).
-  - **Robot arm** (in-car / touchscreen): See the [DOBOT MG400 service guide](../robot-arm/arm-service/README.md).
+  - **Robot arm** (in-car / touchscreen): See the [DOBOT MG400 service guide](../robot-arm/mg400-service/README.md).
 
 ## ⚡ Quick start
 

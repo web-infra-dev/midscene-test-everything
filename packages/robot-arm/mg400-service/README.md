@@ -6,7 +6,7 @@
 
 English / [简体中文](./README.zh.md)
 
-`@midscene/arm-service` connects a DOBOT MG400 and an overhead camera to Midscene through Universal Device. The camera captures the screen, and a stylus mounted on the robot arm taps and swipes the physical touchscreen. This lets you test in-car displays and embedded interfaces without changing the device software.
+`@midscene/mg400-service` connects a DOBOT MG400 and an overhead camera to Midscene through Universal Device. The camera captures the screen, and a stylus mounted on the robot arm taps and swipes the physical touchscreen. This lets you test in-car displays and embedded interfaces without changing the device software.
 
 ## Run locally
 

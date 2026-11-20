@@ -38,6 +38,6 @@ export async function checkConnection(adapter: RobotArmAdapter) {
 }
 ```
 
-The [MG400 service implementation](../arm-service/src/server/index.ts) shows how to use an adapter factory, keep the controller open, and register its touchscreen devices with Universal Device.
+The [MG400 service implementation](../mg400-service/src/server/index.ts) shows how to use an adapter factory, keep the controller open, and register its touchscreen devices with Universal Device.
 
-To set up and calibrate a DOBOT MG400, see the [MG400 device service README](../arm-service/README.md).
+To set up and calibrate a DOBOT MG400, see the [MG400 device service README](../mg400-service/README.md).

@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Readable } from 'node:stream';
 import { expect, it, rstest } from '@rstest/core';
-import { createCalibrationClient } from '../../arm-service/src/ui/calibration/client.js';
+import { createCalibrationClient } from '../../mg400-service/src/ui/calibration/client.js';
 import { createCalibrationHandler } from '../src/calibration-server/handler.js';
 import type { CalibrationWorkflow } from '../src/calibration/workflow.js';
 function transport(service: Partial<CalibrationWorkflow>) {

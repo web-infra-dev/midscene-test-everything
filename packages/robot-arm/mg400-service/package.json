@@ -1,10 +1,10 @@
 {
-  "name": "@midscene/arm-service",
+  "name": "@midscene/mg400-service",
   "version": "0.0.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/web-infra-dev/midscene-test-everything.git",
-    "directory": "packages/robot-arm/arm-service"
+    "directory": "packages/robot-arm/mg400-service"
   },
   "publishConfig": {
     "access": "public",
@@ -17,7 +17,7 @@
     "test": "rstest run",
     "prepack": "pnpm build",
     "start": "node dist/cli/index.js",
-    "dev": "pnpm --filter @midscene/arm-service... -r build && pnpm start",
+    "dev": "pnpm --filter @midscene/mg400-service... -r build && pnpm start",
     "dev:mock": "pnpm run dev --mock"
   },
   "dependencies": {

@@ -148,7 +148,7 @@ try {
 | --- | --- |
 | [`universal-device`](./packages/universal-device/README.zh.md) | 统一设备接口、TypeScript SDK、HTTP API、CLI 和 MCP Server |
 | [`universal-device-playground`](./packages/universal-device-playground/README.md) | 在浏览器里预览设备画面并调试操作 |
-| [`arm-service`](./packages/robot-arm/arm-service/README.zh.md) | DOBOT MG400 设备服务，提供配置、校准和触屏操作 |
+| [`mg400-service`](./packages/robot-arm/mg400-service/README.zh.md) | DOBOT MG400 设备服务，提供配置、校准和触屏操作 |
 | [`arm-kit`](./packages/robot-arm/arm-kit/README.zh.md) | 机械臂适配器接口，可用于接入自定义机械臂 |
 | [`ios-airlink`](./packages/ios-airlink/README.md) | 在 macOS 上连接和控制 iPhone 真机 |
 

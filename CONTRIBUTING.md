@@ -31,7 +31,7 @@ pnpm test
 ## Package boundaries
 
 - Keep vendor commands, units, and completion checks in adapters that implement `@midscene/arm-kit/adapter-development`. The controller owns the queue shared by its devices.
-- Keep shared browser-safe types and camera geometry in `packages/shared/utils`, user-facing controls in `packages/universal-device-playground`, and MG400 setup and calibration in `packages/robot-arm/arm-service`.
+- Keep shared browser-safe types and camera geometry in `packages/shared/utils`, user-facing controls in `packages/universal-device-playground`, and MG400 setup and calibration in `packages/robot-arm/mg400-service`.
 - For calibration packaging changes, build and pack the arm service. Check that the package contains the built manager UI and exercise the embedded calibration routes with the test adapter.
 
 ## Documentation

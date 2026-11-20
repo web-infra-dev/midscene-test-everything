@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, describe, expect, it, rstest } from '@rstest/core';
-import { createCalibrationClient } from '../../arm-service/src/ui/calibration/client.js';
+import { createCalibrationClient } from '../../mg400-service/src/ui/calibration/client.js';
 import {
   CALIBRATION_PHONE_POLICY,
   calibrationCaptureTargets,

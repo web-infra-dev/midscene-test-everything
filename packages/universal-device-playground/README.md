@@ -14,6 +14,6 @@ pnpm build
 pnpm dev:playground
 ```
 
-Open the URL printed in the terminal. Enter the device service URL and token, then select a device. You can connect to the [DOBOT MG400 service](../robot-arm/arm-service/README.md), [iOS AirLink](../ios-airlink/README.md), or your own Universal Device service.
+Open the URL printed in the terminal. Enter the device service URL and token, then select a device. You can connect to the [DOBOT MG400 service](../robot-arm/mg400-service/README.md), [iOS AirLink](../ios-airlink/README.md), or your own Universal Device service.
 
 To control multiple devices, select **Connect another device** to open the connection page in a new browser tab. Each device opens at its own URL, and refreshing a device tab keeps its connection. Use **Disconnect** to free that device for another session.

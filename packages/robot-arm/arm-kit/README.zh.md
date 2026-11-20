@@ -34,6 +34,6 @@ export async function checkConnection(adapter: RobotArmAdapter) {
 }
 ```
 
-[MG400 服务实现](../arm-service/src/server/index.ts) 展示了如何使用适配器工厂、保持控制器连接，以及将触屏设备注册到 Universal Device。
+[MG400 服务实现](../mg400-service/src/server/index.ts) 展示了如何使用适配器工厂、保持控制器连接，以及将触屏设备注册到 Universal Device。
 
-如果要配置和标定 DOBOT MG400，参见 [MG400 设备服务](../arm-service/README.zh.md)。
+如果要配置和标定 DOBOT MG400，参见 [MG400 设备服务](../mg400-service/README.zh.md)。
