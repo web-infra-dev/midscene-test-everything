@@ -25,78 +25,103 @@
 
 ## 💡 项目背景
 
-[Midscene.js](https://github.com/web-infra-dev/midscene) 是一个**视觉驱动的端到端测试框架**。它不依赖 DOM 树、选择器或无障碍标注，而是像用户一样看截图：按外观定位元素，根据画面执行操作，再验证界面上可见的结果。目前 Midscene 已支持 Web、Android、iOS、HarmonyOS 和桌面端。
+[Midscene.js](https://github.com/web-infra-dev/midscene) 是**视觉驱动的端到端测试框架**：像人类一样看屏幕截图找元素、做操作，无需依赖 DOM 树或系统无障碍接口。
 
-但还有大量界面根本没有可用的测试驱动：车机触屏、自助终端、智能家居面板、无法开启调试的 iPhone…… 只要一个界面能被**看到**（截图、采集卡、摄像头）并且能被**操作**（API、HID 设备、机械臂），视觉模型就能测试它。
+但在车机触屏、工控屏、或无法开启调试的 iPhone 上，往往根本没有软件测试驱动。只要界面能被**看到**（截图、摄像头）且能被**操作**（HID、机械臂），视觉模型就能测试它。
 
-我们在这个仓库里探索**更多通用化的接入方案**，让开发者可以用视觉模型驱动任意界面的端到端测试：
-
-```text
-   自然语言测试用例  ──▶  Midscene GUI Agent（视觉模型）
-                                   │
-                     Universal Device 开放协议（HTTP）
-                      设备发现 · 会话 · 截图 · 输入
-                                   │
-       ┌───────────────────────────┼───────────────────────────┐
-  机械臂 + 摄像头             蓝牙 HID + 投屏               你自己的设备
-  （车机屏幕、面板）          （iPhone 真机）              （任何有屏幕的设备）
-```
-
-## 🔥 特性
-
-- **测试无法插桩的界面**：被测设备无需集成 SDK、开启调试模式或修改代码，只要能采集画面、能物理或 HID 输入即可。
-- **一个开放协议接入任意设备**：通过 HTTP 提供设备发现、截图和输入接口，就能使用 Midscene 的全部能力。
-- **自然语言写测试，各端同一套 API**：在任意已接入设备上使用 `aiAct`、`aiAssert`、`aiQuery` 等 [Midscene Agent API](https://midscenejs.com/zh/)。
-- **为 AI Agent 准备好**：通过内置的 MCP Server 和 Skills，将设备接入 Codex、Claude Code、Cursor 等 Agent。
+本项目致力于探索**通用化的跨设备接入方案**，让任何屏幕都能快速接入视觉 AI 测试。
 
 ## 🎬 案例展示
 
-### 🦾 机械臂 × 车机触屏
+### 🦾 机械臂 × 物理触屏（车机等无调试接口屏幕）
 
-DOBOT MG400 机械臂在真实车机屏幕上点击和滑动，顶部摄像头采集画面。Midscene 读取屏幕、决定点击位置并验证结果，全程无需改动车机软件。
+车机、工控屏等封闭系统通常没有调试接口。我们的方案是**用机械臂配合摄像头，像真人一样观察和操作屏幕**。
+
+我们探索并跑通了包含相机标定、坐标转换与机械臂控制在内的完整物理自动化方案。仓库中提供了基于 **DOBOT MG400** 的参考示例（Demo）；你可以直接照抄该方案，也能通过 [`arm-kit`](./packages/robot-arm/arm-kit/README.zh.md) 像拼积木一样接入任意型号的机械臂。
 
 <!-- TODO：替换为机械臂演示视频（上传到 GitHub 获取 user-attachments 链接）。 -->
 > 🎥 _视频占位：机械臂演示视频即将补充。_
 
 > [!NOTE]
-> **该方案由[阿维塔 Robotic 团队](https://github.com/avatr-robot)提供。**
+> **特别致谢来自社区的贡献者 —— [阿维塔科技 Robotic 团队](https://www.avatr.com)**
 >
-> <!-- TODO(阿维塔 Robotic 团队)：补充团队介绍、方案背后的车机测试场景，以及在实际生产中的使用情况。 -->
-> _占位：阿维塔 Robotic 团队的方案介绍即将补充。_
+> 这套机械臂物理触屏自动化方案的核心架构研发与真实场景落地，均由阿维塔团队主导完成并开源贡献。正是得益于他们在车载智能座舱实战中沉淀的标定算法与控制工程经验，才让这套通用物理测试基础设施成为现实。
+>
+> *提示：演示视频中展示的 DOBOT MG400 机械臂仅作为跑通全流程的参考 Demo，并非购买建议，开发者可以根据自己的实际业务场景与预算灵活选型。*
 
-参阅 [MG400 配置指南](./packages/robot-arm/arm-service/README.zh.md)，或用 [`arm-kit`](./packages/robot-arm/arm-kit/README.zh.md) 接入你自己的机械臂。
+### 📱 蓝牙 HID × iPhone 真机
 
-### 📱 iOS AirLink × iPhone 真机
-
-在 Mac 上通过蓝牙 HID 对 iPhone 真机运行自动化测试，无需越狱，也无需开启开发者模式。屏幕来源可选 USB、AirPlay 或外接摄像头。
+无需越狱或开启开发者模式，通过 Mac 蓝牙 HID 驱动 iPhone 真机自动化，屏幕源支持 USB、AirPlay 或外接摄像头。
 
 <!-- TODO：替换为 iOS AirLink 演示视频（上传到 GitHub 获取 user-attachments 链接）。 -->
 > 🎥 _视频占位：iOS AirLink 演示视频即将补充。_
 
 开始使用：[`ios-airlink`](./packages/ios-airlink/README.md) · [配置指南](https://midscenejs.com/zh/universal-device/quick-start#ios-airlink)
 
-### 🧩 下一个就是你的设备
+### 🤝 欢迎贡献你的成功案例
 
-有 Midscene 还够不着的屏幕？用 `@midscene/universal-device/server` 中的 `createDeviceHandler()` 实现 Universal Device 协议，你的设备就能用上 Midscene 的全部能力。[欢迎贡献](./CONTRIBUTING.md)。
+我们非常欢迎社区贡献更多不同设备与场景的成功接入实践！如果你有其他优秀的硬件方案、连接协议或独特平台的实战经验，欢迎[提交 Issue](https://github.com/web-infra-dev/midscene-test-everything/issues/new) 告诉我们。我们会把你的方案链接展示在这个版块，让更多开发者看到你的精彩实践。
+
+## 🏗️ 架构与分工
+
+本项目采用明确的分工架构：**框架提供通用的 AI 测试基建，开发者仅需实现硬件的感知与控制。**
+
+```text
+┌────────────────────────────────────────────────────────┐
+│               本项目提供（通用测试基建）                 │
+│  • 自然语言 E2E 测试 (aiAct / aiAssert / aiQuery)        │
+│  • 浏览器调试控制台 (Playground 实时预览与交互)          │
+│  • 服务端底座 (会话独占锁、鉴权、OpenAPI、预览推流)       │
+│  • AI Agent 工具链 (内置 MCP Server、CLI、Skills)       │
+└───────────────────────────┬────────────────────────────┘
+                            │ Universal Device 开放协议 (HTTP)
+┌───────────────────────────┴────────────────────────────┐
+│               开发者负责（实现极简核心接口）             │
+│  • screenshot()：采集当前画面 (JPEG Buffer)             │
+│  • execute(action)：执行点击、滑动等硬件操作            │
+│  • listDevices()：汇报设备状态与支持的操作列表          │
+└────────────────────────────────────────────────────────┘
+```
+
+- **你获得什么**：无需关心视觉提示词、坐标识别和并发锁，开箱即享自然语言测试、Web Playground 调试与 Agent 集成。
+- **你只需实现**：通过 `createDeviceHandler()` 注入画面采集（`screenshot`）与硬件动作（`execute`）。
 
 ## ⚡ 快速上手
 
-启动设备服务后，就可以用自然语言编写测试：
+### 1. 运行测试（已有设备）
 
 ```ts
 import { agentFromUniversalDevice } from '@midscene/universal-device';
 
 const agent = await agentFromUniversalDevice({ host: 'http://localhost:5801' });
+await agent.aiAct('打开音乐应用，搜索“周杰伦”');
+await agent.aiAssert('搜索结果列表中显示了周杰伦的歌曲');
+await agent.destroy();
+```
+*或运行 `npx @midscene/universal-device-playground` 在浏览器中可视化调试。*
 
-try {
-  await agent.aiAct('打开音乐应用，搜索“周杰伦”');
-  await agent.aiAssert('搜索结果列表中显示了周杰伦的歌曲');
-} finally {
-  await agent.destroy();
-}
+### 2. 接入新设备（实现核心接口）
+
+只需通过 `@midscene/universal-device/server` 接入你的截屏与控制函数：
+
+```ts
+import { createServer } from 'node:http';
+import { createDeviceHandler } from '@midscene/universal-device/server';
+
+const api = createDeviceHandler({
+  token: process.env.MIDSCENE_UNIVERSAL_DEVICE_SERVICE_TOKEN ?? 'my-token',
+  listDevices: () => [{ id: 'my-screen', name: 'My Screen', status: 'available', actions: ['tap'] }],
+  readyDevice: (id) => ({
+    signal: new AbortController().signal,
+    screenshot: async () => ({ jpeg: getScreenBuffer(), width: 1920, height: 1080, sequence: 1, receivedAt: Date.now() }),
+    execute: async (action) => { if (action.type === 'tap') await myDeviceDriver.tap(action.point.x, action.point.y); },
+  }),
+});
+
+createServer((req, res) => { if (!api.handle(req, res)) res.writeHead(404).end(); }).listen(5801);
 ```
 
-模型配置、设备接入、CLI 和 MCP Server 的用法见 [Universal Device 文档](https://midscenejs.com/zh/universal-device/)。
+完整协议与高级用法见 [Universal Device 文档](https://midscenejs.com/zh/universal-device/)。
 
 ## 📦 主要组件
 
@@ -114,7 +139,7 @@ try {
 
 ## 🙏 致谢
 
-- 感谢[阿维塔 Robotic 团队](https://github.com/avatr-robot)贡献机械臂自动化方案，并提供 DOBOT MG400 的具体实现。
+- 特别感谢来自社区的贡献者 [阿维塔科技 Robotic 团队](https://www.avatr.com)：主导研发了机械臂物理触屏自动化方案的核心架构、相机标定与运动控制能力，并在真实车载座舱测试场景中完成了全面落地验证。
 - iOS AirLink 的部分蓝牙 HID 描述符改编自 [iphone-use](https://github.com/xhoantran/iphone-use)。
 
 ## 📖 许可证
