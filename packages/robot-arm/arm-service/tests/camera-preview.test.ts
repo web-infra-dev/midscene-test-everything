@@ -62,12 +62,19 @@ test('selects a calibrated screen while keeping an uncalibrated screen visible',
   );
 });
 
-test('thumbnail uses the running camera preview and stops showing it when stopped', () => {
-  const render = (entry: CameraEntry, selectedId = 'other') =>
+test('running thumbnails show the stage image for the selected camera', () => {
+  const render = (
+    entry: CameraEntry,
+    selectedId = 'other',
+    selectedImage?: HTMLImageElement,
+    expanded = true,
+  ) =>
     renderToStaticMarkup(
       React.createElement(CameraRail, {
         entries: [entry],
+        expanded,
         selectedId,
+        selectedImage,
         onSelect: () => {},
       }),
     );
@@ -80,12 +87,15 @@ test('thumbnail uses the running camera preview and stops showing it when stoppe
   assert.ok(!running.includes('未启动'));
   // The stage owns the selected camera's stream; the rail must not open a
   // second one.
-  const selected = render(camera, camera.id);
+  const selected = render(camera, camera.id, {} as HTMLImageElement);
+  assert.ok(selected.includes('<canvas'));
   assert.ok(!selected.includes('/api/cameras/preview'));
   assert.ok(selected.includes('运行中'));
   const stopped = render({ ...camera, stream: undefined });
   assert.ok(!stopped.includes('<img'));
+  assert.ok(!stopped.includes('<canvas'));
   assert.ok(stopped.includes('未启动'));
+  assert.ok(!render(camera, 'other', undefined, false).includes('<img'));
 });
 
 test('keeps a legacy camera response distinct from a detached or matching installation', async () => {

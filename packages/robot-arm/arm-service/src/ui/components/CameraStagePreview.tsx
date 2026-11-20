@@ -14,12 +14,14 @@ import { useLanguage } from '../i18n';
 /** Keep the current stream attached while the operator inspects it full screen. */
 export function CameraStagePreview({
   children,
+  actions,
   available = true,
   outline,
   outlines,
   frameSize,
 }: {
   children: ReactNode;
+  actions?: ReactNode;
   available?: boolean;
   outline?: CameraCorrection;
   /** Every screen of the camera, drawn at once on the raw view. */
@@ -84,15 +86,19 @@ export function CameraStagePreview({
     >
       {children}
       {available && !frameSize && <ScreenOutlines outlines={stageOutlines} />}
-      {(available || full) && (
-        <Button
-          className="camera-fullscreen"
-          size="small"
-          aria-label={label}
-          title={label}
-          icon={full ? <Minimize size={16} /> : <Maximize size={16} />}
-          onClick={() => void toggle()}
-        />
+      {(actions || available || full) && (
+        <div className="camera-preview-actions">
+          {!full && actions}
+          {(available || full) && (
+            <Button
+              size="small"
+              aria-label={label}
+              title={label}
+              icon={full ? <Minimize size={16} /> : <Maximize size={16} />}
+              onClick={() => void toggle()}
+            />
+          )}
+        </div>
       )}
     </div>
   );

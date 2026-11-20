@@ -1,7 +1,7 @@
-import { App as AntApp, Badge, Button, ConfigProvider } from 'antd';
+import { App as AntApp, Badge, Button, ConfigProvider, Dropdown } from 'antd';
 import enUS from 'antd/locale/en_US';
 import zhCN from 'antd/locale/zh_CN';
-import { Languages } from 'lucide-react';
+import { Languages, Monitor, Moon, Sun } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import logo from './assets/midscene-logo.png';
 import {
@@ -15,11 +15,18 @@ import { DeviceWorkspace } from './components/DeviceWorkspace';
 import { useConnection } from './connection';
 import { useSetupStore } from './hooks/useRobotArm';
 import { usePreferences, useT } from './i18n';
-import { useArmTheme } from './theme';
+import { armThemeModes, useArmTheme, useArmThemePreference } from './theme';
 import './App.less';
 import './components/robot-arm/Setup.less';
 
 import { type PlaygroundViews, Views } from './extensions';
+
+const themeOptions = {
+  system: { icon: Monitor, label: 'themeSystem' },
+  light: { icon: Sun, label: 'themeLight' },
+  dark: { icon: Moon, label: 'themeDark' },
+} as const;
+
 export function App(views: PlaygroundViews) {
   useBrowserVoice();
   const t = useT();
@@ -81,6 +88,8 @@ export function App(views: PlaygroundViews) {
       }),
     [],
   );
+  const [themeMode, setThemeMode] = useArmThemePreference();
+  const ThemeIcon = themeOptions[themeMode].icon;
   const theme = useArmTheme();
   return (
     <ConfigProvider theme={theme} locale={language === 'zh' ? zhCN : enUS}>
@@ -94,6 +103,29 @@ export function App(views: PlaygroundViews) {
                 <span translate="no">Arm Device Manager</span>
               </div>
               <div className="header-actions">
+                <Dropdown
+                  trigger={['click']}
+                  menu={{
+                    selectable: true,
+                    selectedKeys: [themeMode],
+                    items: armThemeModes.map((mode) => {
+                      const { icon: Icon, label } = themeOptions[mode];
+                      return {
+                        key: mode,
+                        label: t(label),
+                        icon: <Icon size={16} />,
+                        onClick: () => setThemeMode(mode),
+                      };
+                    }),
+                  }}
+                >
+                  <Button
+                    aria-haspopup="menu"
+                    aria-label={t('theme')}
+                    title={t('theme')}
+                    icon={<ThemeIcon size={16} />}
+                  />
+                </Dropdown>
                 <VoiceSettings compact />
                 <Badge
                   status={

@@ -3,7 +3,7 @@ import { Cable } from 'lucide-react';
 import { SetupIllustration } from '../calibration';
 import { useViews } from '../extensions';
 import { useRobotArm } from '../hooks/useRobotArm';
-import { useLanguage, useT } from '../i18n';
+import { t, useLanguage, useT } from '../i18n';
 
 export function ConnectionScreen({ onSkip }: { onSkip(): void }) {
   const { ConnectionForm, connectionDiagram } = useViews();
@@ -11,6 +11,7 @@ export function ConnectionScreen({ onSkip }: { onSkip(): void }) {
   const arm = useRobotArm();
   const language = useLanguage();
   const connecting = arm.busy || arm.setup?.phase === 'connecting';
+  const error = (arm.error || arm.setup?.error)?.replace(/^Error: /, '');
   const showDiagram =
     (connectionDiagram ?? arm.setup?.connectionDiagram) === 'ethernet';
   return (
@@ -35,43 +36,46 @@ export function ConnectionScreen({ onSkip }: { onSkip(): void }) {
                 : label('connectDescription')}
             </Typography.Paragraph>
           )}
-          {(arm.error || arm.setup?.error) && (
+          {error && (
             <Alert
+              className="connection-error"
               type="error"
               showIcon
-              message={arm.error || arm.setup?.error}
+              message={
+                error === 'MG400 command completion is unknown'
+                  ? label('commandCompletionUnknown')
+                  : t(error)
+              }
             />
           )}
-          {arm.setup ? (
-            ConnectionForm ? (
-              <ConnectionForm
-                arm={arm}
-                footer={null}
-                onContinue={() => void arm.refresh()}
-              />
-            ) : (
+          {arm.setup && ConnectionForm && (
+            <ConnectionForm
+              arm={arm}
+              footer={null}
+              onContinue={() => void arm.refresh()}
+            />
+          )}
+          {!arm.setup && (
+            <div className="connection-loading">
+              <Spin />
+            </div>
+          )}
+          <div className="connection-actions">
+            {arm.setup && !ConnectionForm && (
               <Button
                 type="primary"
                 loading={connecting}
                 onClick={() => void arm.run(arm.api.connect)}
               >
                 {label(
-                  connecting
-                    ? 'connecting'
-                    : arm.setup?.error
-                      ? 'retry'
-                      : 'connect',
+                  connecting ? 'connectingAction' : error ? 'retry' : 'connect',
                 )}
               </Button>
-            )
-          ) : (
-            <div className="connection-loading">
-              <Spin />
-            </div>
-          )}
-          <Button type="link" onClick={onSkip}>
-            {label('skipToCamera')}
-          </Button>
+            )}
+            <Button type="link" onClick={onSkip}>
+              {label('skipToCamera')}
+            </Button>
+          </div>
         </div>
         {showDiagram && (
           <div className="connection-diagram">

@@ -272,8 +272,37 @@ details {
     margin: 0 0 8px;
   }
   .connection-intro {
-    margin-bottom: 28px;
+    margin-bottom: 16px;
     line-height: 1.7;
+  }
+  .connection-error {
+    align-items: flex-start;
+    margin-bottom: 12px;
+    padding: 8px 10px;
+    overflow-wrap: anywhere;
+
+    .ant-alert-icon {
+      margin-top: 4px;
+    }
+  }
+  .connection-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 8px;
+    max-width: 350px;
+
+    > .ant-btn {
+      min-width: 0;
+      min-height: 32px;
+      height: auto;
+      padding-inline: 8px;
+      white-space: normal;
+    }
+    > .ant-btn-link {
+      justify-content: flex-start;
+      padding-inline: 4px;
+    }
   }
   .robot-form-field {
     font-size: 13px;

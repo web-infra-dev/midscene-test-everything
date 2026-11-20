@@ -1,6 +1,6 @@
 import { armUiTheme } from '@midscene/robotics-shared';
 import { theme } from 'antd';
-import { useSyncExternalStore } from 'react';
+import { useLayoutEffect, useState, useSyncExternalStore } from 'react';
 import './theme.less';
 
 const darkTheme = {
@@ -31,6 +31,37 @@ const darkTheme = {
 };
 
 const schemeQuery = '(prefers-color-scheme: dark)';
+const themeStorageKey = 'arm-playground-theme';
+export const armThemeModes = ['system', 'light', 'dark'] as const;
+
+export function useArmThemePreference() {
+  const [mode, setMode] = useState<(typeof armThemeModes)[number]>(() => {
+    try {
+      const saved = localStorage.getItem(themeStorageKey);
+      return armThemeModes.find((mode) => mode === saved) ?? 'system';
+    } catch {
+      return 'system';
+    }
+  });
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    const previous = root.getAttribute('data-theme');
+    if (mode === 'system') root.removeAttribute('data-theme');
+    else root.setAttribute('data-theme', mode);
+
+    try {
+      localStorage.setItem(themeStorageKey, mode);
+    } catch {
+      /* The selected theme still works without storage. */
+    }
+    return () => {
+      if (previous === null) root.removeAttribute('data-theme');
+      else root.setAttribute('data-theme', previous);
+    };
+  }, [mode]);
+  return [mode, setMode] as const;
+}
+
 function isDark() {
   const explicit = document.body
     .closest('[data-theme]')

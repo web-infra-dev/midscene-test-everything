@@ -105,6 +105,8 @@ const messages = {
   startCamera: ['启动相机', 'Start camera'],
   stopCamera: ['停止相机', 'Stop camera'],
   cameras: ['相机', 'Cameras'],
+  expandCameraRail: ['展开相机列表', 'Show camera list'],
+  collapseCameraRail: ['收起相机列表', 'Hide camera list'],
   noCameras: ['暂无可用相机', 'No online camera to show'],
   cameraAutoHint: [
     '连接摄像机后会自动显示在这里，每个摄像机对应一个设备。',
@@ -125,6 +127,10 @@ const messages = {
   screen: ['屏幕', 'Screen'],
   uncalibrated: ['未标定', 'Uncalibrated'],
   robot: ['机械臂', 'Robot'],
+  theme: ['主题', 'Theme'],
+  themeSystem: ['跟随系统', 'System'],
+  themeLight: ['浅色', 'Light'],
+  themeDark: ['深色', 'Dark'],
   skipToCamera: ['跳过，查看相机', 'Skip to cameras'],
   rawPreviewFailed: [
     '无法读取相机画面，请检查相机权限或刷新重试。',
@@ -141,6 +147,7 @@ const messages = {
   disconnected: ['未连接', 'Disconnected'],
   checking: ['正在检查连接', 'Checking connection'],
   connecting: ['正在连接机械臂', 'Connecting to robot'],
+  connectingAction: ['连接中…', 'Connecting…'],
   connected: ['已连接', 'Connected'],
   connectTitle: ['连接机械臂', 'Connect your robot'],
   connectDescription: [
@@ -159,6 +166,10 @@ const messages = {
   change: ['更换设备', 'Change device'],
   interrupted: ['机械臂连接已中断', 'Robot connection interrupted'],
   failed: ['连接失败', 'Connection failed'],
+  commandCompletionUnknown: [
+    'MG400 未确认命令结果，请检查控制器连接后重试。',
+    'MG400 did not confirm the command result. Check the controller connection and retry.',
+  ],
   failureHint: [
     '未能连接到控制器，请检查 IP 地址和网络后重试。',
     'Could not reach the controller. Check its IP address and your network, then retry.',

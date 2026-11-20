@@ -14,6 +14,8 @@ import { Drawer, Tooltip } from 'antd';
 import {
   ArrowRightLeft,
   Cable,
+  ChevronDown,
+  ChevronUp,
   Play,
   RefreshCw,
   ScanLine,
@@ -22,7 +24,14 @@ import {
   Unplug,
   VideoOff,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   PerspectiveObservationCard,
   type ScreenOutlineEntry,
@@ -84,6 +93,11 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
   const [twinView, setTwinView] = useState<TwinViewPreset>('default');
   const [previewError, setPreviewError] = useState<string>();
   const [previewRevision, setPreviewRevision] = useState(0);
+  const cameraRailId = useId();
+  const [cameraRailExpanded, setCameraRailExpanded] = useState(true);
+  const cameraRailAction = t(
+    cameraRailExpanded ? 'collapseCameraRail' : 'expandCameraRail',
+  );
   const {
     cameras,
     deviceSession,
@@ -115,6 +129,7 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
     key: string;
     width: number;
     height: number;
+    image: HTMLImageElement;
   }>();
   const [preferredScreenId, setPreferredScreenId] = useState<string>();
   useEffect(() => {
@@ -777,6 +792,23 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
               />
               <div className="camera-frame">
                 <CameraStagePreview
+                  actions={
+                    <Button
+                      size="small"
+                      aria-controls={cameraRailId}
+                      aria-expanded={cameraRailExpanded}
+                      aria-label={cameraRailAction}
+                      title={cameraRailAction}
+                      icon={
+                        cameraRailExpanded ? (
+                          <ChevronUp size={16} />
+                        ) : (
+                          <ChevronDown size={16} />
+                        )
+                      }
+                      onClick={() => setCameraRailExpanded((value) => !value)}
+                    />
+                  }
                   available={Boolean(
                     previewEnabled && previewError !== previewKey,
                   )}
@@ -811,15 +843,17 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
                       enabled={controlEnabled}
                       onError={() => setPreviewError(previewKey)}
                       onLoad={(event) => {
+                        const image = event.currentTarget;
                         const { naturalWidth: width, naturalHeight: height } =
-                          event.currentTarget;
+                          image;
                         if (width && height)
                           setFrame((previous) =>
                             previous?.key === previewKey &&
+                            previous.image === image &&
                             previous.width === width &&
                             previous.height === height
                               ? previous
-                              : { key: previewKey, width, height },
+                              : { key: previewKey, width, height, image },
                           );
                       }}
                       screens={controlScreens}
@@ -836,6 +870,8 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
                   )}
                 </CameraStagePreview>
                 <CameraRail
+                  id={cameraRailId}
+                  expanded={cameraRailExpanded}
                   entries={
                     standalone
                       ? cameras.map((entry) =>
@@ -844,6 +880,13 @@ export function DeviceWorkspace({ connected }: { connected: boolean }) {
                       : cameras
                   }
                   selectedId={selectedId}
+                  selectedImage={
+                    previewEnabled &&
+                    previewError !== previewKey &&
+                    frame?.key === previewKey
+                      ? frame.image
+                      : undefined
+                  }
                   onSelect={select}
                 />
               </div>
