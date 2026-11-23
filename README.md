@@ -153,6 +153,7 @@ See the [Universal Device documentation](./packages/universal-device/README.md) 
 | [`mg400-service`](./packages/robot-arm/mg400-service/README.md) | DOBOT MG400 device service, including setup, calibration, and touchscreen control |
 | [`arm-kit`](./packages/robot-arm/arm-kit/README.md) | Adapter API for integrating custom robot arms |
 | [`ios-airlink`](./packages/ios-airlink/README.md) | Connect to and control physical iPhones from macOS |
+| [`robotics-vision`](./packages/shared/vision/README.md) | Cross-platform camera capture, ArUco screen calibration, and perspective correction |
 
 ## 🤝 Contributing
 
