@@ -101,8 +101,6 @@ pnpm --filter @midscene/ios-airlink... -r build
 pnpm ios-airlink start
 ```
 
-后续在仓库根目录用 `pnpm ios-airlink <命令>` 管理服务即可。
-
 </details>
 
 ### 2. 配对蓝牙与开启辅助触控

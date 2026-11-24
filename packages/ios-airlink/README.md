@@ -100,8 +100,6 @@ pnpm --filter @midscene/ios-airlink... -r build
 pnpm ios-airlink start
 ```
 
-Use `pnpm ios-airlink <cmd>` from the repo root for other service commands.
-
 </details>
 
 ### 2. Bluetooth Pairing & AssistiveTouch

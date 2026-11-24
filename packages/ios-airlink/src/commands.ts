@@ -1,12 +1,28 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
-import { runDaemon } from './daemon.js';
-import { defaultPort, readToken } from './settings.js';
+import { runServer } from './server.js';
+import { defaultPort, printRunningService, readToken } from './settings.js';
 
 function parsePort(value: string) {
   if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 65535)
     throw new Error('Port must be an integer between 1 and 65535');
   return Number(value);
+}
+
+async function startService(port: number) {
+  const server = await runServer(port);
+  let stopping = false;
+  const close = () => {
+    if (stopping) return;
+    stopping = true;
+    void server.close().catch((error: Error) => {
+      console.error(error.message);
+      process.exitCode = 1;
+    });
+  };
+  process.once('SIGINT', close);
+  process.once('SIGTERM', close);
+  printRunningService(server.port);
 }
 
 const program = new Command()
@@ -22,7 +38,7 @@ program
   .command('start')
   .description('Run AirLink in the foreground')
   .option('--port <port>', 'Listen port', parsePort, defaultPort)
-  .action(async ({ port }: { port: number }) => runDaemon(port));
+  .action(async ({ port }: { port: number }) => startService(port));
 
 program
   .command('token')
