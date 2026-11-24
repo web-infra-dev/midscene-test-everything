@@ -73,7 +73,11 @@ import {
   t,
   useLanguage,
 } from './i18n';
-import { finishCameraImagingForScreen } from './imaging-completion';
+import {
+  finishCameraImagingForScreen,
+  screenImagingSwitchError,
+  shouldSwitchScreenImaging,
+} from './imaging-completion';
 import {
   RobotVisionApiError,
   RobotVisionClient,
@@ -167,7 +171,7 @@ function GuidedContent({
   initialStep: 0 | 1;
   reviewInstallationOnOpen: boolean;
 }) {
-  useLanguage();
+  const language = useLanguage();
   const { message } = App.useApp();
   const [selectedId, setSelectedId] = useState(id);
   // Keep the displayed device until the requested device and its attempt are ready.
@@ -198,6 +202,7 @@ function GuidedContent({
   const [mappingError, setMappingError] = useState<string>();
   const [singleFailure, setSingleFailure] = useState<SingleStatus>();
   const [loadError, setLoadError] = useState<string>();
+  const [imagingSwitchError, setImagingSwitchError] = useState<string>();
   const [closing, setClosing] = useState(false);
   const [illustrationContainer, setIllustrationContainer] =
     useState<HTMLDivElement | null>(null);
@@ -401,6 +406,7 @@ function GuidedContent({
       setApplying(false);
       setSingleFailure(undefined);
       setMappingError(undefined);
+      setImagingSwitchError(undefined);
       setError(undefined);
     },
     [requestScreen],
@@ -1212,6 +1218,48 @@ function GuidedContent({
     selectedId,
   ]);
   const hasCorrection = Boolean(config?.correction);
+  useEffect(() => {
+    if (!config || config.deviceId !== selectedId) return;
+    if (
+      !shouldSwitchScreenImaging({
+        step,
+        hasCorrection,
+        batchActive,
+        singleBusy,
+        controllerBusy: controller.busy,
+        markerOpen: Boolean(markerOpen),
+        perspectiveEditor,
+      })
+    )
+      return;
+    let cancelled = false;
+    setImagingSwitchError(undefined);
+    void activateCameraImaging(cameraId, selectedId)
+      .then((imaging) => {
+        if (!cancelled)
+          setImagingSwitchError(screenImagingSwitchError(imaging, selectedId));
+      })
+      .catch((cause) => {
+        if (!cancelled)
+          setImagingSwitchError(
+            cause instanceof Error ? cause.message : String(cause),
+          );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    batchActive,
+    cameraId,
+    config?.deviceId,
+    controller.busy,
+    hasCorrection,
+    markerOpen,
+    perspectiveEditor,
+    selectedId,
+    singleBusy,
+    step,
+  ]);
   const startSingle = useCallback(async () => {
     if (startingSingle.current || !hasCorrection) return;
     if (!config?.installationTaught) {
@@ -1447,6 +1495,18 @@ function GuidedContent({
               />
             )}
             {loadError && <Alert type="error" showIcon message={loadError} />}
+            {imagingSwitchError && (
+              <Alert
+                type="warning"
+                showIcon
+                message={
+                  language === 'zh'
+                    ? '相机参数未能切换到当前屏幕'
+                    : 'Camera parameters did not switch to this screen'
+                }
+                description={imagingSwitchError}
+              />
+            )}
             {screenListError && (
               <Alert type="warning" showIcon message={t(screenListError)} />
             )}

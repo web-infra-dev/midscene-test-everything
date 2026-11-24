@@ -1,5 +1,6 @@
 import { availableParallelism } from 'node:os';
 import { Worker } from 'node:worker_threads';
+import { RobotArmError } from '../contracts.js';
 import {
   type RectifiedPreviewJob,
   type RectifiedPreviewRequest,
@@ -22,7 +23,14 @@ interface PendingJob {
 interface WorkerReply {
   id: number;
   jpeg?: Uint8Array;
-  error?: string;
+  error?:
+    | string
+    | {
+        message: string;
+        code?: string;
+        status?: number;
+        details?: Record<string, unknown>;
+      };
 }
 
 const MAX_WORKERS = 4;
@@ -31,14 +39,20 @@ const MAX_WORKERS = 4;
  * Rectification is CPU-bound. A small pool preserves the preview's full
  * resolution and interpolation while keeping the HTTP server responsive.
  */
-class RectifiedPreviewPool {
+export class RectifiedPreviewPool {
   private readonly workers: PreviewWorker[] = [];
   private queue: PendingJob[] = [];
   private nextJobId = 0;
   private workerUrl?: URL;
 
+  constructor(
+    private readonly parallelism = availableParallelism(),
+    private readonly spawnWorker: (url: URL) => Worker = (url) =>
+      new Worker(url),
+  ) {}
+
   transform(jpeg: Buffer, request: RectifiedPreviewRequest) {
-    if (availableParallelism() < 2) {
+    if (this.parallelism < 2) {
       return transformRectifiedPreview(jpeg, request);
     }
     this.ensureWorkers();
@@ -66,10 +80,7 @@ class RectifiedPreviewPool {
   private ensureWorkers() {
     if (this.workers.length) return;
     this.workerUrl ??= this.resolveWorkerUrl();
-    const count = Math.max(
-      1,
-      Math.min(MAX_WORKERS, availableParallelism() - 1),
-    );
+    const count = Math.max(1, Math.min(MAX_WORKERS, this.parallelism - 1));
     for (let index = 0; index < count; index += 1)
       this.workers.push(this.createWorker());
   }
@@ -84,13 +95,13 @@ class RectifiedPreviewPool {
   }
 
   private createWorker(): PreviewWorker {
-    const worker = new Worker(this.workerUrl!);
+    const worker = this.spawnWorker(this.workerUrl!);
     const entry: PreviewWorker = { worker };
     worker.unref();
     worker.on('message', (reply: WorkerReply) => this.receive(entry, reply));
     worker.on('error', (error) => this.fail(entry, error));
     worker.on('exit', (code) => {
-      if (code !== 0) this.fail(entry, new Error('Preview worker exited'));
+      this.fail(entry, new Error(`Preview worker exited (code=${code})`));
     });
     return entry;
   }
@@ -100,7 +111,9 @@ class RectifiedPreviewPool {
     if (!job || job.id !== reply.id) return;
     entry.job = undefined;
     if (reply.error || !reply.jpeg)
-      job.reject(new Error(reply.error ?? 'Preview worker returned no image'));
+      job.reject(
+        workerError(reply.error ?? 'Preview worker returned no image'),
+      );
     else
       job.resolve(
         Buffer.from(
@@ -118,7 +131,10 @@ class RectifiedPreviewPool {
     entry.job?.reject(error);
     entry.job = undefined;
     this.workers.splice(index, 1);
-    if (this.queue.length) this.workers.push(this.createWorker());
+    if (this.queue.length) {
+      this.workers.push(this.createWorker());
+      this.dispatch();
+    }
   }
 
   private dispatch() {
@@ -135,6 +151,18 @@ class RectifiedPreviewPool {
       entry.worker.postMessage(message, [job.jpeg.buffer as ArrayBuffer]);
     }
   }
+}
+
+function workerError(error: NonNullable<WorkerReply['error']>) {
+  if (typeof error === 'string') return new Error(error);
+  if (typeof error.code === 'string' && Number.isInteger(error.status))
+    return new RobotArmError(
+      error.code,
+      error.message,
+      error.status,
+      error.details,
+    );
+  return new Error(error.message);
 }
 
 export const rectifiedPreviewPool = new RectifiedPreviewPool();

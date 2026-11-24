@@ -344,23 +344,29 @@ export class PlaygroundDevices {
         409,
       );
     const request = randomUUID();
-    await this.setCameraImagingPattern(cameraId, request, targetIds);
-    try {
-      const entry = [...this.entries.values()].find(
-        (item) =>
-          item.cameraId === cameraId &&
-          item.host &&
-          targetIds.includes(item.device.id),
+    const entry = [...this.entries.values()].find(
+      (item) =>
+        item.cameraId === cameraId &&
+        item.host &&
+        targetIds.includes(item.device.id),
+    );
+    if (!entry)
+      throw new RobotArmError(
+        'VISION_UNAVAILABLE',
+        'No calibration host is active for this camera',
+        409,
       );
-      if (!entry)
-        throw new RobotArmError(
-          'VISION_UNAVAILABLE',
-          'No calibration host is active for this camera',
-          409,
-        );
-      return await entry.camera.calibrateScreens(targetIds);
+    const calibrationToken = entry.camera.beginScreensImaging(targetIds);
+    try {
+      await this.setCameraImagingPattern(cameraId, request, targetIds);
+      return await entry.camera.calibrateScreens(targetIds, calibrationToken);
+    } catch (error) {
+      entry.camera.failScreensImaging(calibrationToken, targetIds, error);
+      throw error;
     } finally {
-      await this.setCameraImagingPattern(cameraId, undefined, targetIds);
+      await this.setCameraImagingPattern(cameraId, undefined, targetIds).catch(
+        () => undefined,
+      );
     }
   }
 

@@ -11,6 +11,54 @@ interface ImagingCompletionOptions {
   sleep?: (ms: number) => Promise<void>;
 }
 
+export function shouldSwitchScreenImaging({
+  step,
+  hasCorrection,
+  batchActive,
+  singleBusy,
+  controllerBusy,
+  markerOpen,
+  perspectiveEditor,
+}: {
+  step: number;
+  hasCorrection: boolean;
+  batchActive: boolean;
+  singleBusy: boolean;
+  controllerBusy: boolean;
+  markerOpen: boolean;
+  perspectiveEditor: boolean;
+}) {
+  return (
+    step >= 2 &&
+    hasCorrection &&
+    !batchActive &&
+    !singleBusy &&
+    !controllerBusy &&
+    !markerOpen &&
+    !perspectiveEditor
+  );
+}
+
+export function screenImagingSwitchError(
+  imaging: CalibrationImagingStatus | undefined,
+  screenId: string,
+) {
+  if (!imaging) return 'Camera imaging switch failed';
+  if (imaging.state === 'unsupported') return undefined;
+  if (imaging.state === 'error' || imaging.state === 'unconfigured')
+    return (
+      imaging.message ??
+      `Camera imaging was not applied to the selected screen ${screenId}`
+    );
+  if (
+    imaging.state === 'ready' &&
+    (imaging.active === false ||
+      (imaging.screenId !== undefined && imaging.screenId !== screenId))
+  )
+    return `Camera imaging was not applied to the selected screen ${screenId}`;
+  return undefined;
+}
+
 /**
  * Wait for the background camera calibration, then activate the screen the
  * operator still has selected when that calibration finishes.
@@ -30,16 +78,8 @@ export async function finishCameraImagingForScreen({
     const { imaging } = await load();
     if (imaging?.state === 'ready') {
       const applied = await activate();
-      if (
-        applied.state === 'error' ||
-        applied.state === 'unconfigured' ||
-        applied.active === false ||
-        (applied.screenId !== undefined && applied.screenId !== screenId)
-      )
-        throw new Error(
-          applied.message ??
-            `Camera imaging was not applied to the selected screen ${screenId}`,
-        );
+      const switchError = screenImagingSwitchError(applied, screenId);
+      if (switchError) throw new Error(switchError);
       return;
     }
     if (imaging?.state === 'unsupported') return;

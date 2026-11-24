@@ -580,6 +580,7 @@ export class CameraSession implements CalibrationVision {
 
   async calibrateScreens(
     screenIds: readonly string[],
+    calibrationToken?: string,
   ): Promise<CameraImagingStatus> {
     if (!this.imaging)
       throw new RobotArmError(
@@ -587,7 +588,19 @@ export class CameraSession implements CalibrationVision {
         'Camera imaging controller is unavailable',
         409,
       );
-    return this.imaging.calibrateScreens(screenIds);
+    return this.imaging.calibrateScreens(screenIds, calibrationToken);
+  }
+
+  beginScreensImaging(screenIds: readonly string[]) {
+    return this.imaging?.beginScreensCalibration(screenIds);
+  }
+
+  failScreensImaging(
+    token: string | undefined,
+    screenIds: readonly string[],
+    error: unknown,
+  ) {
+    if (token) this.imaging?.failScreensCalibration(token, screenIds, error);
   }
 
   async activateImaging(): Promise<CameraImagingStatus> {

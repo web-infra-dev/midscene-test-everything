@@ -1,5 +1,6 @@
 import { parentPort } from 'node:worker_threads';
 import sharp from 'sharp';
+import { isRobotArmError } from '../contracts.js';
 import { PerspectiveTransformer } from './perspective-transformer.js';
 import {
   type RectifiedPreviewJob,
@@ -31,7 +32,16 @@ port.on(
     } catch (error) {
       port.postMessage({
         id,
-        error: error instanceof Error ? error.message : String(error),
+        error: isRobotArmError(error)
+          ? {
+              message: error.message,
+              code: error.code,
+              status: error.status,
+              details: error.details,
+            }
+          : {
+              message: error instanceof Error ? error.message : String(error),
+            },
       });
     }
   },

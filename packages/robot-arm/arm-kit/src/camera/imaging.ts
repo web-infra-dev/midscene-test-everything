@@ -344,6 +344,7 @@ export class CameraImagingController {
   private imagingOperation = Promise.resolve();
   private readonly markerImagingScope = new AsyncLocalStorage<true>();
   private calibratingScreens = new Set<string>();
+  private pendingCalibrations = new Map<string, Set<string>>();
   private screenErrors = new Map<string, string>();
   private unsupported = false;
 
@@ -387,6 +388,14 @@ export class CameraImagingController {
         ...this.statusValue,
         screenId: requested,
         active: requested === this.activeScreenId && this.applied,
+      };
+    if (requested && this.hasPendingCalibration(requested))
+      return {
+        state: 'exposure',
+        screenId: requested,
+        active: requested === this.activeScreenId && this.applied,
+        message: 'Preparing the camera imaging pattern',
+        updatedAt: Date.now(),
       };
     if (requested) {
       if (this.unsupported)
@@ -457,6 +466,44 @@ export class CameraImagingController {
           }
         : {}),
     };
+  }
+
+  /** Mark background calibration active before waiting for phone patterns. */
+  beginScreensCalibration(screenIds: readonly string[]) {
+    const token = randomUUID();
+    const requested = new Set(screenIds);
+    this.pendingCalibrations.set(token, requested);
+    this.unsupported = false;
+    for (const screenId of requested) this.screenErrors.delete(screenId);
+    this.statusValue = {
+      state: 'exposure',
+      message: 'Preparing the camera imaging pattern',
+      updatedAt: Date.now(),
+    };
+    return token;
+  }
+
+  /** Publish failures that happen before `calibrateScreens()` is entered. */
+  failScreensCalibration(
+    token: string,
+    screenIds: readonly string[],
+    error: unknown,
+  ) {
+    const message = error instanceof Error ? error.message : String(error);
+    this.pendingCalibrations.delete(token);
+    for (const screenId of new Set(screenIds))
+      this.screenErrors.set(screenId, message);
+    this.statusValue = {
+      state: 'error',
+      message,
+      updatedAt: Date.now(),
+    };
+  }
+
+  private hasPendingCalibration(screenId: string) {
+    for (const screens of this.pendingCalibrations.values())
+      if (screens.has(screenId)) return true;
+    return false;
   }
 
   async load(): Promise<void> {
@@ -936,6 +983,7 @@ export class CameraImagingController {
 
   async calibrateScreens(
     screenIds?: readonly string[],
+    calibrationToken?: string,
   ): Promise<CameraImagingStatus> {
     return this.enqueue(async () => {
       const screens = this.screenList(screenIds);
@@ -945,6 +993,7 @@ export class CameraImagingController {
           'Perspective correction is required before camera imaging calibration',
           409,
         );
+      if (calibrationToken) this.pendingCalibrations.delete(calibrationToken);
       this.calibratingScreens = new Set(
         screens.map((screen) => screen.screenId),
       );
@@ -956,6 +1005,7 @@ export class CameraImagingController {
           : await this.calibrateMany(screens);
       } finally {
         this.calibratingScreens.clear();
+        if (calibrationToken) this.pendingCalibrations.delete(calibrationToken);
       }
     });
   }

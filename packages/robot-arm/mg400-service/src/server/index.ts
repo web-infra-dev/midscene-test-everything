@@ -28,7 +28,6 @@ import type { InputAction } from '@midscene/universal-device/protocol';
 import { createDeviceHandler } from '@midscene/universal-device/server';
 import { PlaygroundArmControls } from './arm-controls.js';
 import {
-  CORRECTED_PREVIEW_OPTIONS,
   type CameraPreviewView,
   clearStandaloneCorrection,
   rectifyPreviewFrame,

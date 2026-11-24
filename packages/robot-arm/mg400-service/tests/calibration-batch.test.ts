@@ -286,6 +286,32 @@ it('prepares the last screen mapping and camera imaging before sampling any scre
   expect(f.devices.calibrateCameraImaging).toHaveBeenCalledTimes(1);
 });
 
+it('waits for camera imaging to become ready before starting a screen', async () => {
+  const f = await setup();
+  let imaging = 'unconfigured';
+  for (const id of ['one', 'two'])
+    f.entries.get(id).host.service.setup = () => ({
+      prepared: true,
+      phoneConnected: true,
+      mapping: {},
+      imaging: { state: imaging },
+    });
+  rstest
+    .mocked(f.devices.calibrateCameraImaging)
+    .mockImplementationOnce(async () => ({ state: 'exposure' }))
+    .mockImplementationOnce(async () => {
+      imaging = 'ready';
+      return { state: 'ready' };
+    });
+
+  await f.start();
+  await rstest.waitFor(() =>
+    expect(f.batch.read()?.items[0].status).toBe('awaiting-acceptance'),
+  );
+
+  expect(f.devices.calibrateCameraImaging).toHaveBeenCalledTimes(2);
+});
+
 it('holds the shared queue while waiting for acceptance and retains completed screen results', async () => {
   const f = await setup();
   await f.start();

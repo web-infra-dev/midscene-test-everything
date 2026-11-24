@@ -180,6 +180,130 @@ describe('camera imaging', () => {
     }
   });
 
+  it('reports background imaging initialization and failures without stale ready state', async () => {
+    const controls = new FakeCameraControl();
+    const imaging = new CameraImagingController(
+      { id: 'camera', name: 'Camera', backend: 'dshow' },
+      {
+        getInfo: () => ({ state: 'running', fps: 30 }),
+        getFrame: async () => ({ jpeg: await calibrationPattern() }),
+      } as never,
+      tmpdir(),
+      controls,
+    );
+    try {
+      const token = imaging.beginScreensCalibration(['left', 'right']);
+      expect(imaging.status('left')).toMatchObject({
+        state: 'exposure',
+        screenId: 'left',
+        active: false,
+        message: 'Preparing the camera imaging pattern',
+      });
+
+      imaging.failScreensCalibration(
+        token,
+        ['left', 'right'],
+        new Error('Phone left disconnected'),
+      );
+      expect(imaging.status('left')).toMatchObject({
+        state: 'error',
+        screenId: 'left',
+        active: false,
+        message: 'Phone left disconnected',
+      });
+      expect(imaging.status('right')).toMatchObject({
+        state: 'error',
+        screenId: 'right',
+        active: false,
+        message: 'Phone left disconnected',
+      });
+    } finally {
+      await imaging.close();
+    }
+  });
+
+  it('does not let a stale unsupported state hide a later setup failure', async () => {
+    const imaging = new CameraImagingController(
+      { id: 'camera', name: 'Camera', backend: 'avfoundation' },
+      {
+        getInfo: () => ({ state: 'running', fps: 30 }),
+        getFrame: async () => ({ jpeg: await calibrationPattern() }),
+      } as never,
+      tmpdir(),
+    );
+    imaging.registerScreen('left', () => ({
+      points: {
+        topLeft: { x: 0, y: 0 },
+        topRight: { x: 100, y: 0 },
+        bottomRight: { x: 100, y: 100 },
+        bottomLeft: { x: 0, y: 100 },
+      },
+      sourceWidth: 100,
+      sourceHeight: 100,
+      rotation: 0,
+    }));
+    try {
+      await expect(imaging.calibrateScreens(['left'])).resolves.toMatchObject({
+        state: 'unsupported',
+      });
+      const token = imaging.beginScreensCalibration(['left']);
+      imaging.failScreensCalibration(
+        token,
+        ['left'],
+        new Error('Phone left disconnected'),
+      );
+      expect(imaging.status('left')).toMatchObject({
+        state: 'error',
+        message: 'Phone left disconnected',
+      });
+    } finally {
+      await imaging.close();
+    }
+  });
+
+  it('keeps each pending screen calibration independent', async () => {
+    const imaging = new CameraImagingController(
+      { id: 'camera', name: 'Camera', backend: 'dshow' },
+      {
+        getInfo: () => ({ state: 'running', fps: 30 }),
+        getFrame: async () => ({ jpeg: await calibrationPattern() }),
+      } as never,
+      tmpdir(),
+    );
+    const correction = {
+      points: {
+        topLeft: { x: 0, y: 0 },
+        topRight: { x: 100, y: 0 },
+        bottomRight: { x: 100, y: 100 },
+        bottomLeft: { x: 0, y: 100 },
+      },
+      sourceWidth: 100,
+      sourceHeight: 100,
+      rotation: 0 as const,
+    };
+    imaging.registerScreen('left', () => correction);
+    imaging.registerScreen('right', () => correction);
+    Object.assign(imaging, {
+      calibrateSingle: async () => ({ state: 'ready' }),
+    });
+    try {
+      const leftToken = imaging.beginScreensCalibration(['left']);
+      const rightToken = imaging.beginScreensCalibration(['right']);
+
+      await imaging.calibrateScreens(['left'], leftToken);
+
+      expect(imaging.status('right')).toMatchObject({
+        state: 'exposure',
+        screenId: 'right',
+        message: 'Preparing the camera imaging pattern',
+      });
+
+      await imaging.calibrateScreens(['right'], rightToken);
+    } finally {
+      await imaging.close();
+    }
+  });
+
   it('allows marker imaging to nest in one camera operation', async () => {
     const controls = new FakeCameraControl();
     controls.values.focus.mode = 'manual';
