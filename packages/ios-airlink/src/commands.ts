@@ -1,27 +1,17 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
-import {
-  install,
-  parsePort,
-  start,
-  status,
-  stop,
-  uninstall,
-} from './launch-agent.js';
-import {
-  defaultPort,
-  logPath,
-  printRunningService,
-  readToken,
-} from './settings.js';
+import { runDaemon } from './daemon.js';
+import { defaultPort, readToken } from './settings.js';
 
-import { fileURLToPath } from 'node:url';
-import { cliVersion } from './npm-release.js';
-import { update } from './update.js';
+function parsePort(value: string) {
+  if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 65535)
+    throw new Error('Port must be an integer between 1 and 65535');
+  return Number(value);
+}
 
 const program = new Command()
   .name('ios-airlink')
-  .description('Manage the Midscene iOS AirLink');
+  .description('Run and connect to Midscene iOS AirLink');
 
 program.hook('preAction', () => {
   if (process.platform !== 'darwin')
@@ -29,56 +19,16 @@ program.hook('preAction', () => {
 });
 
 program
-  .command('install')
-  .description('Register and start the macOS login service')
-  .option('--port <port>', 'Listen port (default: 5801)', parsePort)
-  .action(async ({ port }: { port?: number }) => {
-    const entry = fileURLToPath(new URL('./service-entry.js', import.meta.url));
-    const runningPort = await install(
-      port,
-      defaultPort,
-      entry,
-      await cliVersion(),
-    );
-    printRunningService(runningPort);
-  });
-program
-  .command('update')
-  .description('Update the installed service within its npm release channel')
-  .option('--check', 'Show the available version without installing it')
-  .action(update);
-program
   .command('start')
-  .description('Start the installed service')
-  .action(async () => printRunningService(await start()));
-program
-  .command('status')
-  .description('Show service status and addresses')
-  .action(async () => {
-    const current = await status();
-    if (current.state === 'Running' && current.port !== undefined)
-      printRunningService(current.port);
-    else console.log(current.state);
-    if (current.port !== undefined) console.log(`Log: ${logPath}`);
-  });
-program
-  .command('stop')
-  .description('Stop the service for this login')
-  .action(async () => {
-    await stop();
-    console.log('Stopped for this login.');
-  });
-program
-  .command('uninstall')
-  .description('Remove the login service')
-  .action(async () => {
-    await uninstall();
-    console.log('Login service removed.');
-  });
+  .description('Run AirLink in the foreground')
+  .option('--port <port>', 'Listen port', parsePort, defaultPort)
+  .action(async ({ port }: { port: number }) => runDaemon(port));
+
 program
   .command('token')
   .description('Print the device API access token')
   .action(async () => console.log(await readToken()));
+
 await program.parseAsync().catch((error: Error) => {
   console.error(error.message);
   process.exitCode = 1;

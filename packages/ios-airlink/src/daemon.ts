@@ -1,4 +1,5 @@
 import { runServer } from './server.js';
+import { printRunningService } from './settings.js';
 
 export async function runDaemon(port: number) {
   const server = await runServer(port);
@@ -13,4 +14,5 @@ export async function runDaemon(port: number) {
   };
   process.once('SIGINT', close);
   process.once('SIGTERM', close);
+  printRunningService(server.port);
 }

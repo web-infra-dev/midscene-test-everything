@@ -80,10 +80,10 @@ See the [upstream macOS guide](https://github.com/FDH2/UxPlay) for additional bu
 
 ```sh
 npm install --global @midscene/ios-airlink
-ios-airlink install
+ios-airlink start
 ```
 
-Keep the installed package or checkout in place while the login service uses it. Run `ios-airlink update` to download and switch to a newer npm release.
+AirLink runs in the foreground. Keep the terminal open while using it and press Ctrl+C to stop. Pass `--port <port>` to choose a different port.
 
 Open the **Manage** URL printed in the terminal (default `http://localhost:5801/`) and click **Add Device**.
 
@@ -92,12 +92,12 @@ Open the **Manage** URL printed in the terminal (default `http://localhost:5801/
 <details>
 <summary>Run from a repository checkout</summary>
 
-See the [contributing guide](../../CONTRIBUTING.md) to set up pnpm, then build and install from the repo root:
+See the [contributing guide](../../CONTRIBUTING.md) to set up pnpm, then build and start from the repo root:
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm --filter @midscene/ios-airlink... -r build
-pnpm ios-airlink install
+pnpm ios-airlink start
 ```
 
 Use `pnpm ios-airlink <cmd>` from the repo root for other service commands.
@@ -205,7 +205,7 @@ try {
 }
 ```
 
-- **Remote host:** Replace `host` with the **Connect** URL from `ios-airlink status` and allow port `5801` in the macOS firewall.
+- **Remote host:** Replace `host` with the **Connect** URL printed when AirLink starts and allow port `5801` in the macOS firewall.
 - **Multiple devices:** Pass `deviceId` (from the device details) to `agentFromUniversalDevice`.
 
 ## 🛠️ Troubleshooting

@@ -48,4 +48,4 @@ From an up-to-date `main` checkout, run `pnpm release:pr patch` (or `minor` / `m
 
 Merging the release pull request triggers npm publishing to the `latest` tag via Trusted Publishing (OIDC) and creates a `vX.Y.Z` tag with a draft GitHub Release. Review the draft and publish it from GitHub.
 
-Run the **Release** workflow on `main` to publish `0.0.0-canary-<YYYYMMDDHHMMSS>` using a UTC timestamp directly to npm's `canary` tag without modifying `main` or creating a Git tag. Install a preview with `npm install <package>@canary`. AirLink's updater follows the channel of the installed service.
+Run the **Release** workflow on `main` to publish `0.0.0-canary-<YYYYMMDDHHMMSS>` using a UTC timestamp directly to npm's `canary` tag without modifying `main` or creating a Git tag. Install a preview with `npm install <package>@canary`.

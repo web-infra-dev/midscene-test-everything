@@ -10,7 +10,6 @@ export const defaultPort = 5801;
 export const label = 'com.midscene.ios-airlink';
 export const directory = join(homedir(), '.midscene', 'ios-airlink', 'service');
 export const tokenPath = join(directory, 'access-token');
-export const logPath = join(directory, 'service.log');
 
 export const readToken = () => readDeviceToken(tokenPath);
 export const ensureToken = () => ensureDeviceToken(tokenPath);

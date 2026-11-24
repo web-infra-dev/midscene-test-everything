@@ -17,10 +17,10 @@
     "native/iphone-use-LICENSE"
   ],
   "bin": {
-    "ios-airlink": "dist/launcher.js"
+    "ios-airlink": "dist/commands.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && rsbuild build",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json && rsbuild build",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.ui.json",
     "test": "node --test tests/*.test.mjs && rstest run",
     "start": "node dist/commands.js"
@@ -37,12 +37,10 @@
     "@midscene/core": "1.17.5",
     "@midscene/shared": "1.17.5",
     "@techstark/opencv-js": "5.0.0-release.1",
-    "pacote": "^21",
     "sharp": "^0.34.3",
     "zod": "3.25.76"
   },
   "devDependencies": {
-    "@types/pacote": "11.1.8",
     "@types/node": "^22.0.0",
     "typescript": "^5.8.3",
     "@rsbuild/core": "^1.6.15",

@@ -27,7 +27,6 @@ export type ControlErrorCode =
   | 'SESSION_EXPIRED'
   | 'PREVIEW_UNAVAILABLE'
   | 'SERVICE_STOPPING'
-  | 'SERVICE_UPDATING'
   | 'SERVICE_UNAVAILABLE';
 
 export class ControlError extends Error {
@@ -66,7 +65,6 @@ type Lease = {
 
 export class ControlSessions {
   private closed = false;
-  private updateUntil = 0;
   private byId = new Map<string, Lease>();
   private byDevice = new Map<string, Lease>();
   private timer = setInterval(() => {
@@ -82,32 +80,12 @@ export class ControlSessions {
     return this.byDevice.has(id);
   }
 
-  prepareUpdate() {
-    if (this.closed || this.updateUntil > Date.now())
-      throw new ControlError(
-        503,
-        'An update is already in progress.',
-        'SERVICE_UPDATING',
-      );
-    const busy = [...this.byDevice.keys()];
-    if (busy.length) return { busy, expiresAt: undefined };
-    // Acquisition and this check run synchronously in the same process.
-    this.updateUntil = Date.now() + 60_000;
-    return { busy, expiresAt: this.updateUntil };
-  }
-
   acquire(deviceId: string, leaseMs = defaultLeaseMs) {
     if (this.closed)
       throw new ControlError(
         503,
         'Device service is stopping.',
         'SERVICE_STOPPING',
-      );
-    if (this.updateUntil > Date.now())
-      throw new ControlError(
-        503,
-        'Device service is updating, please retry shortly.',
-        'SERVICE_UPDATING',
       );
     if (this.busy(deviceId))
       throw new ControlError(

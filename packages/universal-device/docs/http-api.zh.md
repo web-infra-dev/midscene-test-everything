@@ -294,7 +294,6 @@ type ErrorResponse = {
     | 'SESSION_EXPIRED'
     | 'PREVIEW_UNAVAILABLE'
     | 'SERVICE_STOPPING'
-    | 'SERVICE_UPDATING'
     | 'SERVICE_UNAVAILABLE';
 };
 ```

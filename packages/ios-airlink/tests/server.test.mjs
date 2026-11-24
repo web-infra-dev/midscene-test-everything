@@ -407,60 +407,6 @@ test(
   },
 );
 
-test('update preparation refuses active leases and gates new control once idle', async (t) => {
-  const service = await runServer(0, {
-    accessToken: 'test-token',
-    workspaces: {
-      readyDevice: () => ({
-        signal: new AbortController().signal,
-        execute: async () => {},
-      }),
-      mount() {},
-      async close() {},
-    },
-  });
-  t.after(() => service.close());
-  const url = `http://127.0.0.1:${service.port}`;
-  const auth = { Authorization: 'Bearer test-token' };
-  const prepare = (headers) =>
-    fetch(`${url}/ios-airlink/update/prepare`, { method: 'POST', headers });
-  const acquire = () =>
-    fetch(`${url}/api/v1/sessions`, {
-      method: 'POST',
-      headers: { ...auth, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ deviceId: 'phone' }),
-    });
-  const local = { ...auth, 'X-Midscene-Service-Pid': String(process.pid) };
-  assert.equal((await prepare({})).status, 401);
-  assert.equal(
-    (await prepare({ ...local, Origin: 'https://remote.example' })).status,
-    403,
-  );
-  assert.equal((await prepare(auth)).status, 409);
-  const lease = await acquire();
-  assert.equal(lease.status, 201);
-  const { id } = await lease.json();
-  const busy = await prepare(local);
-  assert.equal(busy.status, 409);
-  assert.deepEqual(await busy.json(), { busy: ['phone'] });
-  const heartbeat = await fetch(`${url}/api/v1/sessions/${id}/heartbeat`, {
-    method: 'POST',
-    headers: auth,
-  });
-  assert.equal(heartbeat.status, 200);
-  await fetch(`${url}/api/v1/sessions/${id}`, {
-    method: 'DELETE',
-    headers: auth,
-  });
-  const ready = await prepare(local);
-  assert.equal(ready.status, 200);
-  const reservation = await ready.json();
-  assert.deepEqual(reservation.busy, []);
-  assert.ok(reservation.expiresAt > Date.now());
-  assert.equal((await acquire()).status, 503);
-  assert.equal((await prepare(local)).status, 503);
-});
-
 test('the same phone calibration URL works before setup and after a service restart', async (t) => {
   let calibration;
   const options = {

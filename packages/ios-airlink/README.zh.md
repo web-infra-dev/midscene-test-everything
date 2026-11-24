@@ -80,10 +80,10 @@ command -v uxplay
 
 ```sh
 npm install --global @midscene/ios-airlink
-ios-airlink install
+ios-airlink start
 ```
 
-登录服务使用当前安装的包或源码目录，请保留该目录。运行 `ios-airlink update` 可下载并切换到新的 npm 版本。
+AirLink 在前台运行。使用期间请保持终端打开，按 Ctrl+C 停止。可用 `--port <端口>` 指定其他端口。
 
 打开终端输出里 **Manage** 对应的地址（默认 `http://localhost:5801/`），点击 **添加设备（Add Device）**。
 
@@ -93,12 +93,12 @@ ios-airlink install
 <details>
 <summary>从本地仓库源码运行</summary>
 
-参考[贡献指南](../../CONTRIBUTING.md)配置好 pnpm 后，在仓库根目录构建并安装：
+参考[贡献指南](../../CONTRIBUTING.md)配置好 pnpm 后，在仓库根目录构建并启动：
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm --filter @midscene/ios-airlink... -r build
-pnpm ios-airlink install
+pnpm ios-airlink start
 ```
 
 后续在仓库根目录用 `pnpm ios-airlink <命令>` 管理服务即可。
@@ -206,7 +206,7 @@ try {
 }
 ```
 
-- **远程运行**：将 `host` 改为 `ios-airlink status` 输出的 **Connect** 地址，并放行 `5801` 端口。
+- **远程运行**：将 `host` 改为 AirLink 启动时输出的 **Connect** 地址，并放行 `5801` 端口。
 - **多台设备**：在设备详情复制 `deviceId` 传入 `agentFromUniversalDevice`。
 
 ## 🛠️ 故障排查

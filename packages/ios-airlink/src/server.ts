@@ -1,13 +1,9 @@
-import { timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { runConnectivityTest } from '@midscene/core';
 import { ModelConfigManager } from '@midscene/shared/env';
-import {
-  ControlError,
-  createDeviceHandler,
-} from '@midscene/universal-device/server';
+import { createDeviceHandler } from '@midscene/universal-device/server';
 import express, { type Request } from 'express';
 import type { DeviceConfig } from './hardware/types.js';
 import { PhoneCalibration } from './phone-calibration.js';
@@ -43,7 +39,6 @@ export async function runServer(
   } = {},
 ) {
   const serviceToken = accessToken ?? (await ensureToken());
-  const token = Buffer.from(`Bearer ${serviceToken}`);
   const phoneCalibration = new PhoneCalibration(serviceToken);
   const workspaces = suppliedWorkspaces ?? new DeviceWorkspaces();
   const savedDevices = listDevices ?? (() => workspaces.listDevices());
@@ -108,29 +103,6 @@ export async function runServer(
       return;
     }
     res.set('Cache-Control', 'no-store').json({ token: serviceToken });
-  });
-  app.post('/ios-airlink/update/prepare', (req, res) => {
-    const supplied = Buffer.from(req.get('Authorization') ?? '');
-    res.set('Cache-Control', 'no-store');
-    if (supplied.length !== token.length || !timingSafeEqual(supplied, token)) {
-      res
-        .status(401)
-        .json({ error: 'A device service access token is required' });
-      return;
-    }
-    if (req.get('X-Midscene-Service-Pid') !== String(process.pid)) {
-      res.status(409).json({
-        error: 'The device service process changed. Retry the update.',
-      });
-      return;
-    }
-    try {
-      const result = sessions.prepareUpdate();
-      res.status(result.busy.length ? 409 : 200).json(result);
-    } catch (error) {
-      if (!(error instanceof ControlError)) throw error;
-      res.status(error.status).json({ error: error.message });
-    }
   });
   app.post(
     '/connectivity-test',
