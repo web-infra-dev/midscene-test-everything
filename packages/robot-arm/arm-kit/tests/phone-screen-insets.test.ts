@@ -85,6 +85,7 @@ function openPhone(
     play: async () => {},
     pause() {},
     setPointerCapture() {},
+    getContext: () => null,
     remove() {},
   });
   const elements = new Map<string, ReturnType<typeof element>>();

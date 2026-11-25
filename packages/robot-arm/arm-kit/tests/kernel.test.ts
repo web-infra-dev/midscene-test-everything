@@ -28,15 +28,14 @@ describe('versioned vendor-neutral kernel', () => {
     const boundary = new RobotDriverBoundary(adapter);
     await boundary.connect();
     await adapter.enable();
-    const target = { pose: pose(1, 2, 100), options: {} };
+    const target = {
+      pose: pose(1, 2, 100),
+      options: { speed: { kind: 'ratio', value: 0.2 } } as const,
+    };
     const options = { signal: new AbortController().signal, timeoutMs: 1000 };
     const preflight = boundary.createLinearPreflightScope(options.signal);
-    await boundary.preflightCartesian(
-      'linear',
-      target.pose,
-      target.options,
-      undefined,
-      preflight,
+    await boundary.preflightLinearTargets(preflight, (validate) =>
+      validate(target.pose, target.options),
     );
     (
       await boundary.beginLinearSequence([target], options, preflight)
@@ -60,21 +59,18 @@ describe('versioned vendor-neutral kernel', () => {
       new AbortController().signal,
     );
     const target = pose(1, 2, 100);
-    await boundary.preflightCartesian('linear', target, {}, undefined, scope);
-    await boundary.preflightCartesian(
-      'linear',
-      target,
-      { speed: { kind: 'ratio', value: 0.5 } },
-      undefined,
-      scope,
-    );
+    const motion = { speed: { kind: 'ratio', value: 0.2 } } as const;
+    await boundary.preflightLinearTargets(scope, async (validate) => {
+      await validate(target, motion);
+      await validate(target, { speed: { kind: 'ratio', value: 0.5 } });
+    });
     expect(inverse).toHaveBeenCalledTimes(1);
     expect(boundary.linearPreflightTiming(scope)).toMatchObject({
       inverseKinematicsCalls: 1,
       inverseKinematicsReused: 1,
     });
     await boundary.stop();
-    await boundary.preflightCartesian('linear', target, {}, undefined, scope);
+    await boundary.preflightCartesian('linear', target, motion);
     expect(inverse).toHaveBeenCalledTimes(2);
   });
   it('rejects malformed native diagnostics instead of returning an empty state', async () => {

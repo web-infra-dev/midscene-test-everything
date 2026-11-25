@@ -1588,6 +1588,13 @@ export async function runAutoExploration(
     },
   ) => {
     const { phase, targetId, cause, lastAuditWithoutSlidingContact } = recovery;
+    // A missed sliding endpoint already established a clear height at this
+    // point. Use it as the first vertical trial to preserve the search budget.
+    const startAtMissedSlide =
+      phase === 'grid' && cause?.code === 'TOUCH_CONTACT_LOST';
+    const startZ =
+      Math.max(pressZ, slideCommandFloor) +
+      (startAtMissedSlide ? 0 : FAST_LOCAL_STEP_MM);
     const movesBefore = moveCount;
     const started = performance.now();
     const recovered = await touchAt(
@@ -1601,7 +1608,7 @@ export async function runAutoExploration(
       undefined,
       true,
       {
-        startZ: Math.max(pressZ, slideCommandFloor) + FAST_LOCAL_STEP_MM,
+        startZ,
         phase,
         coarseStepMm:
           phase === 'grid' ? FAST_GRID_RECOVERY_COARSE_STEP_MM : undefined,
