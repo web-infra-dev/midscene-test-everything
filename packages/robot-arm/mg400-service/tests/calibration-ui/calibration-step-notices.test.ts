@@ -52,21 +52,11 @@ it('offers automatic collection before recording the safe position', () => {
       onCheckCamera: () => {},
     }),
   );
-  expect(html).toContain('普通');
-  const radios = html.match(/<input[^>]+>/g) ?? [];
-  expect(
-    radios
-      .filter((input) => input.includes('type="radio"'))
-      .map((input) => /value="(.*?)"/.exec(input)?.[1]),
-  ).toEqual(['slide', 'standard']);
-  expect(radios.find((input) => input.includes('value="slide"'))).toContain(
-    'checked=""',
-  );
-  expect(
-    radios.filter((input) => input.includes('type="checkbox"')),
-  ).toHaveLength(1);
+  expect(html).toContain('开始自动标定');
+  expect(html).not.toContain('type="radio"');
+  expect(html.match(/type="checkbox"/g)).toHaveLength(1);
   expect(html).toContain('屏幕水平固定、触控笔尖有弹性缓冲且工作区净空');
-  expect(html).toContain('自动执行悬停与接触边界验证');
+  expect(html).toContain('完成边界验证和安全位检查');
   expect(html).not.toContain('Record Safe Position');
   expect(html).not.toContain('15 点');
 });
@@ -234,7 +224,7 @@ it.each([true, false])(
     expect(html).not.toContain('上一步');
     expect(html).toContain('1 采集标定点');
     if (hasReference) {
-      expect(html).toContain('普通');
+      expect(html).toContain('开始自动标定');
       expect(html).not.toContain('记录这块屏幕的采样起点');
     } else {
       expect(html).toContain('「iPhone」中心上方');
@@ -331,32 +321,35 @@ it.each([
   },
 );
 
-it.each(['slide', 'standard', 'fast'] as const)(
-  'offers a regular-mode retry only after sliding collection fails (%s)',
-  (explorationMode) => {
-    const value = controller();
-    value.session = {
-      id: 'failed',
-      stage: 'interrupted',
-      collectionFailed: true,
-      explorationMode,
-      phoneConnected: true,
-    } as NonNullable<AssistedCalibrationController['session']>;
-    const render = () =>
-      renderToStaticMarkup(
-        createElement(WebCalibrationWorkspace, {
-          controller: value,
-          footer: null,
-          onActivated: async () => {},
-        }),
-      );
-    const retryLabel = '用普通模式重试';
-    expect(render().includes(retryLabel)).toBe(explorationMode === 'slide');
-    value.session.errorDetails = { code: 'MOTION_INTERRUPTED', status: 409 };
-    expect(render()).toContain('重新开始标定');
-    expect(render()).not.toContain(retryLabel);
-    value.session.errorDetails = undefined;
-    value.session.collectionFailed = false;
-    expect(render()).not.toContain(retryLabel);
-  },
-);
+it('shows point recovery and offers restart if fast calibration remains interrupted', () => {
+  const value = controller();
+  value.session = {
+    id: 'failed',
+    stage: 'interrupted',
+    collectionFailed: true,
+    explorationMode: 'slide',
+    phoneConnected: true,
+    automaticRecovery: {
+      kind: 'sampling',
+      scope: 'point',
+      reason: 'Touch feedback was interrupted',
+    },
+  } as NonNullable<AssistedCalibrationController['session']>;
+  const render = () =>
+    renderToStaticMarkup(
+      createElement(WebCalibrationWorkspace, {
+        controller: value,
+        footer: null,
+        onActivated: async () => {},
+      }),
+    );
+  const recovering = render();
+  expect(recovering).toContain('正在从中断的采样点继续快标');
+  expect(recovering).not.toContain('重新开始标定');
+
+  value.session.automaticRecovery = undefined;
+  value.session.errorDetails = { code: 'MOTION_INTERRUPTED', status: 409 };
+  const interrupted = render();
+  expect(interrupted).toContain('重新开始标定');
+  expect(interrupted).not.toContain('用普通模式重试');
+});
