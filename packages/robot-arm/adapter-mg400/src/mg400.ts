@@ -1854,12 +1854,14 @@ export class Mg400Adapter implements RobotArmAdapter {
           : undefined;
       };
       try {
+        // Check cancellation before creating either promise so both reads are
+        // observed together even if the sequence ends during dispatch.
+        control();
         this.requireConnected();
         const modeRead =
           realtimeMode() === undefined
             ? this.readControllerMode(monitoring)
             : undefined;
-        control();
         // The pose observer polls separately. Keep fault freshness independent
         // of the time needed to read or reconstruct a Cartesian pose.
         const timing: FaultReadTiming = {
