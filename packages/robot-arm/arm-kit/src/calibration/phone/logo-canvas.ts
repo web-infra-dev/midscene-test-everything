@@ -6,6 +6,7 @@ export function mountLogoCanvas(
   signature: HTMLElement,
   error: HTMLElement,
   onPaint: () => void,
+  onTouch?: (event: PointerEvent, stroke: number, canvasAck: string) => void,
 ) {
   const ink = canvas.getContext('2d');
   let run: CalibrationLogoStatus | undefined;
@@ -88,6 +89,7 @@ export function mountLogoCanvas(
     strokeExtent = 0;
     ink.beginPath();
     ink.moveTo(...points[0]);
+    onTouch?.(event, strokes.length + 1, painted);
   });
   canvas.addEventListener('pointermove', (event) => {
     event.stopPropagation();
@@ -123,6 +125,7 @@ export function mountLogoCanvas(
         Math.hypot(end[0] - start[0], end[1] - start[1]) <= 12;
     }
     strokes.push({ points, valid });
+    if (painted) onTouch?.(event, strokes.length, painted);
     points = [];
     applyRetry();
     showResult();

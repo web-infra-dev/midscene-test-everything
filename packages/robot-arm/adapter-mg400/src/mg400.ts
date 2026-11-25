@@ -3,6 +3,7 @@ import { type Socket, createConnection } from 'node:net';
 import {
   type CartesianPose,
   type JogTarget,
+  type LinearPreflightScope,
   type LinearSequenceOptions,
   type LinearSequenceTarget,
   type MotionHandle,
@@ -1053,10 +1054,37 @@ export class Mg400Adapter implements RobotArmAdapter {
     parseMg400Pose(
       await this.dashboard.send(`PositiveSolution(${values.join(',')},0,0)`),
     );
-  private readonly solveInverse = async (pose: CartesianPose) =>
-    parseMg400Joints(
-      await this.dashboard.send(buildMg400ReachabilityCommand(pose)),
-    );
+  // Only successful controller queries from this plan can satisfy sequence preparation.
+  private readonly linearReachability = new WeakMap<
+    LinearPreflightScope,
+    { generation: number; payloadGeneration: number; commands: Set<string> }
+  >();
+  private readonly solveInverse = async (
+    pose: CartesianPose,
+    scope?: LinearPreflightScope,
+  ) => {
+    const command = buildMg400ReachabilityCommand(pose);
+    const generation = this.generation;
+    const payloadGeneration = this.payloadApplication.read().generation;
+    const joints = parseMg400Joints(await this.dashboard.send(command));
+    if (
+      scope &&
+      !scope.signal.aborted &&
+      generation === this.generation &&
+      payloadGeneration === this.payloadApplication.read().generation
+    ) {
+      let evidence = this.linearReachability.get(scope);
+      if (
+        evidence?.generation !== generation ||
+        evidence.payloadGeneration !== payloadGeneration
+      ) {
+        evidence = { generation, payloadGeneration, commands: new Set() };
+        this.linearReachability.set(scope, evidence);
+      }
+      evidence.commands.add(command);
+    }
+    return joints;
+  };
   private readonly motionCapabilities: RobotArmCapabilities = {
     jointCount: 4,
     orientation: 'yaw',
@@ -1274,9 +1302,9 @@ export class Mg400Adapter implements RobotArmAdapter {
         const values = await this.readMeasuredJoints();
         return { ...this.pollSample(), values };
       },
-      moveLinear: (p, o) => this.moveLinear(p, o),
-      beginLinearSequence: (targets, options) =>
-        this.beginSequence(targets, options),
+      moveLinear: (p, o, preflight) => this.moveLinear(p, o, preflight),
+      beginLinearSequence: (targets, options, preflight) =>
+        this.beginSequence(targets, options, preflight),
       movePtp: (p, o) => this.movePtp(p, o),
       moveJoints: (v, o) => this.moveJoints(v, o),
       stop: () => this.stop(),
@@ -1623,6 +1651,7 @@ export class Mg400Adapter implements RobotArmAdapter {
   private async beginSequence(
     targets: readonly LinearSequenceTarget[],
     options: LinearSequenceOptions,
+    scope?: LinearPreflightScope,
   ) {
     targets = structuredClone(targets);
     options = { ...options };
@@ -1648,6 +1677,8 @@ export class Mg400Adapter implements RobotArmAdapter {
     let latest: SequenceFeedback | undefined;
     type QueuedPathTiming = {
       startedAt: number;
+      startPositionMm?: CartesianPose['positionMm'];
+      firstMotionAtMs?: number;
       intervals: number;
       slowSampleMs: number;
       groups: {
@@ -1656,9 +1687,22 @@ export class Mg400Adapter implements RobotArmAdapter {
         submittedMs: number;
         acknowledgedMs: number;
       }[];
-      lowSpeedWindows: { fromMs: number; toMs: number }[];
+      path: readonly LinearSequenceTarget[];
+      blendPercentages: readonly number[];
+      lowSpeedWindows: {
+        fromMs: number;
+        toMs: number;
+        positionMm: CartesianPose['positionMm'];
+      }[];
     };
     let queuedTrace: QueuedPathTiming | undefined;
+    let tracedTarget:
+      | {
+          submittedAtMs: number;
+          pose: CartesianPose;
+          observedAtMs?: number;
+        }
+      | undefined;
     let poseTimer: ReturnType<typeof setTimeout> | undefined;
     let poseReading = false;
     let poseReadTiming:
@@ -1693,6 +1737,25 @@ export class Mg400Adapter implements RobotArmAdapter {
         control();
         if (!released) {
           const receivedAt = Date.parse(sample.receivedAt);
+          const position = sample.pose.positionMm;
+          if (
+            tracedTarget &&
+            tracedTarget.observedAtMs === undefined &&
+            receivedAt > tracedTarget.submittedAtMs &&
+            distance(position, tracedTarget.pose.positionMm) <= 0.2 &&
+            quaternionDistance(
+              sample.pose.orientation,
+              tracedTarget.pose.orientation,
+            ) <= 0.01
+          )
+            tracedTarget.observedAtMs = receivedAt;
+          if (
+            queuedTrace?.startPositionMm &&
+            queuedTrace.firstMotionAtMs === undefined &&
+            receivedAt > queuedTrace.startedAt &&
+            distance(position, queuedTrace.startPositionMm) >= 0.2
+          )
+            queuedTrace.firstMotionAtMs = receivedAt;
           if (
             queuedTrace &&
             latest &&
@@ -1711,7 +1774,12 @@ export class Mg400Adapter implements RobotArmAdapter {
                 const toMs = receivedAt - queuedTrace.startedAt;
                 const previous = queuedTrace.lowSpeedWindows.at(-1);
                 if (previous?.toMs === fromMs) previous.toMs = toMs;
-                else queuedTrace.lowSpeedWindows.push({ fromMs, toMs });
+                else
+                  queuedTrace.lowSpeedWindows.push({
+                    fromMs,
+                    toMs,
+                    positionMm: latest.pose.positionMm,
+                  });
               }
             }
           }
@@ -1862,10 +1930,16 @@ export class Mg400Adapter implements RobotArmAdapter {
       }
     };
     try {
+      const evidence =
+        scope?.signal === options.signal
+          ? this.currentLinearReachability(scope)
+          : undefined;
+      const reused = evidence?.commands;
       for (const target of targets) {
         buildMg400MotionCommand('MovL', target.pose, target.options);
         validateMotionOptions(target.options, this.motionLimits.linear!, 4);
-        await this.checkReachability(target.pose);
+        if (!reused?.has(buildMg400ReachabilityCommand(target.pose)))
+          await this.checkReachability(target.pose);
         control();
       }
       assertIdle(await this.getStateFresh());
@@ -1875,6 +1949,16 @@ export class Mg400Adapter implements RobotArmAdapter {
         assertIdle(await this.getStateFresh());
       }
       control();
+      if (
+        reused &&
+        this.payloadApplication.read().generation !==
+          evidence?.payloadGeneration
+      )
+        throw new RobotArmError(
+          'ACTION_STOPPED',
+          'Controller payload changed after path preflight',
+          409,
+        );
       faultAt = this.lastFaultSampleAt;
       // GetPose(User=0,Tool=0), or measured-joint FK, is authoritative.
       // Never use the incompatible 30004 TCP vector to time a handoff.
@@ -1952,6 +2036,9 @@ export class Mg400Adapter implements RobotArmAdapter {
           this.invalidateStateSample();
           this.lastCommandAt = Date.now();
           const submittedAt = this.lastCommandAt;
+          tracedTarget = target.options.traceCompletion
+            ? { submittedAtMs: submittedAt, pose: target.pose }
+            : undefined;
           await this.motion.send(
             buildMg400MotionCommand('MovL', target.pose, target.options),
           );
@@ -1978,9 +2065,12 @@ export class Mg400Adapter implements RobotArmAdapter {
           const submittedAt = Date.now();
           const timing: QueuedPathTiming = {
             startedAt: submittedAt,
+            startPositionMm: latest?.pose.positionMm,
             intervals: 0,
             slowSampleMs: 0,
             groups: [],
+            path,
+            blendPercentages,
             lowSpeedWindows: [],
           };
           queuedTrace = timing;
@@ -2007,17 +2097,42 @@ export class Mg400Adapter implements RobotArmAdapter {
             'Sync()',
             Math.min(options.timeoutMs, this.config.motionTimeoutMs),
           );
+          const syncRepliedAtMs = Date.now();
           control();
           if (queuedTrace) {
+            const trace = queuedTrace;
+            const lowSpeedWindows = trace.lowSpeedWindows
+              .filter(({ fromMs, toMs }) => toMs - fromMs >= 32)
+              .map(({ fromMs, toMs, positionMm }) => {
+                let nearestIndex = 0;
+                let nearestDistance = Number.POSITIVE_INFINITY;
+                for (const [index, target] of trace.path.entries()) {
+                  const gap = distance(positionMm, target.pose.positionMm);
+                  if (gap < nearestDistance) {
+                    nearestDistance = gap;
+                    nearestIndex = index;
+                  }
+                }
+                return {
+                  fromMs,
+                  toMs,
+                  nearestQueuedTarget: nearestIndex + 1,
+                  distanceToTargetMm: Math.round(nearestDistance * 100) / 100,
+                  blendPercent: trace.blendPercentages[nearestIndex],
+                };
+              });
             debugMg400(
               `Queued path timing ${JSON.stringify({
-                elapsedMs: Date.now() - queuedTrace.startedAt,
-                sampleIntervals: queuedTrace.intervals,
-                sampledBelowOneMmPerSecondMs: queuedTrace.slowSampleMs,
-                groups: queuedTrace.groups,
-                lowSpeedWindows: queuedTrace.lowSpeedWindows.filter(
-                  ({ fromMs, toMs }) => toMs - fromMs >= 32,
-                ),
+                elapsedMs: syncRepliedAtMs - trace.startedAt,
+                firstMotionAtMs: trace.firstMotionAtMs,
+                firstMotionDelayMs:
+                  trace.firstMotionAtMs === undefined
+                    ? undefined
+                    : trace.firstMotionAtMs - trace.startedAt,
+                sampleIntervals: trace.intervals,
+                sampledBelowOneMmPerSecondMs: trace.slowSampleMs,
+                groups: trace.groups,
+                lowSpeedWindows,
               })}`,
             );
             queuedTrace = undefined;
@@ -2049,6 +2164,14 @@ export class Mg400Adapter implements RobotArmAdapter {
             status: 'completed',
             completedAt: new Date().toISOString(),
             pose: measured.pose,
+            ...(tracedTarget && target.options.traceCompletion
+              ? {
+                  completionTrace: {
+                    targetObservedAtMs: tracedTarget.observedAtMs,
+                    syncRepliedAtMs,
+                  },
+                }
+              : {}),
           };
         },
         stopped: () => this.sequenceOwner !== owner,
@@ -3090,11 +3213,30 @@ export class Mg400Adapter implements RobotArmAdapter {
       values,
     );
   }
-  moveLinear(p: CartesianPose, o?: MotionOptions) {
-    return this.move('MovL', p, o);
+  moveLinear(
+    pose: CartesianPose,
+    options?: MotionOptions,
+    preflight?: LinearPreflightScope,
+  ) {
+    return this.move('MovL', pose, options, undefined, undefined, preflight);
   }
   movePtp(p: CartesianPose, o?: MotionOptions) {
     return this.move('MovJ', p, o);
+  }
+  private currentLinearReachability(scope?: LinearPreflightScope) {
+    if (
+      !scope ||
+      scope.signal.aborted ||
+      this.kinematicSupport.inverse !== 'supported'
+    )
+      return undefined;
+    const evidence = this.linearReachability.get(scope);
+    if (
+      evidence?.generation === this.generation &&
+      evidence.payloadGeneration === this.payloadApplication.read().generation
+    )
+      return evidence;
+    return undefined;
   }
   /** Explicit unsupported firmware may skip IK; all communication failures block motion. */
   private async checkReachability(pose: CartesianPose): Promise<void> {
@@ -3144,6 +3286,7 @@ export class Mg400Adapter implements RobotArmAdapter {
     options?: MotionOptions,
     jointCommand?: string,
     jointTarget?: number[],
+    preflight?: LinearPreflightScope,
   ): Promise<MotionHandle> {
     validateMotionOptions(
       options ?? {
@@ -3282,10 +3425,15 @@ export class Mg400Adapter implements RobotArmAdapter {
       // Ask the controller whether the target exists before committing to it, so
       // an unreachable point is a clean refusal rather than a controller fault
       // that strands the session in recovery.
-      if (!jointCommand) await this.checkReachability(pose);
+      const reachability = this.currentLinearReachability(preflight);
+      if (
+        !jointCommand &&
+        !reachability?.commands.has(buildMg400ReachabilityCommand(pose))
+      )
+        await this.checkReachability(pose);
       // The query above is a network round trip; a stop may have landed during
       // it, in which case the motion must not go out.
-      if (generation !== this.generation)
+      if (generation !== this.generation || preflight?.signal.aborted)
         throw new RobotArmError(
           'ACTION_STOPPED',
           'Motion was stopped before dispatch',
@@ -3471,7 +3619,14 @@ export class Mg400Adapter implements RobotArmAdapter {
                 arrivedAt,
                 submittedAt,
                 ...(trace ? { completionTrace: trace } : {}),
-                ...(Array.isArray(current) ? {} : { pose: current }),
+                ...(Array.isArray(current)
+                  ? {}
+                  : {
+                      pose: current,
+                      ...(options?.arrivalSamples && arrivalSamples > 1
+                        ? { stableArrivalSamples: count }
+                        : {}),
+                    }),
               };
             await new Promise((resolve) => setTimeout(resolve, 50));
           }

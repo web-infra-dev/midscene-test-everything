@@ -72,6 +72,8 @@ export interface ContactMoveOptions {
   arrivalSamples?: number;
   /** Skip the runtime's own stability dwell; the driver already confirmed. */
   skipStable?: boolean;
+  /** Reuse a driver's measured stability only when it confirms the requested samples. */
+  reuseStableArrival?: boolean;
 }
 export interface MotionResult {
   status: 'completed' | 'stopped' | 'cancelled' | 'failed';
@@ -85,6 +87,8 @@ export interface MotionResult {
    * only the completion time is available as evidence.
    */
   arrivedAt?: number;
+  /** Consecutive fresh, stationary Cartesian samples at the target. */
+  stableArrivalSamples?: number;
   /**
    * Pose the driver measured when it confirmed the move. It lets a caller that
    * skipped its own stability dwell still record a measured arrival pose.

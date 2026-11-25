@@ -7,6 +7,7 @@ export type {
   JointDefinition,
   ControllerStateSample,
   JogTarget,
+  LinearPreflightScope,
   LinearSequenceOptions,
   LinearSequenceTarget,
   LinearMotionSequence,

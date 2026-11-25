@@ -39,6 +39,7 @@ import { PhoneSocketServer } from './phone-socket.js';
 import { calibrationPreviewPositions } from './preview-positions.js';
 
 const REFERENCE_REPORT_MAX_AGE_MS = 3 * CALIBRATION_PHONE_POLICY.heartbeatMs;
+const CALIBRATION_EVENT_INTERVAL_MS = 100;
 
 /**
  * End the MJPEG response before closing the socket. Destroying a streaming
@@ -774,6 +775,7 @@ export class CalibrationHost {
       });
       this.streams.add(res);
       let last: string | undefined;
+      let publishTimer: ReturnType<typeof setTimeout> | undefined;
       const publish = () => {
         if (res.destroyed || res.writableEnded || res.writableNeedDrain) return;
         try {
@@ -790,14 +792,24 @@ export class CalibrationHost {
           res.destroy();
         }
       };
-      const unsubscribe = this.service.subscribe(publish);
+      // Phone observations can arrive much faster than the browser needs a
+      // full snapshot. Keep cloning and serialization out of that path.
+      const schedulePublish = () => {
+        if (publishTimer) return;
+        publishTimer = setTimeout(() => {
+          publishTimer = undefined;
+          publish();
+        }, CALIBRATION_EVENT_INTERVAL_MS);
+      };
+      const unsubscribe = this.service.subscribe(schedulePublish);
       const heartbeat = setInterval(() => {
         if (!res.writableNeedDrain) res.write(': heartbeat\n\n');
       }, 15000);
-      res.on('drain', publish);
+      res.on('drain', schedulePublish);
       res.once('close', () => {
         unsubscribe();
         clearInterval(heartbeat);
+        clearTimeout(publishTimer);
         this.streams.delete(res);
       });
       publish();

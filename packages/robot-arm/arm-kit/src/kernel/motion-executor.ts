@@ -12,11 +12,13 @@ import {
   distance,
   quaternionDistance,
 } from '../domain.js';
+import type { LinearPreflightScope } from './contracts.js';
 import type { RobotDriverBoundary } from './driver-boundary.js';
 
 export interface ExecutionHooks {
   check(): void;
   signal?: AbortSignal;
+  preflight?: LinearPreflightScope;
   accepting(promise: Promise<MotionHandle> | undefined): void;
   submitted(): void;
 }
@@ -47,7 +49,9 @@ export class MotionExecutor {
     if (workspace) assertTarget(target, workspace);
     this.kernel.validateCartesian('linear', target, options, workspace);
     hooks.submitted();
-    const accepting = this.kernel.moveLinear(target, options, workspace);
+    const accepting = hooks.preflight
+      ? this.kernel.moveLinear(target, options, workspace, hooks.preflight)
+      : this.kernel.moveLinear(target, options, workspace);
     hooks.accepting(accepting);
     let handle: MotionHandle;
     try {

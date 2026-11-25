@@ -556,9 +556,39 @@ export class CalibrationWorkflow {
     return this.phone.openPage();
   }
   receivePhone(update: CalibrationPageUpdate): CalibrationPageReply {
+    const previous = this.phone.update;
     const reloaded = this.phone.receive(update);
     this.changed();
     const input = this.phone.update!;
+    const logo =
+      this.debugLogo?.state === 'drawing' ? this.debugLogo : this.state?.logo;
+    const canvasAck =
+      logo?.retryFromStroke === undefined
+        ? logo?.id
+        : `${logo.id}:${logo.retryFromStroke}`;
+    if (logo?.state === 'drawing' && input.logoCanvasAck === canvasAck) {
+      const lastEvent =
+        previous?.pageId === input.pageId
+          ? (previous.touchEvents?.at(-1)?.sequence ?? 0)
+          : 0;
+      for (const event of input.touchEvents ?? []) {
+        if (
+          event.sequence <= lastEvent ||
+          event.targetElement !== 'logo-canvas' ||
+          event.targetId !== canvasAck
+        )
+          continue;
+        debug(
+          `Logo phone touch ${JSON.stringify({
+            stroke: Number(event.detail),
+            event: event.kind,
+            phoneElapsedMs: event.elapsedMs,
+            phoneEventMs: event.nativeTimestampMs,
+            receivedAtMs: this.phone.lastUpdateAt,
+          })}`,
+        );
+      }
+    }
     this.options.onPhoneObservation?.(
       this.phone.connected() ? input : undefined,
     );

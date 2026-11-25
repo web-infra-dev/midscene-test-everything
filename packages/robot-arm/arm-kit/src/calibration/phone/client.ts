@@ -88,6 +88,24 @@ export function mountCalibrationPhonePage(
     element('logo-signature'),
     element('logo-error'),
     () => send(),
+    (event, stroke, canvasAck) => {
+      trace(
+        event.type as
+          | 'pointerdown'
+          | 'pointerup'
+          | 'pointercancel'
+          | 'lostpointercapture',
+        String(stroke),
+        { x: event.clientX, y: event.clientY },
+        {
+          source: 'surface',
+          targetElement: 'logo-canvas',
+          targetId: canvasAck,
+          nativeTimestampMs: event.timeStamp,
+        },
+      );
+      send();
+    },
   );
   const connection = element('connection');
   const errorDetail = element('error-detail');
@@ -128,6 +146,7 @@ export function mountCalibrationPhonePage(
       Pick<
         (typeof touchEvents)[number],
         | 'source'
+        | 'targetId'
         | 'targetElement'
         | 'defaultPrevented'
         | 'nativeTimestampMs'

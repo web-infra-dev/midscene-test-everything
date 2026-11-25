@@ -156,10 +156,12 @@ export interface RobotDriver {
   moveLinear?(
     pose: CartesianPose,
     options: MotionOptions,
+    preflight?: LinearPreflightScope,
   ): Promise<MotionHandle>;
   beginLinearSequence?(
     targets: readonly LinearSequenceTarget[],
     options: LinearSequenceOptions,
+    preflight?: LinearPreflightScope,
   ): Promise<LinearMotionSequence>;
   movePtp?(pose: CartesianPose, options: MotionOptions): Promise<MotionHandle>;
   moveJoints?(values: number[], options: MotionOptions): Promise<MotionHandle>;
@@ -178,7 +180,10 @@ export interface RobotDriver {
   resume?(): Promise<void>;
   emergencyStop?(): Promise<void>;
   forwardKinematics?(values: number[]): Promise<CartesianPose>;
-  inverseKinematics?(pose: CartesianPose): Promise<number[]>;
+  inverseKinematics?(
+    pose: CartesianPose,
+    preflight?: LinearPreflightScope,
+  ): Promise<number[]>;
   checkReachability?(pose: CartesianPose): Promise<void>;
 }
 export interface MotionConstraints {
@@ -202,6 +207,10 @@ export interface CapabilityDescriptor {
   version: number;
   implementation: 'native' | 'emulated';
   constraints?: MotionConstraints;
+}
+/** Identity and cancellation for reachability evidence from one linear motion plan. */
+export interface LinearPreflightScope {
+  readonly signal: AbortSignal;
 }
 export interface LinearSequenceTarget {
   readonly pose: CartesianPose;

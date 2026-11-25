@@ -7,7 +7,9 @@ import type { CalibrationPageLayout, WebPoint } from '../assisted-contracts.js';
 import {
   type CalibrationProfile,
   type CartesianPose,
+  type ContactMoveOptions,
   type MotionOptions,
+  type MotionResult,
   RobotArmError,
   isRobotArmError,
 } from '../contracts.js';
@@ -250,10 +252,15 @@ const debug = getDebug('robot-arm:web-calibration');
 const QUEUED_STROKE_MAX_TARGETS = 40;
 const QUEUED_STROKE_MAX_LENGTH_MM = 250;
 const STROKE_BLEND_PERCENT = 15;
+const MIN_STROKE_BLEND_PERCENT = 5;
 const DEFAULT_RELEASE_ACCELERATION_FACTOR = 0.4;
 const LOGO_RELEASE_ACCELERATION_FACTOR = 0.5;
-const STROKE_MAX_BLEND_TURN_COSINE = Math.cos((40 * Math.PI) / 180);
+const MAX_BLEND_TURN_DEGREES = 40;
+const FULL_BLEND_TURN_DEGREES = 12;
+const NEAR_STRAIGHT_TURN_DEGREES = 5;
 const MIN_BLEND_SEGMENT_MM = 0.5;
+const MIN_STRAIGHT_BLEND_SEGMENT_MM = 0.25;
+const HOVER_ARRIVAL_SAMPLES = 3;
 const SHORT_OUTLINE_EDGE_MM = 2;
 const MAX_OUTLINE_DEVIATION_MM = 0.2;
 
@@ -263,14 +270,13 @@ function strokeEdge(from: WebPoint, to: WebPoint) {
   return { x, y, length: Math.hypot(x, y) };
 }
 
-function isSharpTurn(
+function turnDegrees(
   incoming: ReturnType<typeof strokeEdge>,
   outgoing: ReturnType<typeof strokeEdge>,
 ) {
-  return (
-    incoming.x * outgoing.x + incoming.y * outgoing.y <
-    STROKE_MAX_BLEND_TURN_COSINE * incoming.length * outgoing.length
-  );
+  const cross = incoming.x * outgoing.y - incoming.y * outgoing.x;
+  const dot = incoming.x * outgoing.x + incoming.y * outgoing.y;
+  return (Math.atan2(Math.abs(cross), dot) * 180) / Math.PI;
 }
 
 function fitsChord(outline: WebPoint[], from: number, to: number) {
@@ -292,15 +298,18 @@ function fitsChord(outline: WebPoint[], from: number, to: number) {
   });
 }
 
-function simplifyShortEdges(outline: WebPoint[]) {
+function simplifyOutline(outline: WebPoint[]) {
   const points = [outline[0]];
   let anchor = 0;
   for (let index = 1; index < outline.length - 1; index++) {
     const incoming = strokeEdge(outline[index - 1], outline[index]);
     const outgoing = strokeEdge(outline[index], outline[index + 1]);
+    const turn = turnDegrees(incoming, outgoing);
     if (
-      Math.min(incoming.length, outgoing.length) <= SHORT_OUTLINE_EDGE_MM &&
-      !isSharpTurn(incoming, outgoing) &&
+      (turn <= NEAR_STRAIGHT_TURN_DEGREES ||
+        (turn <= MAX_BLEND_TURN_DEGREES &&
+          Math.min(incoming.length, outgoing.length) <=
+            SHORT_OUTLINE_EDGE_MM)) &&
       fitsChord(outline, anchor, index + 1)
     )
       continue;
@@ -329,7 +338,7 @@ function startNearAdjacentStrokes(
     const outgoing = strokeEdge(point, outline[index + 1]);
     if (
       Math.min(incoming.length, outgoing.length) < MIN_BLEND_SEGMENT_MM ||
-      !isSharpTurn(incoming, outgoing)
+      turnDegrees(incoming, outgoing) <= MAX_BLEND_TURN_DEGREES
     )
       continue;
     const candidate = travel(point);
@@ -355,9 +364,25 @@ function strokeBlendPercentages(points: readonly WebPoint[]) {
     return undefined;
   return segments.map((segment, index) => {
     const next = segments[index + 1];
-    if (!next || Math.min(segment.length, next.length) < MIN_BLEND_SEGMENT_MM)
+    if (!next) return 0;
+    const turn = turnDegrees(segment, next);
+    const minLength =
+      turn <= NEAR_STRAIGHT_TURN_DEGREES
+        ? MIN_STRAIGHT_BLEND_SEGMENT_MM
+        : MIN_BLEND_SEGMENT_MM;
+    if (
+      turn > MAX_BLEND_TURN_DEGREES ||
+      Math.min(segment.length, next.length) < minLength
+    )
       return 0;
-    return isSharpTurn(segment, next) ? 0 : STROKE_BLEND_PERCENT;
+    if (turn <= FULL_BLEND_TURN_DEGREES) return STROKE_BLEND_PERCENT;
+    const blend =
+      (MAX_BLEND_TURN_DEGREES - turn) /
+      (MAX_BLEND_TURN_DEGREES - FULL_BLEND_TURN_DEGREES);
+    return Math.round(
+      MIN_STROKE_BLEND_PERCENT +
+        (STROKE_BLEND_PERCENT - MIN_STROKE_BLEND_PERCENT) * blend,
+    );
   });
 }
 
@@ -385,7 +410,7 @@ async function observeQueuedStroke(
     const receipt = await Promise.race([submit(), interrupted]);
     await Promise.race([sequence.waitForCurrent(), interrupted]);
     check();
-    return receipt.acceptedAt - receipt.submittedAt;
+    return receipt;
   } finally {
     clearInterval(timer);
   }
@@ -467,7 +492,7 @@ export async function drawCalibrationLogo(
   });
   const starts = outlines.map((outline) => outline[0]);
   const strokes = outlines.map((outline, index) => {
-    const simplified = simplifyShortEdges(outline);
+    const simplified = simplifyOutline(outline);
     const ordered = startNearAdjacentStrokes(
       simplified,
       starts[index - 1],
@@ -508,7 +533,7 @@ export async function drawCalibrationLogo(
     targets.push({
       name: `Logo stroke ${number} lift`,
       pose: hover,
-      options: release,
+      options: { ...release, traceCompletion: true },
     });
     return {
       hover,
@@ -544,16 +569,10 @@ export async function drawCalibrationLogo(
   const move = (
     pose: CartesianPose,
     options: MotionOptions,
-    onScreen = false,
+    contact?: ContactMoveOptions,
   ) => {
     checkCanvas();
-    return host.move(
-      pose,
-      ctx,
-      options.speed,
-      options.acceleration,
-      onScreen ? { arrivalSamples: 1, skipStable: true } : undefined,
-    );
+    return host.move(pose, ctx, options.speed, options.acceleration, contact);
   };
   await positioning?.beforeMotion?.();
   if (distance(initial.positionMm, parked.positionMm) > 0.001)
@@ -566,11 +585,15 @@ export async function drawCalibrationLogo(
       positioningMs: Math.round(performance.now() - preflightFinished),
     })}`,
   );
+  let previousLiftConfirmedAtMs: number | undefined;
   const drawStroke = async (index: number, retry = false) => {
     const { hover, number, targets, blendPercentages, outlineVerticesRemoved } =
       strokes[index];
     const started = performance.now();
-    await move(hover, approach);
+    const approachedMotion = await move(hover, approach, {
+      arrivalSamples: HOVER_ARRIVAL_SAMPLES,
+      reuseStableArrival: true,
+    });
     checkCanvas();
     const approached = performance.now();
     const sequence = await host.beginSequence(targets, ctx);
@@ -579,18 +602,27 @@ export async function drawCalibrationLogo(
     const submitQueued = sequence?.submitQueued?.bind(sequence);
     let queueAckMs: number | undefined;
     let closureConfirmed: number | undefined;
+    let contactConfirmedAtMs: number | undefined;
+    let queuedAtMs: number | undefined;
+    let liftSubmittedAtMs: number | undefined;
+    let liftConfirmedAtMs: number | undefined;
+    let liftTrace: MotionResult['completionTrace'];
     if (sequence && submitQueued && blendPercentages?.length) {
       checkCanvas();
       await sequence.submit(0);
-      await sequence.waitForHandoff();
+      const contact = await sequence.waitForHandoff();
+      contactConfirmedAtMs = contact.confirmedAt;
       await host.hold(Math.min(100, screen.contactMs));
-      queueAckMs = await observeQueuedStroke(
+      const queued = await observeQueuedStroke(
         sequence,
         () => submitQueued(blendPercentages),
         checkCanvas,
       );
+      queuedAtMs = queued.submittedAt;
+      queueAckMs = queued.acceptedAt - queued.submittedAt;
       closureConfirmed = performance.now();
-      await sequence.submit(liftIndex);
+      const lift = await sequence.submit(liftIndex);
+      liftSubmittedAtMs = lift.submittedAt;
     } else {
       for (let index = 0; index < targets.length; index++) {
         const target = targets[index];
@@ -598,12 +630,21 @@ export async function drawCalibrationLogo(
           checkCanvas();
           await sequence.submit(index);
           if (index < liftIndex) await sequence.waitForHandoff();
-        } else await move(target.pose, target.options, index < liftIndex);
+        } else
+          await move(
+            target.pose,
+            target.options,
+            index < liftIndex
+              ? { arrivalSamples: 1, skipStable: true }
+              : undefined,
+          );
         if (index === 0) await host.hold(Math.min(100, screen.contactMs));
       }
     }
     if (sequence) {
-      await sequence.finish();
+      const lifted = await sequence.finish();
+      liftConfirmedAtMs = Date.parse(lifted.completedAt);
+      liftTrace = lifted.completionTrace;
       sequence.dispose();
     }
     const finished = performance.now();
@@ -614,6 +655,18 @@ export async function drawCalibrationLogo(
         mode: queueAckMs !== undefined ? 'queued' : 'per-target',
         contactTargets: liftIndex,
         outlineVerticesRemoved,
+        transferTiming: {
+          previousLiftConfirmedAtMs: retry
+            ? undefined
+            : previousLiftConfirmedAtMs,
+          approachSubmittedAtMs: approachedMotion.submittedAt,
+          contactConfirmedAtMs,
+          queuedAtMs,
+          liftSubmittedAtMs,
+          liftTargetObservedAtMs: liftTrace?.targetObservedAtMs,
+          liftSyncRepliedAtMs: liftTrace?.syncRepliedAtMs,
+          liftConfirmedAtMs,
+        },
         penUpTravelMm:
           index > 0
             ? Math.round(
@@ -623,12 +676,20 @@ export async function drawCalibrationLogo(
                 ) * 100,
               ) / 100
             : undefined,
-        blendPercent:
-          queueAckMs !== undefined ? STROKE_BLEND_PERCENT : undefined,
+        maxBlendPercent:
+          queueAckMs !== undefined && blendPercentages
+            ? Math.max(...blendPercentages)
+            : undefined,
         releaseAccelerationFactor,
         blendedTargets:
           queueAckMs !== undefined
             ? blendPercentages?.filter((percent) => percent > 0).length
+            : undefined,
+        unblendedWaypoints:
+          queueAckMs !== undefined
+            ? blendPercentages?.flatMap((percent, index) =>
+                percent === 0 ? [index + 2] : [],
+              )
             : undefined,
         approachAndPreparationMs: Math.round(prepared - started),
         approachMs: Math.round(approached - started),
@@ -641,6 +702,7 @@ export async function drawCalibrationLogo(
         queueAckMs,
       })}`,
     );
+    previousLiftConfirmedAtMs = liftConfirmedAtMs;
   };
   let retried = false;
   for (const [index, { number, hover }] of strokes.entries()) {

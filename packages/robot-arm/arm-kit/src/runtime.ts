@@ -90,9 +90,9 @@ import {
 import type { JogTarget, MotionRequest } from './kernel/contracts.js';
 import type {
   LinearMotionSequence,
+  LinearPreflightScope,
   LinearSequenceTarget,
 } from './kernel/contracts.js';
-import type { LinearPreflightScope } from './kernel/driver-boundary.js';
 import { MotionExecutor } from './kernel/motion-executor.js';
 import { assertFresh, evaluateReadiness } from './kernel/readiness.js';
 import { checkRecovery } from './kernel/recovery.js';
@@ -1342,7 +1342,18 @@ export class RobotArmRuntime extends RobotKernel {
         return this.adapter.linearPreflightTiming(preflight);
       },
       move: (p, ctx, speed, acceleration, contact) =>
-        this.move(p, ctx, speed, acceleration, contact),
+        this.move(
+          p,
+          ctx,
+          speed,
+          acceleration,
+          contact,
+          undefined,
+          contact?.reuseStableArrival &&
+            process.env.MIDSCENE_LOGO_TRAVEL_PREFLIGHT !== '0'
+            ? preflight
+            : undefined,
+        ),
       beginSequence: (targets, ctx) =>
         this.beginScreenSequence(targets, ctx, preflight),
       stable: (p, ctx) => this.stable(p, ctx),
@@ -1944,31 +1955,34 @@ export class RobotArmRuntime extends RobotKernel {
     scope?: LinearPreflightScope,
   ): Promise<void> {
     await this.confirmAppliedPayload(ctx.tool);
-    for (const target of targets) {
-      this.check();
-      try {
-        this.target(target.pose, ctx);
-        await this.adapter.preflightCartesian(
-          'linear',
-          target.pose,
-          target.options,
-          undefined,
-          scope,
-        );
-      } catch (error) {
-        if (isRobotArmError(error))
-          throw new RobotArmError(
-            error.code,
-            `${target.name}: ${error.message}`,
-            error.status,
-            { ...error.details, target: target.name },
+    const validate = async (
+      preflight: (pose: CartesianPose, options: MotionOptions) => Promise<void>,
+    ) => {
+      for (const target of targets) {
+        this.check();
+        try {
+          this.target(target.pose, ctx);
+          await preflight(target.pose, target.options);
+        } catch (error) {
+          if (isRobotArmError(error))
+            throw new RobotArmError(
+              error.code,
+              `${target.name}: ${error.message}`,
+              error.status,
+              { ...error.details, target: target.name },
+            );
+          throw new Error(
+            `${target.name}: ${error instanceof Error ? error.message : String(error)}`,
           );
-        throw new Error(
-          `${target.name}: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        }
+        this.check();
       }
-      this.check();
-    }
+    };
+    if (scope) await this.adapter.preflightLinearTargets(scope, validate);
+    else
+      await validate((pose, options) =>
+        this.adapter.preflightCartesian('linear', pose, options),
+      );
   }
   private async move(
     p: CartesianPose,
@@ -1977,6 +1991,7 @@ export class RobotArmRuntime extends RobotKernel {
     acceleration = ctx.screen.actionAcceleration,
     contact?: ContactMoveOptions,
     check = () => this.check(),
+    preflight?: LinearPreflightScope,
   ): Promise<MotionResult> {
     await this.confirmAppliedPayload(ctx.tool);
     await this.ready();
@@ -2001,6 +2016,7 @@ export class RobotArmRuntime extends RobotKernel {
       {
         check,
         signal: this.abort?.signal,
+        preflight,
         accepting: (promise) => {
           this.accepting = promise;
         },
@@ -2009,10 +2025,13 @@ export class RobotArmRuntime extends RobotKernel {
         },
       },
     );
-    if (contact?.skipStable) {
-      // The driver confirmed arrival from fresh measured samples, and a second
-      // dwell here would be spent with the tool already on the glass. The
-      // driver's own measured pose keeps the trail honest.
+    if (
+      contact?.skipStable ||
+      (contact?.reuseStableArrival &&
+        contact.arrivalSamples !== undefined &&
+        result.pose &&
+        (result.stableArrivalSamples ?? 0) >= contact.arrivalSamples)
+    ) {
       this.lastStablePose = result.pose ?? this.lastStablePose;
       return result;
     }
