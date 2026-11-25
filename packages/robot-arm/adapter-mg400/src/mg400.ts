@@ -549,7 +549,10 @@ export function buildMg400MotionCommand(
   const l = name === 'MovL';
   return `${name}(${p.x},${p.y},${p.z},${r},User=0,Tool=0,${l ? 'SpeedL' : 'SpeedJ'}=${Math.max(1, Math.round(speed.value * 100))},${l ? 'AccL' : 'AccJ'}=${Math.max(1, Math.round(acceleration.value * 100))},CP=${blendPercent})`;
 }
-type MonitoringDispatch = { beforeWrite?: () => void };
+type MonitoringDispatch = {
+  beforeWrite?: (command: string) => void;
+  onReply?: (receivedAtMs: number) => void;
+};
 
 /** One in-flight response per command. A timeout quarantines the socket; never reuse a late reply. */
 class TextChannel {
@@ -568,7 +571,7 @@ class TextChannel {
    */
   private pending: Array<{
     command: string;
-    resolve: (line: string) => void;
+    resolve: (line: string, receivedAtMs: number) => void;
     reject: (e: unknown) => void;
     timer: ReturnType<typeof setTimeout>;
   }> = [];
@@ -624,6 +627,7 @@ class TextChannel {
       });
       socket.on('data', (chunk: string) => {
         if (this.socket !== socket) return;
+        const receivedAtMs = Date.now();
         this.buffer += chunk;
         if (this.buffer.length > 65536) {
           this.close(
@@ -647,7 +651,7 @@ class TextChannel {
             return;
           }
           clearTimeout(p.timer);
-          p.resolve(line);
+          p.resolve(line, receivedAtMs);
           index = this.buffer.indexOf(';');
         }
       });
@@ -780,7 +784,7 @@ class TextChannel {
             'MG400 channel requires explicit reconnect',
             503,
           );
-        monitoring?.beforeWrite?.();
+        monitoring?.beforeWrite?.(commands[0]);
         return new Promise<string[]>((resolve, reject) => {
           const lines: string[] = [];
           const timer = setTimeout(
@@ -799,10 +803,11 @@ class TextChannel {
             this.pending.push({
               command,
               timer,
-              resolve: (line) => {
+              resolve: (line, receivedAtMs) => {
                 lines.push(line);
                 if (lines.length === commands.length) {
                   clearTimeout(timer);
+                  monitoring?.onReply?.(receivedAtMs);
                   resolve(lines);
                 }
               },
@@ -1635,7 +1640,9 @@ export class Mg400Adapter implements RobotArmAdapter {
     type FaultReadTiming = {
       queuedAt: number;
       sentAt?: number;
+      socketReceivedAt?: number;
       sampledAt?: number;
+      modeFallbackStartedAt?: number;
     };
     let faultReadTiming: FaultReadTiming | undefined;
     let latest: SequenceFeedback | undefined;
@@ -1654,14 +1661,35 @@ export class Mg400Adapter implements RobotArmAdapter {
     let queuedTrace: QueuedPathTiming | undefined;
     let poseTimer: ReturnType<typeof setTimeout> | undefined;
     let poseReading = false;
+    let poseReadTiming:
+      | {
+          startedAt: number;
+          command?: string;
+          sentAt?: number;
+          socketReceivedAt?: number;
+        }
+      | undefined;
     const readSequencePose = async () => {
       if (poseReading || released) return;
       poseReading = true;
+      const timing: NonNullable<typeof poseReadTiming> = {
+        startedAt: Date.now(),
+      };
+      poseReadTiming = timing;
       try {
-        // The dashboard is serial. Let the safety sample finish before adding
-        // another pose read between its requests.
-        if (faultPollStartedAt !== undefined) return;
-        const sample = await this.readPoseSample(true);
+        // Queue one pose read alongside fault monitoring, ahead of routine
+        // telemetry. A pending fault read can no longer skip a pose poll.
+        const sample = await this.readPoseSample(true, {
+          beforeWrite: (command) => {
+            control();
+            timing.command = command;
+            timing.sentAt = Date.now();
+            timing.socketReceivedAt = undefined;
+          },
+          onReply: (receivedAtMs) => {
+            timing.socketReceivedAt = receivedAtMs;
+          },
+        });
         control();
         if (!released) {
           const receivedAt = Date.parse(sample.receivedAt);
@@ -1775,17 +1803,23 @@ export class Mg400Adapter implements RobotArmAdapter {
             control();
             timing.sentAt = Date.now();
           },
+          onReply: (receivedAtMs) => {
+            timing.socketReceivedAt = receivedAtMs;
+          },
+        }).then((sample) => {
+          timing.sampledAt = sample.sampledAt;
+          return sample;
         });
         const [dashboardMode, { fault, sampledAt }] = await Promise.all([
           modeRead,
           faultRead,
         ]);
-        timing.sampledAt = sampledAt;
         control();
-        const mode =
-          dashboardMode ??
-          realtimeMode() ??
-          (await this.readControllerMode(monitoring));
+        let mode = dashboardMode ?? realtimeMode();
+        if (mode === undefined) {
+          timing.modeFallbackStartedAt = Date.now();
+          mode = await this.readControllerMode(monitoring);
+        }
         control();
         this.requireConnected();
         const faults = mg400Faults(fault.groups, mode);
@@ -1871,6 +1905,11 @@ export class Mg400Adapter implements RobotArmAdapter {
                 faultReadTiming?.sentAt === undefined
                   ? undefined
                   : (faultReadTiming.sampledAt ?? now) - faultReadTiming.sentAt,
+              faultReadSentAtMs: faultReadTiming?.sentAt,
+              faultReadSocketReceivedAtMs: faultReadTiming?.socketReceivedAt,
+              faultReadParsedAtMs: faultReadTiming?.sampledAt,
+              faultModeFallbackStartedAtMs:
+                faultReadTiming?.modeFallbackStartedAt,
             },
           );
         const frame = this.feedback.current();
@@ -1891,6 +1930,17 @@ export class Mg400Adapter implements RobotArmAdapter {
       const sequence = createLinearMotionSequence(targets, options, {
         check: checkFeedback,
         feedback: () => latest,
+        feedbackDiagnostics: (now) => ({
+          poseReadInFlight: poseReading,
+          poseReadStartedAtMs: poseReadTiming?.startedAt,
+          poseReadCommand: poseReadTiming?.command,
+          poseReadSentAtMs: poseReadTiming?.sentAt,
+          poseReadSocketReceivedAtMs: poseReadTiming?.socketReceivedAt,
+          faultPollInFlightMs:
+            faultPollStartedAt === undefined
+              ? undefined
+              : now - faultPollStartedAt,
+        }),
         submit: async (target, terminal) => {
           control();
           if (terminal) {
@@ -2050,8 +2100,11 @@ export class Mg400Adapter implements RobotArmAdapter {
       stale: false,
     };
   }
-  private async readPoseSample(_fresh: boolean) {
-    const pose = await this.readMeasuredPose();
+  private async readPoseSample(
+    _fresh: boolean,
+    monitoring?: MonitoringDispatch,
+  ) {
+    const pose = await this.readMeasuredPose(monitoring);
     return { ...this.pollSample(), pose };
   }
   async getPose(): Promise<CartesianPose> {
@@ -2099,8 +2152,10 @@ export class Mg400Adapter implements RobotArmAdapter {
       vendorMode: s.mode,
     };
   }
-  private readMeasuredJoints(): Promise<number[]> {
-    return this.dashboard.sendWith((response, command) => {
+  private readMeasuredJoints(
+    monitoring?: MonitoringDispatch,
+  ): Promise<number[]> {
+    const parse = (response: string, command: string) => {
       const body = parseMg400Response(response, command);
       try {
         const joints = parseMg400GetAngle(body);
@@ -2125,10 +2180,13 @@ export class Mg400Adapter implements RobotArmAdapter {
           });
         throw error;
       }
-    }, 'GetAngle()');
+    };
+    return this.dashboard.sendWith(parse, 'GetAngle()', undefined, monitoring);
   }
   /** Dashboard pose query, used whenever no fresh 30004 frame is available. */
-  private async readMeasuredPose(): Promise<CartesianPose> {
+  private async readMeasuredPose(
+    monitoring?: MonitoringDispatch,
+  ): Promise<CartesianPose> {
     // Four-axis firmware answers `GetPose()` with the flat four-value tuple and
     // rejects the named User/Tool form with -30001; the six-axis-compatible
     // envelope is the other way round. Probe once, then stay on what worked.
@@ -2138,6 +2196,8 @@ export class Mg400Adapter implements RobotArmAdapter {
         return parseMg400Pose(
           await this.dashboard.send(
             named ? 'GetPose(User=0,Tool=0)' : 'GetPose()',
+            undefined,
+            monitoring,
           ),
         );
       } catch (e) {
@@ -2148,9 +2208,13 @@ export class Mg400Adapter implements RobotArmAdapter {
     }
     // Older firmware: query measured joints and controller forward kinematics in
     // Base/Tool0. The joints reply may be a flat tuple or the keyed {j1..j4} form.
-    const joints = await this.readMeasuredJoints();
+    const joints = await this.readMeasuredJoints(monitoring);
     return parseMg400Pose(
-      await this.dashboard.send(`PositiveSolution(${joints.join(',')},0,0)`),
+      await this.dashboard.send(
+        `PositiveSolution(${joints.join(',')},0,0)`,
+        undefined,
+        monitoring,
+      ),
     );
   }
   /**

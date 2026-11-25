@@ -22,6 +22,7 @@ export interface LinearSequencePort {
   /** Check control generation and safety, without controller I/O. */
   check(controlOnly?: boolean): void;
   feedback(): SequenceFeedback | undefined;
+  feedbackDiagnostics?(checkedAt: number): Record<string, unknown>;
   submit(
     target: LinearSequenceTarget,
     terminal: boolean,
@@ -72,12 +73,19 @@ export function createLinearMotionSequence(
     );
   const targets = freezeSnapshot(structuredClone(input));
   options = { ...options };
+  const feedbackDetails = (checkedAt: number, sample?: SequenceFeedback) => ({
+    ...port.feedbackDiagnostics?.(checkedAt),
+    poseSampleReceivedAtMs: sample?.receivedAt,
+    poseSampleAgeMs: sample && checkedAt - sample.receivedAt,
+  });
   const initial = port.feedback();
-  if (!initial || Date.now() - initial.receivedAt > 200)
+  const startedAt = Date.now();
+  if (!initial || startedAt - initial.receivedAt > 200)
     throw new RobotArmError(
       'SEQUENCE_FEEDBACK_UNAVAILABLE',
       'Fresh Cartesian feedback is unavailable',
       409,
+      feedbackDetails(startedAt, initial),
     );
   const connectionGeneration = initial.connectionGeneration;
   let index = -1;
@@ -113,11 +121,13 @@ export function createLinearMotionSequence(
   const check = () => {
     control();
     const sample = feedback();
-    if (!sample || Date.now() - sample.receivedAt > 200)
+    const checkedAt = Date.now();
+    if (!sample || checkedAt - sample.receivedAt > 200)
       throw new RobotArmError(
         'SEQUENCE_FEEDBACK_UNAVAILABLE',
         'Cartesian feedback is missing or stale',
         409,
+        feedbackDetails(checkedAt, sample),
       );
   };
   const waitForCurrent = async (): Promise<MotionResult> => {
@@ -302,11 +312,13 @@ export function createLinearMotionSequence(
               }
             } else window = [];
           }
-          if (Date.now() - lastAt > 200)
+          const checkedAt = Date.now();
+          if (checkedAt - lastAt > 200)
             throw new RobotArmError(
               'SEQUENCE_FEEDBACK_LOST',
               'Cartesian feedback stalled for 200 ms',
               504,
+              feedbackDetails(checkedAt, sample),
             );
           await new Promise((resolve) => setTimeout(resolve, 5));
         }

@@ -102,7 +102,9 @@ async function controller(
   let blockMode = false;
   let delayModeMs = 0;
   let blockedMode = false;
-  let holdPoseReply: ((reply: () => void) => void) | undefined;
+  let heldDashboardReply:
+    | { name: string; hold: (reply: () => void) => void }
+    | undefined;
   let failJogConfirmation = false;
   let jogConfirmationFailed = false;
   const connections = { motion: 0, dashboard: 0 };
@@ -127,7 +129,14 @@ async function controller(
           commands.push(command);
           const name = command.slice(0, command.indexOf('('));
           const reply = (payload = '') => {
-            if (!socket.destroyed) socket.write(`0,{${payload}},${command};`);
+            const write = () => {
+              if (!socket.destroyed) socket.write(`0,{${payload}},${command};`);
+            };
+            if (!motion && heldDashboardReply?.name === name) {
+              const { hold } = heldDashboardReply;
+              heldDashboardReply = undefined;
+              hold(write);
+            } else write();
           };
           if (
             (name === 'SetPayLoad' && (!enabled || options.rejectPayload)) ||
@@ -237,11 +246,7 @@ async function controller(
                             : '4',
                 );
             } else if (name === 'GetPose') {
-              if (holdPoseReply) {
-                const hold = holdPoseReply;
-                holdPoseReply = undefined;
-                hold(() => reply(actual.join(',')));
-              } else if (options.rejectNamedGetPose)
+              if (options.rejectNamedGetPose)
                 socket.write(`-30001,{},${command};`);
               else if (options.keyedPose)
                 reply(
@@ -439,12 +444,15 @@ async function controller(
     delayNextMode(ms: number) {
       delayModeMs = ms;
     },
-    holdNextPose() {
+    holdNextDashboardReply(name: 'GetPose' | 'GetErrorID') {
       let release: (() => void) | undefined;
       const requested = new Promise<void>((resolve) => {
-        holdPoseReply = (reply) => {
-          release = reply;
-          resolve();
+        heldDashboardReply = {
+          name,
+          hold(reply) {
+            release = reply;
+            resolve();
+          },
         };
       });
       return { requested, release: () => release?.() };
@@ -2031,7 +2039,7 @@ describe('MG400 authoritative Cartesian motion', () => {
       const sequence = await c.adapter.driver.beginLinearSequence!(targets, {
         timeoutMs: 1000,
       });
-      const held = c.holdNextPose();
+      const held = c.holdNextDashboardReply('GetPose');
       await held.requested;
       const backlog = [c.adapter.getPose(), c.adapter.getPose()];
       await new Promise((resolve) => setTimeout(resolve, 75));
@@ -2041,6 +2049,27 @@ describe('MG400 authoritative Cartesian motion', () => {
       expect(
         c.commands.slice(firstWaitingRequest, firstWaitingRequest + 2),
       ).toEqual(['RobotMode()', 'GetErrorID()']);
+      sequence.dispose();
+    } finally {
+      await c.cleanup();
+    }
+  });
+  it('queues sequence pose monitoring while a fault reply is pending', async () => {
+    const c = await controller({ adapter: { statePollIntervalMs: 0 } });
+    try {
+      await c.adapter.connect();
+      await c.adapter.enable();
+      const sequence = await c.adapter.driver.beginLinearSequence!(targets, {
+        timeoutMs: 1000,
+      });
+      const held = c.holdNextDashboardReply('GetErrorID');
+      await held.requested;
+      const stateRead = c.adapter.getState();
+      await new Promise((resolve) => setTimeout(resolve, 65));
+      const firstWaitingRequest = c.commands.length;
+      held.release();
+      await stateRead;
+      expect(c.commands[firstWaitingRequest]).toMatch(/^GetPose\(/);
       sequence.dispose();
     } finally {
       await c.cleanup();
