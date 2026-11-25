@@ -1470,8 +1470,10 @@ export class CalibrationWorkflow {
     minimumTravelTipZMm?: number,
   ): LogoCanvasSession | undefined {
     const page = this.phone.update;
-    if (page?.logoCanvasSupported !== 2) return undefined;
+    if (page?.logoCanvasSupported !== 2 && page?.logoCanvasSupported !== 3)
+      return undefined;
     const id = randomUUID();
+    let expectedAck = id;
     const assertPage = () => {
       guard();
       const current = this.phone.assertConnected();
@@ -1488,7 +1490,7 @@ export class CalibrationWorkflow {
       return current;
     };
     const check = () => {
-      if (assertPage().logoCanvasAck !== id)
+      if (assertPage().logoCanvasAck !== expectedAck)
         throw new RobotArmError(
           'PHONE_DISPLAY_NOT_READY',
           'The phone drawing canvas is no longer ready',
@@ -1496,6 +1498,16 @@ export class CalibrationWorkflow {
         );
     };
     const drawing = { id, expectedStrokes: CALIBRATION_LOGO_STROKE_COUNT };
+    const waitForAck = async (signal: AbortSignal) => {
+      const deadline = Date.now() + 4_000;
+      while (
+        assertPage().logoCanvasAck !== expectedAck &&
+        Date.now() < deadline
+      )
+        await delay(50, undefined, { signal });
+      signal.throwIfAborted();
+      check();
+    };
     return {
       viewport: layout,
       minimumTravelTipZMm,
@@ -1505,15 +1517,27 @@ export class CalibrationWorkflow {
         const started = performance.now();
         setStatus({ ...drawing, state: 'drawing' });
         this.changed();
-        const deadline = Date.now() + 4_000;
-        while (assertPage().logoCanvasAck !== id && Date.now() < deadline)
-          await delay(50, undefined, { signal });
-        check();
+        await waitForAck(signal);
         debug(
           `Logo canvas ready in ${Math.round(performance.now() - started)} ms`,
         );
       },
       check,
+      retryStroke:
+        page.logoCanvasSupported === 3
+          ? async (stroke, signal) => {
+              signal.throwIfAborted();
+              check();
+              expectedAck = `${id}:${stroke}`;
+              setStatus({
+                ...drawing,
+                state: 'drawing',
+                retryFromStroke: stroke,
+              });
+              this.changed();
+              await waitForAck(signal);
+            }
+          : undefined,
       finish: (error) => {
         setStatus(
           error

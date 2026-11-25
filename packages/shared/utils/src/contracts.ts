@@ -709,7 +709,12 @@ export interface ProfileData {
   schemaVersion: 1;
   softwarePaused?: boolean;
   operatorStop?: 'manual-stop' | 'emergency-stop';
-  pendingOperation?: { requestId: string; kind: string; startedAt: string };
+  pendingOperation?: {
+    requestId: string;
+    kind: string;
+    startedAt: string;
+    requiresOperatorRecovery?: true;
+  };
   robots: RobotArmProfile[];
   tools: ToolProfile[];
   screens: ScreenProfile[];

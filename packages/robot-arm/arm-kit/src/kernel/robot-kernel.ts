@@ -105,7 +105,7 @@ export class RobotKernel extends OperationCoordinator {
   private get canAutomaticallyRecover() {
     return (
       this.recoveryRequired &&
-      !this.operatorStop &&
+      !this.requiresOperatorRecovery &&
       !this.softwarePaused &&
       !this.disconnectedByRequest
     );

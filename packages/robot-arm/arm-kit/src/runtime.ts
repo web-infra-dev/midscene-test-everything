@@ -94,7 +94,7 @@ import type {
 } from './kernel/contracts.js';
 import type { LinearPreflightScope } from './kernel/driver-boundary.js';
 import { MotionExecutor } from './kernel/motion-executor.js';
-import { evaluateReadiness } from './kernel/readiness.js';
+import { assertFresh, evaluateReadiness } from './kernel/readiness.js';
 import { checkRecovery } from './kernel/recovery.js';
 import { RobotKernel } from './kernel/robot-kernel.js';
 import { ProfileStore, validateScreen } from './runtime/profile-store.js';
@@ -1076,6 +1076,7 @@ export class RobotArmRuntime extends RobotKernel {
       await this.ready(ctx.tool);
       check();
       const transfer = saved?.transfer;
+      const retryStroke = canvas.retryStroke?.bind(canvas);
       const observation =
         saved && atTravelHeight(calibration.observationPose, ctx);
       await drawCalibrationLogo(
@@ -1105,11 +1106,27 @@ export class RobotArmRuntime extends RobotKernel {
                 : undefined,
             }
           : undefined,
+        retryStroke
+          ? (stroke, hover, error) =>
+              this.retryLogoStroke(
+                calibration,
+                ctx,
+                hover,
+                requestId,
+                stroke,
+                error,
+                check,
+                () => retryStroke(stroke, signal),
+              )
+          : undefined,
       );
       await this.profileStore.clearOperation(requestId, check);
       canvas.finish();
     } catch (error) {
       let cause = error;
+      const retryFailed =
+        isRobotArmError(error) && error.details?.logoRetryFailed === true;
+      if (retryFailed) this.requireOperatorRecovery();
       if (this.motionSubmitted || signal.aborted) {
         this.requireRecovery('interruption');
         if (!signal.aborted) this.stopGeneration++;
@@ -1130,6 +1147,18 @@ export class RobotArmRuntime extends RobotKernel {
         this.screenSequence?.dispose();
         this.screenSequence = undefined;
       }
+      if (retryFailed)
+        await this.profileStore
+          .markOperation(requestId, this.operation!.kind, true)
+          .catch((storeError) => {
+            this.audit(
+              'control',
+              requestId,
+              'failed',
+              { control: 'persist-logo-retry-recovery' },
+              storeError,
+            );
+          });
       const details = isRobotArmError(cause) ? cause.details : undefined;
       const failure = new RobotArmError(
         isRobotArmError(cause) ? cause.code : 'SCREEN_ACTION_FAILED',
@@ -1144,6 +1173,125 @@ export class RobotArmRuntime extends RobotKernel {
       canvas.finish(failure.message);
       return failure;
     }
+  }
+  private async retryLogoStroke(
+    calibration: CalibrationProfile,
+    ctx: Context,
+    hover: CartesianPose,
+    requestId: string,
+    stroke: number,
+    error: RobotArmError,
+    check: () => void,
+    resetCanvas: () => Promise<void>,
+  ): Promise<void> {
+    check();
+    if (this.recoveryRequired || this.stopInProgress || this.interrupt)
+      throw new RobotArmError(
+        'RECOVERY_REQUIRED',
+        'Another stop or recovery is already in progress',
+        409,
+      );
+    this.requireRecovery('interruption');
+    const revision = this.stopRevision;
+    const recoveryGuard = this.recoveryGuard();
+    const guard = () => {
+      this.assertStopRevision(revision);
+      recoveryGuard();
+      check();
+    };
+    const policy = this.adapter.adapter.readinessPolicy;
+    const maxStateAgeMs = Math.min(200, policy.maxStateAgeMs);
+    const readStoppedPose = async () => {
+      guard();
+      const started = performance.now();
+      const status = await this.adapter.status(true);
+      guard();
+      const { ready, reasons } = evaluateReadiness(status, {
+        ...policy,
+        maxStateAgeMs,
+      });
+      if (!ready || this.softwarePaused)
+        throw new RobotArmError(
+          'UNSAFE_RECOVERY',
+          'A fresh enabled, stationary, fault-free state is required for retry',
+          409,
+          { reasons },
+        );
+      const sample = await this.adapter.readPose();
+      guard();
+      assertFresh(status.quality, maxStateAgeMs);
+      assertFresh(sample, maxStateAgeMs);
+      if (performance.now() - started > maxStateAgeMs)
+        throw new RobotArmError(
+          'STATE_STALE',
+          'Stopped state and position could not be read within the retry window',
+          409,
+        );
+      return sample.pose;
+    };
+    const audit = { control: 'prepare-logo-stroke-retry', requestId, stroke };
+    this.audit('control', requestId, 'dispatched', audit, error);
+    await this.audited(
+      'control',
+      audit,
+      async () => {
+        // Stop the old motion queue while retaining the drawing's lease.
+        await this.controlledStop();
+        const actual = await readStoppedPose();
+        if (quaternionDistance(actual.orientation, hover.orientation) > 0.01)
+          throw new RobotArmError(
+            'UNSAFE_RECOVERY',
+            'Stopped tool orientation differs from the planned stroke',
+            409,
+          );
+        const lift = this.safeLift(actual, calibration, ctx, true);
+        if (distance(actual.positionMm, lift.positionMm) > 0.001) {
+          const options = stageOptions(
+            ctx.screen,
+            'recovery',
+            this.adapter.resolver.descriptor('motion.linear')!.constraints!,
+            this.adapter.capabilities.jointCount,
+          );
+          await this.preflight(
+            [{ name: 'Logo retry lift', pose: lift, options }],
+            ctx,
+          );
+          const verified = await readStoppedPose();
+          if (
+            distance(actual.positionMm, verified.positionMm) > 0.1 ||
+            quaternionDistance(actual.orientation, verified.orientation) > 0.005
+          )
+            throw new RobotArmError(
+              'UNSAFE_RECOVERY',
+              'Stopped pose changed while checking the retry lift',
+              409,
+            );
+          await this.move(
+            lift,
+            ctx,
+            options.speed,
+            options.acceleration,
+            undefined,
+            guard,
+          );
+        }
+        guard();
+        await resetCanvas();
+        const resumed = await readStoppedPose();
+        if (
+          distance(lift.positionMm, resumed.positionMm) > 0.5 ||
+          quaternionDistance(lift.orientation, resumed.orientation) > 0.01
+        )
+          throw new RobotArmError(
+            'UNSAFE_RECOVERY',
+            'The tool is no longer at the verified lift pose',
+            409,
+          );
+        guard();
+        this.recoveryRequired = false;
+      },
+      requestId,
+    );
   }
   async drawSavedLogo(
     request: DeviceMotionRequest,
@@ -1357,6 +1505,8 @@ export class RobotArmRuntime extends RobotKernel {
     const saved = this.profileStore.list();
     this.softwarePaused = saved.softwarePaused === true;
     this.operatorStop ??= saved.operatorStop;
+    if (saved.pendingOperation?.requiresOperatorRecovery)
+      this.requireOperatorRecovery();
     if (
       this.softwarePaused ||
       saved.pendingOperation ||
@@ -1826,16 +1976,17 @@ export class RobotArmRuntime extends RobotKernel {
     speed = ctx.screen.actionSpeed,
     acceleration = ctx.screen.actionAcceleration,
     contact?: ContactMoveOptions,
+    check = () => this.check(),
   ): Promise<MotionResult> {
     await this.confirmAppliedPayload(ctx.tool);
     await this.ready();
-    this.check();
+    check();
     this.target(p, ctx);
     await this.profileStore.markOperation(
       this.operation!.requestId,
       this.operation!.kind,
     );
-    this.check();
+    check();
     const result = await this.motionExecutor.move(
       p,
       undefined,
@@ -1848,7 +1999,7 @@ export class RobotArmRuntime extends RobotKernel {
       },
       ctx.screen.motionTimeoutMs,
       {
-        check: () => this.check(),
+        check,
         signal: this.abort?.signal,
         accepting: (promise) => {
           this.accepting = promise;

@@ -12,8 +12,9 @@ export class OperationCoordinator {
   protected operatorStop?: 'manual-stop' | 'emergency-stop';
   protected recoveryRevision = 0;
   private requiredRecovery?: RecoveryReason;
+  private operatorRecoveryRequired = false;
   get requiresOperatorRecovery() {
-    return this.operatorStop !== undefined;
+    return this.operatorStop !== undefined || this.operatorRecoveryRequired;
   }
   get recoveryReason() {
     return this.operatorStop ?? this.requiredRecovery;
@@ -25,7 +26,12 @@ export class OperationCoordinator {
     if (!value) {
       this.operatorStop = undefined;
       this.requiredRecovery = undefined;
+      this.operatorRecoveryRequired = false;
     } else this.requireRecovery('interruption');
+  }
+  protected requireOperatorRecovery() {
+    this.operatorRecoveryRequired = true;
+    this.requireRecovery('interruption');
   }
   protected requireRecovery(reason: RecoveryReason) {
     this.recoveryRevision++;
@@ -72,7 +78,7 @@ export class OperationCoordinator {
       throw new RobotArmError(
         'RECOVERY_REQUIRED',
         this.requiresOperatorRecovery
-          ? 'Explicit recovery check is required after an operator stop'
+          ? 'Explicit recovery check is required before motion'
           : 'Robot recovery is pending',
         409,
       );

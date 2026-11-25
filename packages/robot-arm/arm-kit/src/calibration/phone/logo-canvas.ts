@@ -11,17 +11,16 @@ export function mountLogoCanvas(
   let run: CalibrationLogoStatus | undefined;
   let painted: string | undefined;
   let pointer: number | undefined;
-  let strokeStart: [number, number] | undefined;
-  let strokes = 0;
-  let strokeInvalid = false;
+  let points: [number, number][] = [];
+  const strokes: { points: [number, number][]; valid: boolean }[] = [];
   let strokeExtent = 0;
 
   const showResult = () => {
     const signed =
       run?.state === 'completed' &&
       pointer === undefined &&
-      strokes === run.expectedStrokes &&
-      !strokeInvalid;
+      strokes.length === run.expectedStrokes &&
+      strokes.every((stroke) => stroke.valid);
     signature.setAttribute('aria-hidden', String(!signed));
     const warning =
       run?.state === 'failed'
@@ -36,17 +35,59 @@ export function mountLogoCanvas(
     const bounds = canvas.getBoundingClientRect();
     return [event.clientX - bounds.left, event.clientY - bounds.top];
   };
+  const retryAck = (status: CalibrationLogoStatus) =>
+    `${status.id}:${status.retryFromStroke}`;
+  const applyRetry = () => {
+    if (
+      !ink ||
+      !run ||
+      run.state !== 'drawing' ||
+      run.retryFromStroke === undefined ||
+      !painted ||
+      painted === retryAck(run) ||
+      pointer !== undefined
+    )
+      return;
+    const confirmed = run.retryFromStroke - 1;
+    if (
+      !Number.isInteger(confirmed) ||
+      confirmed < 0 ||
+      confirmed >= run.expectedStrokes ||
+      confirmed > strokes.length ||
+      strokes.slice(0, confirmed).some((stroke) => !stroke.valid)
+    )
+      return;
+    strokes.length = confirmed;
+    ink.save();
+    ink.setTransform(1, 0, 0, 1, 0, 0);
+    ink.clearRect(0, 0, canvas.width, canvas.height);
+    ink.restore();
+    for (const stroke of strokes) {
+      ink.beginPath();
+      ink.moveTo(...stroke.points[0]);
+      for (const position of stroke.points.slice(1)) ink.lineTo(...position);
+      ink.stroke();
+    }
+    painted = retryAck(run);
+    onPaint();
+  };
   canvas.addEventListener('pointerdown', (event) => {
     event.stopPropagation();
-    if (!ink || !painted || run?.state !== 'drawing' || pointer !== undefined)
+    if (
+      !ink ||
+      !painted ||
+      run?.state !== 'drawing' ||
+      pointer !== undefined ||
+      (run.retryFromStroke !== undefined && painted !== retryAck(run))
+    )
       return;
     event.preventDefault();
     pointer = event.pointerId;
     canvas.setPointerCapture(pointer);
-    strokeStart = point(event);
+    points = [point(event)];
     strokeExtent = 0;
     ink.beginPath();
-    ink.moveTo(...strokeStart);
+    ink.moveTo(...points[0]);
   });
   canvas.addEventListener('pointermove', (event) => {
     event.stopPropagation();
@@ -55,14 +96,12 @@ export function mountLogoCanvas(
     for (const sample of samples?.length ? samples : [event]) {
       const position = point(sample);
       ink.lineTo(...position);
-      if (strokeStart)
-        strokeExtent = Math.max(
-          strokeExtent,
-          Math.hypot(
-            position[0] - strokeStart[0],
-            position[1] - strokeStart[1],
-          ),
-        );
+      points.push(position);
+      const start = points[0];
+      strokeExtent = Math.max(
+        strokeExtent,
+        Math.hypot(position[0] - start[0], position[1] - start[1]),
+      );
     }
     ink.stroke();
     ink.beginPath();
@@ -72,19 +111,20 @@ export function mountLogoCanvas(
     event.stopPropagation();
     if (!ink || pointer !== event.pointerId) return;
     pointer = undefined;
-    if (event.type !== 'pointerup') strokeInvalid = true;
-    else {
+    let valid = false;
+    if (event.type === 'pointerup') {
       const end = point(event);
       ink.lineTo(...end);
       ink.stroke();
-      if (
-        !strokeStart ||
-        strokeExtent < 4 ||
-        Math.hypot(end[0] - strokeStart[0], end[1] - strokeStart[1]) > 12
-      )
-        strokeInvalid = true;
-      strokes++;
+      const start = points[0];
+      points.push(end);
+      valid =
+        strokeExtent >= 4 &&
+        Math.hypot(end[0] - start[0], end[1] - start[1]) <= 12;
     }
+    strokes.push({ points, valid });
+    points = [];
+    applyRetry();
     showResult();
   };
   canvas.addEventListener('pointerup', finish);
@@ -102,10 +142,9 @@ export function mountLogoCanvas(
       canvas.hidden = !run;
       if (changed) {
         painted = undefined;
-        strokes = 0;
-        strokeInvalid = false;
+        strokes.length = 0;
         pointer = undefined;
-        strokeStart = undefined;
+        points = [];
         if (ink && next) {
           const bounds = canvas.getBoundingClientRect();
           if (bounds.width > 0 && bounds.height > 0) {
@@ -126,6 +165,7 @@ export function mountLogoCanvas(
           }
         }
       }
+      applyRetry();
       showResult();
     },
   };

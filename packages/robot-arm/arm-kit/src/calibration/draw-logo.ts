@@ -9,6 +9,7 @@ import {
   type CartesianPose,
   type MotionOptions,
   RobotArmError,
+  isRobotArmError,
 } from '../contracts.js';
 import { distance } from '../domain.js';
 import type {
@@ -395,6 +396,7 @@ export interface LogoCanvasSession {
   minimumTravelTipZMm?: number;
   prepare(signal: AbortSignal): Promise<void>;
   check(): void;
+  retryStroke?(stroke: number, signal: AbortSignal): Promise<void>;
   finish(error?: string): void;
 }
 
@@ -409,6 +411,11 @@ export async function drawCalibrationLogo(
     returnTo: CartesianPose;
     beforeMotion?: () => Promise<void>;
   },
+  recoverStroke?: (
+    stroke: number,
+    hover: CartesianPose,
+    error: RobotArmError,
+  ) => Promise<void>,
 ) {
   const setupStarted = performance.now();
   const { screen, tool } = ctx;
@@ -559,8 +566,9 @@ export async function drawCalibrationLogo(
       positioningMs: Math.round(performance.now() - preflightFinished),
     })}`,
   );
-  for (const [index, stroke] of strokes.entries()) {
-    const { hover, number, targets, blendPercentages } = stroke;
+  const drawStroke = async (index: number, retry = false) => {
+    const { hover, number, targets, blendPercentages, outlineVerticesRemoved } =
+      strokes[index];
     const started = performance.now();
     await move(hover, approach);
     checkCanvas();
@@ -602,9 +610,10 @@ export async function drawCalibrationLogo(
     debug(
       `Logo stroke timing ${JSON.stringify({
         stroke: number,
+        retry: retry || undefined,
         mode: queueAckMs !== undefined ? 'queued' : 'per-target',
         contactTargets: liftIndex,
-        outlineVerticesRemoved: stroke.outlineVerticesRemoved,
+        outlineVerticesRemoved,
         penUpTravelMm:
           index > 0
             ? Math.round(
@@ -632,6 +641,39 @@ export async function drawCalibrationLogo(
         queueAckMs,
       })}`,
     );
+  };
+  let retried = false;
+  for (const [index, { number, hover }] of strokes.entries()) {
+    try {
+      await drawStroke(index);
+    } catch (error) {
+      if (
+        !recoverStroke ||
+        !isRobotArmError(error) ||
+        error.code !== 'SEQUENCE_FAULT_STATE_STALE'
+      )
+        throw error;
+      try {
+        if (retried) throw error;
+        retried = true;
+        await recoverStroke(number, hover, error);
+        await drawStroke(index, true);
+      } catch (cause) {
+        throw new RobotArmError(
+          'RECOVERY_REQUIRED',
+          `Logo stroke ${number} could not resume safely. Confirm recovery before moving.`,
+          409,
+          {
+            logoRetryFailed: true,
+            stroke: number,
+            original: error.details,
+            cause: cause instanceof Error ? cause.message : String(cause),
+            causeCode: isRobotArmError(cause) ? cause.code : undefined,
+            causeDetails: isRobotArmError(cause) ? cause.details : undefined,
+          },
+        );
+      }
+    }
   }
   await move(returnPose, approach);
 }

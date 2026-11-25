@@ -240,8 +240,8 @@ export interface CalibrationPageUpdate {
   markersPainted?: boolean;
   markerRequest?: string;
   imagingPatternSupported?: true;
-  /** Version 2 supports the dual-logo canvas and its final signature. */
-  logoCanvasSupported?: 2;
+  /** Version 3 also supports discarding an interrupted stroke. */
+  logoCanvasSupported?: 2 | 3;
   logoCanvasAck?: string;
   visibilityProbeAck?: string;
   imagingPatternAck?: string;
@@ -295,6 +295,7 @@ export interface CalibrationLogoStatus {
   id: string;
   expectedStrokes: number;
   state: 'drawing' | 'completed' | 'failed';
+  retryFromStroke?: number;
   error?: string;
 }
 export interface DebugLogoDrawingStatus {

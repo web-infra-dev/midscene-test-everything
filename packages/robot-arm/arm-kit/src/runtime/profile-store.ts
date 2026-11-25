@@ -539,12 +539,17 @@ export class ProfileStore {
       d.softwarePaused = paused;
     });
   }
-  markOperation(requestId: string, kind: string): Promise<void> {
+  markOperation(
+    requestId: string,
+    kind: string,
+    requiresOperatorRecovery = false,
+  ): Promise<void> {
     return this.transaction((d) => {
       d.pendingOperation = {
         requestId,
         kind,
         startedAt: new Date().toISOString(),
+        ...(requiresOperatorRecovery ? { requiresOperatorRecovery: true } : {}),
       };
     });
   }

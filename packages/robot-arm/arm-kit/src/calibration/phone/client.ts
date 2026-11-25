@@ -1102,7 +1102,7 @@ export function mountCalibrationPhonePage(
       fullscreen: fullscreenReady(),
       view: state?.view,
       imagingPatternSupported: true,
-      logoCanvasSupported: logo.supported ? 2 : undefined,
+      logoCanvasSupported: logo.supported ? 3 : undefined,
       logoCanvasAck:
         !switching &&
         !document.hidden &&
