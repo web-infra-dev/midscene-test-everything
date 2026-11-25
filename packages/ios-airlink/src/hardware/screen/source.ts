@@ -7,6 +7,8 @@ export interface ScreenSession {
   subscribeSetup?(listener: (info: AirPlaySetupInfo) => void): () => void;
   getFrame(options?: {
     fresh?: boolean;
+    /** A buffered frame newer than this sequence already satisfies fresh. */
+    afterSequence?: number;
     /** Permit a cached AirPlay frame only while client heartbeat confirms idle. */
     allowUnchanged?: boolean;
     timeoutMs?: number;

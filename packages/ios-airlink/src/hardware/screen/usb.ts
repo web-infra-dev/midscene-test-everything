@@ -1,6 +1,9 @@
 import { CameraStream } from '@midscene/robotics-vision';
 import sharp from 'sharp';
-import { openUSBCapture } from '../native/usb-capture-app.js';
+import {
+  openUSBCapture,
+  prepareUSBCaptureApp,
+} from '../native/usb-capture-app.js';
 import { USBDiscoveryClient } from '../native/usb-discovery.js';
 import type { ScreenSession } from './source.js';
 import { type USBIdentity, enrichUSBDevices } from './usb-identity.js';
@@ -55,6 +58,8 @@ export async function listUSBDevices(): Promise<USBDevice[]> {
 export class USBScreenSession implements ScreenSession {
   private constructor(private stream: CameraStream) {}
   static async open(deviceId: string) {
+    // Compile or verify the capture app before starting the frame startup timer.
+    await prepareUSBCaptureApp();
     const stream = new CameraStream(
       deviceId,
       {
@@ -65,7 +70,7 @@ export class USBScreenSession implements ScreenSession {
         deviceId,
         width: 0,
         height: 0,
-        fps: 12,
+        fps: 24,
         horizontalFlip: false,
         verticalFlip: false,
       },
@@ -80,8 +85,41 @@ export class USBScreenSession implements ScreenSession {
       throw error;
     }
   }
-  async getFrame(options = {}) {
-    const frame = await this.stream.getFrame(options);
+  async getFrame(
+    options: {
+      fresh?: boolean;
+      afterSequence?: number;
+      timeoutMs?: number;
+      allowUnchanged?: boolean;
+    } = {},
+  ) {
+    let frame;
+    const latest = this.stream.currentFrame;
+    if (
+      latest &&
+      options.fresh &&
+      options.afterSequence !== undefined &&
+      latest.id > options.afterSequence
+    ) {
+      frame = latest;
+    } else if (options.fresh && options.allowUnchanged && latest) {
+      try {
+        frame = await this.stream.getFrame({
+          fresh: true,
+          timeoutMs: Math.min(options.timeoutMs ?? 2000, 300),
+        });
+      } catch (error) {
+        // CoreMediaIO stops pushing buffers when an iOS screen has no pixel changes.
+        if (
+          !(error instanceof Error) ||
+          !/No camera frame arrived/.test(error.message)
+        )
+          throw error;
+        frame = await this.stream.getFrame();
+      }
+    } else {
+      frame = await this.stream.getFrame(options);
+    }
     const metadata = await sharp(frame.jpeg).metadata();
     if (!metadata.width || !metadata.height)
       throw new Error('Invalid USB frame dimensions');

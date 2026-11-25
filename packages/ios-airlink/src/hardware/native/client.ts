@@ -98,7 +98,10 @@ export class NativeHIDClient {
     return this.starting;
   }
 
-  async request<T>(command: Record<string, unknown>): Promise<T> {
+  async request<T>(
+    command: Record<string, unknown>,
+    timeoutMs = 10_000,
+  ): Promise<T> {
     await this.start();
     if (this.closed) throw new Error('Bluetooth client closed');
     const child = this.child;
@@ -109,7 +112,7 @@ export class NativeHIDClient {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error('Bluetooth command timed out; delivery is unknown'));
-      }, 10_000);
+      }, timeoutMs);
       this.pending.set(id, {
         resolve: (value) => resolve(value as T),
         reject,
@@ -128,6 +131,17 @@ export class NativeHIDClient {
   }
   send(peer: string, report: number, bytes: number[]) {
     return this.request<boolean>({ method: 'send', peer, report, bytes });
+  }
+  sendBatch(
+    peer: string,
+    report: number,
+    frames: number[][],
+    intervalMs: number,
+  ) {
+    return this.request<boolean>(
+      { method: 'batch', peer, report, frames, intervalMs },
+      Math.max(10_000, frames.length * intervalMs + 10_000),
+    );
   }
   private fail(error: Error) {
     for (const listener of this.listeners)

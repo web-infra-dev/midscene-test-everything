@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { rstest, test } from '@rstest/core';
 import sharp from 'sharp';
 import {
+  MotionValidationError,
   measureMotionModel,
   predictMovement,
   validateMotionModel,
@@ -20,6 +21,11 @@ test('measurement waits for delayed video to settle instead of fitting intermedi
     ) =>
       realTimer(callback, Math.min(delay, 1), ...args)) as typeof setTimeout);
   const model = curveModel();
+  // A slow vertical report can have its own gain independent of X and diagonals.
+  const vertical = model.reports.find(
+    ({ delta }) => !delta.x && delta.y === 4,
+  )!;
+  vertical.displacement.y *= 1.4;
   let actual: Point = { x: 400, y: 600 };
   let displayed = { ...actual };
   let sequence = 0;
@@ -173,7 +179,7 @@ test('validation waits for a delayed anchor and endpoint and rejects an isolated
     phone.model,
     new AbortController().signal,
   );
-  assert.equal(validation.samples.length, 3);
+  assert.equal(validation.samples.length, 4);
   assert.ok(validation.maxRelativeError < 0.04);
   assert.equal(validation.samples[0].repetitions!.length, 3);
   assert.ok(
@@ -193,6 +199,28 @@ test('repeated but consistently wrong movement still fails with measured error d
       new AbortController().signal,
     ),
     /differs from the fitted curve by .*px/,
+  );
+}, 60_000);
+
+test('independent validation catches drift confined to the low vertical checkpoint', async () => {
+  accelerateTimers();
+  const phone = delayedPhone();
+  const fitted = structuredClone(phone.model);
+  const vertical = fitted.reports.find(
+    ({ delta }) => delta.x === 0 && delta.y === 4,
+  )!;
+  vertical.displacement.y *= 0.7;
+  await assert.rejects(
+    validateMotionModel(
+      phone.screen,
+      phone.transport,
+      fitted,
+      new AbortController().signal,
+    ),
+    (error: unknown) =>
+      error instanceof MotionValidationError &&
+      error.sample.delta.x === 0 &&
+      error.sample.delta.y === 4,
   );
 }, 60_000);
 
@@ -228,6 +256,62 @@ test('a tracked pointer can settle outside the expected anchor region', async ()
       },
     },
   );
-  assert.equal(validation.samples.length, 3);
+  assert.equal(validation.samples.length, 4);
   assert.ok(validation.maxErrorPx < 3);
+}, 60_000);
+
+test('variable-frame-rate streams that stop advancing sequence once stationary still settle', async () => {
+  const realNow = Date.now;
+  let fakeNow = 1_000_000;
+  rstest.spyOn(Date, 'now').mockImplementation(() => {
+    fakeNow += 150;
+    return fakeNow;
+  });
+  accelerateTimers();
+  try {
+    const model = curveModel();
+    let point = { x: 200, y: 300 };
+    let lastRendered = { x: -1, y: -1 };
+    let sequence = 0;
+    const validation = await validateMotionModel(
+      {
+        getFrame: async () => {
+          // Only advance sequence when the pointer actually changed position (VFR behavior).
+          if (point.x !== lastRendered.x || point.y !== lastRendered.y) {
+            lastRendered = { ...point };
+            sequence++;
+          }
+          return {
+            jpeg: await sharp(
+              Buffer.from(
+                `<svg width="400" height="800"><rect width="400" height="800" fill="white"/><circle cx="${lastRendered.x}" cy="${lastRendered.y}" r="10" fill="#444"/></svg>`,
+              ),
+            )
+              .png()
+              .toBuffer(),
+            width: 400,
+            height: 800,
+            sequence,
+            receivedAt: realNow(),
+          };
+        },
+        close: async () => {},
+      },
+      {
+        moveTo: async (target) => {
+          point = { ...target };
+        },
+        relative: async (delta) => {
+          const d = physicalMovement(model, delta);
+          point = { x: point.x + d.x, y: point.y + d.y };
+        },
+      },
+      model,
+      new AbortController().signal,
+    );
+    assert.equal(validation.samples.length, 4);
+    assert.ok(validation.maxErrorPx < 3);
+  } finally {
+    Date.now = realNow;
+  }
 }, 60_000);

@@ -69,3 +69,25 @@ test('large shifts and scene changes still fail pointer detection', async () => 
     );
   }
 });
+
+test('portrait status bar and home indicator changes do not produce false pointer candidates', async () => {
+  const pw = 360;
+  const ph = 780;
+  const render = async (pointer, statusBarTick = false) => {
+    const svg = `<svg width="${pw}" height="${ph}">
+      <rect width="100%" height="100%" fill="#eee"/>
+      ${statusBarTick ? '<rect x="30" y="10" width="60" height="18" fill="#111"/><rect x="120" y="762" width="120" height="6" fill="#222"/>' : ''}
+      <circle cx="${pointer.x}" cy="${pointer.y}" r="10" fill="#333"/>
+    </svg>`;
+    return {
+      width: pw,
+      height: ph,
+      jpeg: await sharp(Buffer.from(svg)).jpeg({ quality: 95 }).toBuffer(),
+    };
+  };
+  const candidates = await detectPointerChanges(
+    await render({ x: 90, y: 260 }, false),
+    await render({ x: 210, y: 260 }, true),
+  );
+  assert.equal(candidates.length, 2);
+});

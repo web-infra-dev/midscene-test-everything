@@ -5,7 +5,10 @@ import {
   correctedScreenToPointer,
   pointerToScreen,
 } from '../dist/hardware/pointer/mapping.js';
-import { measureAbsoluteCorrection } from '../dist/hardware/pointer/setup.js';
+import {
+  measureAbsoluteCorrection,
+  measurePointerTurn,
+} from '../dist/hardware/pointer/setup.js';
 
 test('camera probes correct absolute positioning in a rotated, offset image', async () => {
   const geometry = { width: 400, height: 800, turn: 1 };
@@ -17,11 +20,22 @@ test('camera probes correct absolute positioning in a rotated, offset image', as
   let current = { x: 0.5, y: 0.5 };
   let pending = current;
   let lag = 0;
+  let firstProbeFrame = 0;
   let sequence = 0;
   const { correction } = await measureAbsoluteCorrection(
     {
       getFrame: async () => {
-        if (lag-- <= 0) current = pending;
+        // The first probe moves twice before reaching its target. A duplicate
+        // frame after the second move must not inherit the first move's age.
+        if (firstProbeFrame === 1 || firstProbeFrame === 2) {
+          if (firstProbeFrame === 2)
+            await new Promise((resolve) => setTimeout(resolve, 240));
+          current = { ...pending, x: pending.x + 0.03 * firstProbeFrame };
+          firstProbeFrame++;
+        } else if (firstProbeFrame === 3) {
+          firstProbeFrame++;
+          sequence--;
+        } else if (lag-- <= 0) current = pending;
         const x = current.x * (width - 1);
         const y = current.y * (height - 1);
         const jpeg = await sharp(
@@ -38,7 +52,11 @@ test('camera probes correct absolute positioning in a rotated, offset image', as
     {
       absolute: async (report) => {
         pending = cameraPosition(report);
-        lag = 2;
+        if (firstProbeFrame === 0) {
+          firstProbeFrame = 1;
+        } else {
+          lag = 2;
+        }
       },
     },
     geometry,
@@ -54,4 +72,40 @@ test('camera probes correct absolute positioning in a rotated, offset image', as
       (actual.y - target.y) * (height - 1),
     ) < 2,
   );
+});
+
+test('orientation detection tolerates a missed low-contrast probe and stops on two unanimous votes', async () => {
+  const width = 360;
+  const height = 780;
+  let current = { x: 0.5, y: 0.5 };
+  let sequence = 0;
+  let moves = 0;
+  const result = await measurePointerTurn(
+    {
+      getFrame: async () => {
+        // Simulate probe #1 landing on an invisible dark region (no cursor rendered).
+        const invisible = moves === 1;
+        const cx = current.x * (width - 1);
+        const cy = current.y * (height - 1);
+        const jpeg = await sharp(
+          Buffer.from(
+            `<svg width="${width}" height="${height}"><rect width="100%" height="100%" fill="white"/>${invisible ? '' : `<circle cx="${cx}" cy="${cy}" r="11" fill="#333"/>`}</svg>`,
+          ),
+        )
+          .jpeg({ quality: 95 })
+          .toBuffer();
+        return { jpeg, width, height, sequence: ++sequence, receivedAt: 0 };
+      },
+      close: async () => {},
+    },
+    {
+      absolute: async (report) => {
+        moves++;
+        current = pointerToScreen(report, 0);
+      },
+    },
+    new AbortController().signal,
+  );
+  assert.equal(result.turn, 0);
+  assert.equal(moves, 3, 'stops once two probes agree after one miss');
 });

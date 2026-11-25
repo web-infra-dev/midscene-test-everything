@@ -346,6 +346,89 @@ static void PeerMessage(id peer, SEL selector, int message, id args) {
 - (void)request:(NSDictionary *)request {
     id requestID = request[@"id"];
     if ([request[@"method"] isEqual:@"status"]) { Reply(requestID, [self status], nil); return; }
+    if ([request[@"method"] isEqual:@"batch"]) {
+        NSString *peerID = request[@"peer"];
+        if (![peerID isKindOfClass:NSString.class] ||
+            !self.channels[[self key:peerID psm:19]] ||
+            !self.channels[[self key:peerID psm:17]]) {
+            Reply(requestID, nil, @"Selected phone's classic Bluetooth HID is not connected");
+            return;
+        }
+        NSNumber *report = request[@"report"];
+        NSArray *frames = request[@"frames"];
+        NSNumber *interval = request[@"intervalMs"];
+        unsigned reportID = [report isKindOfClass:NSNumber.class] ? report.unsignedIntValue : 0;
+        size_t expectedLength = HIDReportLength(reportID);
+        NSInteger intervalMs = [interval isKindOfClass:NSNumber.class] ? interval.integerValue : 16;
+        if (!expectedLength || ![frames isKindOfClass:NSArray.class] ||
+            frames.count == 0 || frames.count > 256 || intervalMs < 1 || intervalMs > 1000) {
+            Reply(requestID, nil, @"Invalid HID batch parameters");
+            return;
+        }
+        NSMutableArray<NSData *> *packets = [NSMutableArray arrayWithCapacity:frames.count];
+        NSMutableArray<NSData *> *payloads = [NSMutableArray arrayWithCapacity:frames.count];
+        for (id frame in frames) {
+            if (![frame isKindOfClass:NSArray.class] || [(NSArray *)frame count] != expectedLength) {
+                Reply(requestID, nil, @"Invalid HID report length or ID");
+                return;
+            }
+            uint8_t payload[8], packet[10];
+            NSArray *bytes = (NSArray *)frame;
+            for (NSUInteger i = 0; i < expectedLength; i++) {
+                id value = bytes[i];
+                if (![value isKindOfClass:NSNumber.class] ||
+                    [value doubleValue] != [value integerValue] ||
+                    [value integerValue] < 0 || [value integerValue] > 255) {
+                    Reply(requestID, nil, @"HID report bytes must be integers from 0 to 255");
+                    return;
+                }
+                payload[i] = [value unsignedCharValue];
+            }
+            size_t packetLen = HIDInputPacket(reportID, payload, expectedLength, packet);
+            [packets addObject:[NSData dataWithBytes:packet length:packetLen]];
+            [payloads addObject:[NSData dataWithBytes:payload length:expectedLength]];
+        }
+        __block NSUInteger index = 0;
+        __block NSUInteger completed = 0;
+        __block BOOL finished = NO;
+        NSUInteger total = packets.count;
+        dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+        dispatch_source_set_timer(timer, DISPATCH_TIME_NOW, (uint64_t)intervalMs * NSEC_PER_MSEC, 1 * NSEC_PER_MSEC);
+        dispatch_source_set_event_handler(timer, ^{
+            if (finished) return;
+            NSUInteger current = index++;
+            if (current >= total) {
+                dispatch_source_cancel(timer);
+                return;
+            }
+            HIDChannel *ch = self.channels[[self key:peerID psm:19]];
+            if (self.stopping || !ch || !self.channels[[self key:peerID psm:17]]) {
+                finished = YES;
+                dispatch_source_cancel(timer);
+                Reply(requestID, nil, @"Selected phone's classic Bluetooth HID is not connected");
+                return;
+            }
+            if (current + 1 == total) dispatch_source_cancel(timer);
+            NSData *last = payloads[current];
+            [self enqueue:packets[current] channel:ch completion:^(NSString *error) {
+                if (finished) return;
+                if (error) {
+                    finished = YES;
+                    dispatch_source_cancel(timer);
+                    Reply(requestID, nil, error);
+                    return;
+                }
+                if (!self.reports[peerID]) self.reports[peerID] = [NSMutableDictionary new];
+                self.reports[peerID][report] = last;
+                if (++completed == total) {
+                    finished = YES;
+                    Reply(requestID, @YES, nil);
+                }
+            }];
+        });
+        dispatch_resume(timer);
+        return;
+    }
     if (![request[@"method"] isEqual:@"send"]) { Reply(requestID, nil, @"Unknown Bluetooth command"); return; }
     NSString *peerID = request[@"peer"];
     HIDChannel *channel = [peerID isKindOfClass:NSString.class] ? self.channels[[self key:peerID psm:19]] : nil;

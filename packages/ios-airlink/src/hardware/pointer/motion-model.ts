@@ -1,5 +1,5 @@
 import type { ScreenSession } from '../screen/source.js';
-import type { Point } from '../types.js';
+import type { Point, ScreenFrame } from '../types.js';
 import {
   type PointerCandidate,
   detectPointerChanges,
@@ -17,6 +17,11 @@ import {
 export interface RelativeTransport {
   moveTo(point: Point): Promise<void>;
   relative(delta: Point, buttons?: number): Promise<void>;
+  relativeBatch?(
+    deltas: Point[],
+    buttons?: number,
+    intervalMs?: number,
+  ): Promise<void>;
 }
 /** Actual screen displacement for one report, at the configured report cadence. */
 export interface PointerMotionModel {
@@ -43,6 +48,7 @@ export function predictMovement(
 
 export interface PointerTracking {
   position?: PointerCandidate;
+  origin?: Point;
 }
 
 function selectAnchor(
@@ -56,11 +62,13 @@ function selectAnchor(
       pointerNear(candidate, previous, tolerance),
     );
     if (old.length === 1) {
+      // Bound proximity and size ratio so spinners or distant AssistiveTouch fades are ignored.
       const others = changes.filter(
         (candidate) =>
           candidate !== old[0] &&
-          candidate.area >= old[0].area * 0.4 &&
-          candidate.area <= old[0].area * 2.5,
+          candidate.area >= old[0].area * 0.22 &&
+          candidate.area <= old[0].area * 4.5 &&
+          pointerNear(candidate, expected, tolerance * 3.5),
       );
       if (others.length === 1) return others[0];
     }
@@ -72,55 +80,102 @@ function selectAnchor(
   return nearby.length === 1 ? nearby[0] : undefined;
 }
 
-export async function warmUpPointer(
-  transport: Pick<RelativeTransport, 'relative'>,
+async function sendRelativeSteps(
+  transport: Pick<RelativeTransport, 'relative' | 'relativeBatch'>,
+  deltas: Point[],
   signal: AbortSignal,
 ) {
-  // iOS may damp the first relative reports after establishing the channel.
-  for (let i = 0; i < 12; i++) {
+  signal.throwIfAborted();
+  if (transport.relativeBatch) {
+    await transport.relativeBatch(deltas, 0, REPORT_INTERVAL_MS);
+    return;
+  }
+  let lastStart = 0;
+  for (let i = 0; i < deltas.length; i++) {
+    if (i)
+      await pause(
+        Math.max(0, lastStart + REPORT_INTERVAL_MS - performance.now()),
+      );
     signal.throwIfAborted();
-    await transport.relative({ x: 6, y: 0 });
-    await pause(REPORT_INTERVAL_MS);
+    lastStart = performance.now();
+    await transport.relative(deltas[i]);
   }
 }
 
-/** Hover only. Identify both ends rather than trusting the requested anchor. */
-async function probe(
+export async function warmUpPointer(
+  transport: Pick<RelativeTransport, 'relative' | 'relativeBatch'>,
+  signal: AbortSignal,
+) {
+  // iOS may damp the first relative reports after establishing the channel.
+  await sendRelativeSteps(
+    transport,
+    Array.from({ length: 12 }, () => ({ x: 6, y: 0 })),
+    signal,
+  );
+}
+
+interface SegmentStart {
+  reference: ScreenFrame;
+  current: ScreenFrame;
+  position: PointerCandidate;
+  background: PointerCandidate[];
+}
+
+async function locateStart(
   screen: ScreenSession,
   transport: RelativeTransport,
   delta: Point,
-  reports: number,
   cross: number,
   signal: AbortSignal,
   tracking: PointerTracking,
-): Promise<MotionSample> {
+): Promise<SegmentStart> {
   signal.throwIfAborted();
-  const frame = await screen.getFrame({ fresh: true, allowUnchanged: true });
-  const origin = {
-    x: frame.width * (delta.x ? 0.2 : cross),
-    y: frame.height * (delta.y ? 0.2 : cross),
-  };
+  const frame = await screen.getFrame();
   const previous = tracking.position;
+  // Leave the previous endpoint well outside the next measurement region.
+  // Even a small relative movement then shows a full cursor against the reference.
+  const horizontal = delta.x !== 0 && delta.y === 0;
+  const prior = tracking.origin ?? previous;
+  const lane = horizontal
+    ? (prior?.y ?? 0) / frame.height
+    : (prior?.x ?? 0) / frame.width;
+  const alternate = cross > 0.5 ? cross - 0.24 : cross + 0.24;
+  const crossFraction = Math.abs(lane - cross) < 0.1 ? alternate : cross;
+  const origin = {
+    x: frame.width * (horizontal ? 0.2 : crossFraction),
+    y: frame.height * (horizontal ? crossFraction : 0.2),
+  };
+  tracking.origin = origin;
   tracking.position = undefined;
   await transport.moveTo(origin);
-  const tolerance = Math.max(10, Math.min(frame.width, frame.height) * 0.025);
+  const tolerance = Math.max(10, Math.min(frame.width, frame.height) * 0.03);
   let before = frame;
+  let referenceChanges: PointerCandidate[] = [];
   let previousAnchor: PointerCandidate | undefined;
+  let anchorSeenAt = 0;
   let anchorFrames = 0;
   let lastSequence = frame.sequence;
   // The absolute report can arrive well before its video frame. Verify that the
   // anchor itself has appeared and settled before sending relative reports.
   for (let attempt = 0; attempt < 24; attempt++) {
-    await pause(100);
     signal.throwIfAborted();
     before = await screen.getFrame({
       fresh: true,
+      afterSequence: lastSequence,
       allowUnchanged: true,
       timeoutMs: 1500,
     });
     if (before.width !== frame.width || before.height !== frame.height)
       throw new Error('Screen geometry changed during pointer measurement');
-    if (before.sequence <= lastSequence) continue;
+    if (before.sequence <= lastSequence) {
+      // On VFR streams (USB/AirPlay), iOS stops emitting frames once the pointer stops.
+      if (previousAnchor && Date.now() - anchorSeenAt >= 240) {
+        anchorFrames = 2;
+        break;
+      }
+      await pause(45);
+      continue;
+    }
     lastSequence = before.sequence;
     let changes;
     try {
@@ -138,6 +193,15 @@ async function probe(
         1.5
         ? anchorFrames + 1
         : 0;
+    if (anchor) {
+      referenceChanges = changes.filter((candidate) => candidate !== anchor);
+      if (
+        !previousAnchor ||
+        Math.hypot(anchor.x - previousAnchor.x, anchor.y - previousAnchor.y) >
+          1.5
+      )
+        anchorSeenAt = Date.now();
+    }
     previousAnchor = anchor;
     if (anchorFrames >= 2) break;
   }
@@ -145,113 +209,203 @@ async function probe(
     throw new Error(
       'Pointer start position did not settle. Keep a static screen visible and check video latency.',
     );
-  const observedAnchor = previousAnchor;
-  let lastStart = 0;
+  return {
+    reference: frame,
+    current: before,
+    position: previousAnchor,
+    background: referenceChanges,
+  };
+}
+
+async function measureSegment(
+  screen: ScreenSession,
+  transport: RelativeTransport,
+  delta: Point,
+  reports: number,
+  start: SegmentStart,
+  signal: AbortSignal,
+) {
+  const {
+    reference: frame,
+    current: before,
+    position: observedAnchor,
+    background: referenceChanges,
+  } = start;
+  const signX = observedAnchor.x > frame.width * 0.5 ? -1 : 1;
+  const signY = observedAnchor.y > frame.height * 0.5 ? -1 : 1;
+  const report = { x: delta.x * signX, y: delta.y * signY };
+  const tolerance = Math.max(10, Math.min(frame.width, frame.height) * 0.03);
+  let lastSequence = before.sequence;
   const started = performance.now();
-  for (let i = 0; i < reports; i++) {
-    if (i)
-      await pause(
-        Math.max(0, lastStart + REPORT_INTERVAL_MS - performance.now()),
-      );
-    signal.throwIfAborted();
-    lastStart = performance.now();
-    await transport.relative(delta);
-  }
-  const elapsedMs = performance.now() - started;
+  await sendRelativeSteps(
+    transport,
+    Array.from({ length: reports }, () => report),
+    signal,
+  );
+  const sentAt = performance.now();
+  const elapsedMs = sentAt - started;
+  const minTravel = 5;
   let previousEnd: Point | undefined;
+  let endCandidate: PointerCandidate | undefined;
+  let endSeenAt = 0;
   let stableFrames = 0;
+  let exactSince = 0;
   for (let attempt = 0; attempt < 24; attempt++) {
-    await pause(100);
     signal.throwIfAborted();
     const after = await screen.getFrame({
       fresh: true,
+      afterSequence: lastSequence,
       allowUnchanged: true,
       timeoutMs: 3000,
     });
-    if (after.sequence <= lastSequence) continue;
+    if (after.width !== before.width || after.height !== before.height)
+      throw new Error('Screen geometry changed during pointer measurement');
+    if (after.sequence <= lastSequence) {
+      if (endCandidate && Date.now() - endSeenAt >= 260) {
+        return finish(endCandidate, after);
+      }
+      // An unchanged stream cannot reveal a missing endpoint by being polled
+      // repeatedly. Restart this segment elsewhere once video has had time to arrive.
+      if (!endCandidate && performance.now() - sentAt > 1200) break;
+      await pause(45);
+      continue;
+    }
     lastSequence = after.sequence;
     let changes;
     try {
-      changes = await detectPointerChanges(before, after);
-    } catch (error) {
+      changes = await detectPointerChanges(frame, after);
+    } catch {
       signal.throwIfAborted();
-      // An old frame is retryable; geometry changes must not be fitted.
-      if (before.width !== after.width || before.height !== after.height)
-        throw error;
       previousEnd = undefined;
+      endCandidate = undefined;
       stableFrames = 0;
       continue;
     }
 
-    const anchors = changes.filter(
-      (candidate) =>
-        Math.hypot(
-          candidate.x - observedAnchor.x,
-          candidate.y - observedAnchor.y,
-        ) < tolerance,
-    );
-    if (anchors.length !== 1) {
-      previousEnd = undefined;
-      stableFrames = 0;
-      continue;
-    }
-    const start = anchors[0];
-    const ends = changes.filter((p) => {
-      // Small changing text or spinner fragments are not the pointer endpoint.
-      if (p === start || p.area < start.area * 0.4) return false;
-      const dx = p.x - start.x;
-      const dy = p.y - start.y;
+    const isEndpoint = (p: PointerCandidate) => {
+      if (
+        p.area < Math.max(5, observedAnchor.area * 0.22) ||
+        p.area > observedAnchor.area * 4.5
+      )
+        return false;
+      const dx = (p.x - observedAnchor.x) * signX;
+      const dy = (p.y - observedAnchor.y) * signY;
       return (
         (delta.x
-          ? dx > 20 && dx < frame.width * 0.55
+          ? dx > minTravel && dx < frame.width * 0.6
           : Math.abs(dx) < tolerance) &&
         (delta.y
-          ? dy > 20 && dy < frame.height * 0.55
+          ? dy > minTravel && dy < frame.height * 0.6
           : Math.abs(dy) < tolerance) &&
-        p.x < frame.width * 0.9 &&
-        p.y < frame.height * 0.9
+        p.x > frame.width * 0.08 &&
+        p.y > frame.height * 0.08 &&
+        p.x < frame.width * 0.92 &&
+        p.y < frame.height * 0.92
       );
-    });
+    };
+    let ends = changes.filter(
+      (p) =>
+        isEndpoint(p) &&
+        !referenceChanges.some(
+          (old) => Math.hypot(p.x - old.x, p.y - old.y) <= 3,
+        ),
+    );
+    // When the endpoint coincides with the reference cursor, it disappears from
+    // that difference. For a longer move the settled anchor is a second reference.
+    if (!ends.length && attempt >= 3) {
+      const local = await detectPointerChanges(before, after).catch(() => []);
+      const anchors = local.filter(
+        (p) => Math.hypot(p.x - observedAnchor.x, p.y - observedAnchor.y) < 3,
+      );
+      if (anchors.length === 1)
+        ends = local.filter((p) => p !== anchors[0] && isEndpoint(p));
+    }
+
     if (ends.length === 1) {
       const end = ends[0];
       // Acknowledging a HID write does not mean video has reached its final
-      // position. Observe four agreeing fresh frames (~300ms), so a short
-      // plateau in delayed video isn't mistaken for the final endpoint.
+      // position. Require repeated fresh evidence; at lower frame rates three
+      // agreeing observations already span the normal four-frame window.
       stableFrames =
         previousEnd &&
         Math.hypot(end.x - previousEnd.x, end.y - previousEnd.y) <= 1.5
           ? stableFrames + 1
           : 0;
+      if (
+        !previousEnd ||
+        Math.hypot(end.x - previousEnd.x, end.y - previousEnd.y) > 1.5
+      )
+        endSeenAt = Date.now();
+      if (
+        !previousEnd ||
+        Math.hypot(end.x - previousEnd.x, end.y - previousEnd.y) > 0.25
+      )
+        exactSince = performance.now();
+      const still =
+        stableFrames >= 1 &&
+        performance.now() - exactSince >= 100 &&
+        performance.now() - sentAt >= 180;
       previousEnd = end;
-      if (stableFrames < 3) continue;
-      tracking.position = end;
-      return {
-        delta,
-        reports,
-        displacement: {
-          x: ends[0].x - start.x,
-          y: ends[0].y - start.y,
-        },
-        elapsedMs,
-      };
+      endCandidate = end;
+      if (
+        !still &&
+        stableFrames < 3 &&
+        !(stableFrames >= 2 && Date.now() - endSeenAt >= 150)
+      )
+        continue;
+      return finish(end, after);
     }
     previousEnd = undefined;
+    endCandidate = undefined;
     stableFrames = 0;
   }
   throw new Error(
     'Pointer endpoint did not settle or could not be identified. Keep a static bright screen visible and check video latency.',
   );
+
+  function finish(end: PointerCandidate, current: ScreenFrame) {
+    const sample: MotionSample = {
+      delta,
+      reports,
+      elapsedMs,
+      displacement: {
+        x: (end.x - observedAnchor.x) * signX,
+        y: (end.y - observedAnchor.y) * signY,
+      },
+    };
+    return { sample, next: { ...start, position: end, current } };
+  }
 }
 
-/** Three independent moves; take the median trial only when a majority agrees. */
-async function repeatProbe(
-  ...args: Parameters<typeof probe>
+async function reconcileMoves(
+  first: MotionSample,
+  second: MotionSample,
+  tieBreaker: () => Promise<MotionSample>,
 ): Promise<MotionSample> {
-  const trials: MotionSample[] = [];
-  for (let i = 0; i < 3; i++) {
-    const sample = await probe(...args);
-    trials.push(sample);
+  const meanTwo = {
+    x: (first.displacement.x + second.displacement.x) / 2,
+    y: (first.displacement.y + second.displacement.y) / 2,
+  };
+  const twoTolerance = Math.max(4, Math.hypot(meanTwo.x, meanTwo.y) * 0.08);
+  if (
+    Math.hypot(
+      first.displacement.x - second.displacement.x,
+      first.displacement.y - second.displacement.y,
+    ) <= twoTolerance
+  ) {
+    return {
+      ...second,
+      displacement: meanTwo,
+      elapsedMs: (first.elapsedMs + second.elapsedMs) / 2,
+      repetitions: [first, second].map(({ displacement, elapsedMs }) => ({
+        displacement,
+        elapsedMs,
+      })),
+    };
   }
+
+  const third = await tieBreaker();
+  const trials = [first, second, third];
   const ordered = [...trials].sort(
     (a, b) =>
       Math.hypot(a.displacement.x, a.displacement.y) -
@@ -282,6 +436,56 @@ async function repeatProbe(
   };
 }
 
+/** Each observed endpoint starts the next segment. Re-anchor only after a missed observation. */
+async function measureTrack(
+  screen: ScreenSession,
+  transport: RelativeTransport,
+  specs: { delta: Point; reports: number }[],
+  signal: AbortSignal,
+  tracking: PointerTracking,
+) {
+  const samples: MotionSample[] = [];
+  let next: SegmentStart | undefined;
+  for (const { delta, reports } of specs) {
+    let sample: MotionSample | undefined;
+    for (const cross of [0.3, 0.5, 0.7]) {
+      try {
+        const start =
+          next ??
+          (await locateStart(
+            screen,
+            transport,
+            delta,
+            cross,
+            signal,
+            tracking,
+          ));
+        const result = await measureSegment(
+          screen,
+          transport,
+          delta,
+          reports,
+          start,
+          signal,
+        );
+        next = result.next;
+        tracking.position = next.position;
+        sample = result.sample;
+        break;
+      } catch (error) {
+        next = undefined;
+        tracking.position = undefined;
+        signal.throwIfAborted();
+        if (cross === 0.7) throw error;
+        await pause(120);
+      }
+    }
+    if (!sample) throw new Error('Missing pointer motion sample');
+    samples.push(sample);
+  }
+  return samples;
+}
+
 export async function measureMotionModel(
   screen: ScreenSession,
   transport: RelativeTransport,
@@ -295,37 +499,22 @@ export async function measureMotionModel(
     await warmUpPointer(transport, signal);
   }
   const model: PointerMotionModel = { reports: [] };
-  const samples: MotionSample[] = [];
-  // Measure only reports the planner will actually send. Diagonals are measured
-  // independently: iOS acceleration can depend on vector length, not each axis.
-  for (const { delta, reports } of CALIBRATION_REPORTS) {
-    let sample: MotionSample | undefined;
-    for (const cross of [0.3, 0.5, 0.7]) {
-      try {
-        sample = await repeatProbe(
-          screen,
-          transport,
-          delta,
-          reports,
-          cross,
-          signal,
-          tracking,
-        );
-        break;
-      } catch (error) {
-        signal.throwIfAborted();
-        if (cross === 0.7) throw error;
-      }
-    }
-    const observed = sample!;
+  const samples = await measureTrack(
+    screen,
+    transport,
+    CALIBRATION_REPORTS,
+    signal,
+    tracking,
+  );
+  for (const sample of samples) {
+    const { delta, reports } = sample;
     model.reports.push({
       delta: { ...delta },
       displacement: {
-        x: delta.x ? observed.displacement.x / reports : 0,
-        y: delta.y ? observed.displacement.y / reports : 0,
+        x: delta.x ? sample.displacement.x / reports : 0,
+        y: delta.y ? sample.displacement.y / reports : 0,
       },
     });
-    samples.push(observed);
   }
   return { model, samples };
 }
@@ -354,6 +543,20 @@ export function correctMotionModel(
   };
 }
 
+function predictionError(predicted: Point, sample: MotionSample) {
+  const distance = Math.hypot(predicted.x, predicted.y) * sample.reports;
+  const error = Math.hypot(
+    sample.displacement.x - predicted.x * sample.reports,
+    sample.displacement.y - predicted.y * sample.reports,
+  );
+  return {
+    error,
+    distance,
+    relativeError: error / distance,
+    passed: error <= Math.max(4, distance * 0.08),
+  };
+}
+
 /** Independent axis and diagonal checks, also used before reusing disk data. */
 export async function validateMotionModel(
   screen: ScreenSession,
@@ -361,8 +564,10 @@ export async function validateMotionModel(
   model: PointerMotionModel,
   signal: AbortSignal,
   tracking: PointerTracking = {},
+  refit?: (sample: MotionSample) => void,
 ): Promise<MotionValidation> {
   const frame = await screen.getFrame();
+  const specs: { delta: Point; reports: number }[] = [];
   const samples: MotionSample[] = [];
   let maxErrorPx = 0;
   let maxRelativeError = 0;
@@ -370,6 +575,7 @@ export async function validateMotionModel(
     { x: 8, y: 0 },
     { x: 0, y: 8 },
     { x: 4, y: 4 },
+    { x: 0, y: 4 },
   ]) {
     const predicted = predictMovement(model, delta);
     // Long enough for distinct pointer blobs, but stay clear of clamped edges.
@@ -382,12 +588,12 @@ export async function validateMotionModel(
         : Number.POSITIVE_INFINITY,
     );
     const count = Math.min(
-      24,
+      delta.x === 0 && delta.y === 4 ? 18 : 14,
       Math.floor(available),
       Math.max(
         4,
         Math.ceil(
-          (Math.min(frame.width, frame.height) * 0.18) /
+          (Math.min(frame.width, frame.height) * 0.14) /
             Math.hypot(predicted.x, predicted.y),
         ),
       ),
@@ -396,33 +602,57 @@ export async function validateMotionModel(
       throw new Error(
         'Pointer movement is too large to validate inside the screen. Reduce Tracking Speed and retry.',
       );
-    let result: MotionSample | undefined;
-    for (const cross of [0.3, 0.5, 0.7]) {
-      try {
-        result = await repeatProbe(
-          screen,
-          transport,
-          delta,
-          count,
-          cross,
-          signal,
-          tracking,
-        );
-        break;
-      } catch (error) {
-        signal.throwIfAborted();
-        if (cross === 0.7) throw error;
+    specs.push({ delta, reports: count });
+  }
+  // Each checkpoint verifies an independently measured table entry. Repeat only
+  // the checkpoints that miss the same pixel/relative tolerance used at acceptance.
+  const first = await measureTrack(screen, transport, specs, signal, tracking);
+  const qualityOf = (sample: MotionSample) =>
+    predictionError(predictMovement(model, sample.delta), sample);
+  const uncertain = first.filter((sample) => !qualityOf(sample).passed);
+  const repeats = uncertain.length
+    ? await measureTrack(screen, transport, uncertain, signal, tracking)
+    : [];
+  let repeatIndex = 0;
+  for (const initial of first) {
+    const spec = { delta: initial.delta, reports: initial.reports };
+    const fresh = async () => {
+      const [move] = await measureTrack(
+        screen,
+        transport,
+        [spec],
+        signal,
+        tracking,
+      );
+      return move;
+    };
+    let sample = initial;
+    if (initial === uncertain[repeatIndex]) {
+      const repeat = repeats[repeatIndex++];
+      const candidate = {
+        x: initial.delta.x ? initial.displacement.x / initial.reports : 0,
+        y: initial.delta.y ? initial.displacement.y / initial.reports : 0,
+      };
+      // The repeat is held out from the proposed correction. It can verify
+      // the new entry without sending a third identical move.
+      if (
+        refit &&
+        !qualityOf(repeat).passed &&
+        predictionError(candidate, repeat).passed
+      ) {
+        refit(initial);
+        sample = repeat;
+      } else {
+        sample = await reconcileMoves(initial, repeat, fresh);
+        if (!qualityOf(sample).passed && refit) {
+          refit(sample);
+          sample = await fresh();
+        }
       }
     }
-    const sample = result!;
-    const expected = { x: predicted.x * count, y: predicted.y * count };
-    const error = Math.hypot(
-      sample.displacement.x - expected.x,
-      sample.displacement.y - expected.y,
-    );
-    const relativeError = error / Math.hypot(expected.x, expected.y);
-    // Screenshot localization has a finite pixel floor; do not promise subpixel accuracy.
-    if (error > Math.max(4, Math.hypot(expected.x, expected.y) * 0.08))
+    const quality = qualityOf(sample);
+    const { error, relativeError } = quality;
+    if (!quality.passed)
       throw new MotionValidationError(
         sample,
         `Pointer movement differs from the fitted curve by ${error.toFixed(1)}px (${(relativeError * 100).toFixed(1)}%). Keep a static screen visible; check Tracking Speed and video latency.`,
