@@ -2326,6 +2326,23 @@ export class CalibrationWorkflow {
       error.code === 'VISION_UNAVAILABLE'
     )
       return checkpoint.direction.length ? 'point' : 'screen';
+    const details = error.details;
+    const retryDetails = details?.retryDetails;
+    if (
+      checkpoint.direction.length &&
+      checkpoint.next?.phase === 'grid' &&
+      error.code === 'TOUCH_CONTACT_LOST' &&
+      details &&
+      details.targetId === checkpoint.next.targetId &&
+      details.recovery === 'vertical-probe' &&
+      details.cause === 'TOUCH_CONTACT_LOST' &&
+      details.retryCause === 'PHONE_TOUCH_UNSTABLE' &&
+      retryDetails &&
+      typeof retryDetails === 'object' &&
+      'reason' in retryDetails &&
+      retryDetails.reason === 'intermittent_contact'
+    )
+      return 'point';
     if (
       !checkpoint.direction.length &&
       error.code === 'PHONE_TOUCH_UNSTABLE' &&

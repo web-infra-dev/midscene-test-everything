@@ -715,6 +715,71 @@ describe('phone-assisted calibration coordinator', () => {
     }
   });
 
+  it.each([
+    { retryCause: 'PHONE_TOUCH_UNSTABLE', expectedAttempts: 2 },
+    { retryCause: 'TOUCH_CONTACT_LOST', expectedAttempts: 1 },
+  ])(
+    'resumes the same fast sampling point only if the vertical probe lost feedback ($retryCause)',
+    async ({ retryCause, expectedAttempts }) => {
+      const f = await setup();
+      try {
+        const run = rstest
+          .spyOn(AutomaticCapture.prototype, 'run')
+          .mockImplementationOnce(async (host, _home, { checkpoint }) => {
+            checkpoint!.direction.push({
+              contact: { x: 25, y: 30, z: 30 },
+              screen: { x: 50, y: 60 },
+              pressedZ: 30,
+              pressCommandZ: 30,
+              zSource: 'measured',
+            });
+            checkpoint!.next = { phase: 'grid', targetId: '2' };
+            await host.move(pose(25, 30, 30));
+            throw new RobotArmError(
+              'TOUCH_CONTACT_LOST',
+              'Vertical probe failed',
+              409,
+              {
+                targetId: '2',
+                recovery: 'vertical-probe',
+                cause: 'TOUCH_CONTACT_LOST',
+                retryCause,
+                ...(retryCause === 'PHONE_TOUCH_UNSTABLE' && {
+                  retryDetails: { reason: 'intermittent_contact' },
+                }),
+              },
+            );
+          })
+          .mockImplementationOnce(async (_host, _home, { checkpoint }) => {
+            expect(checkpoint?.next).toEqual({ phase: 'grid', targetId: '2' });
+            expect(checkpoint?.direction).toHaveLength(1);
+            throw new RobotArmError(
+              'TOUCH_SAFETY_LIMIT',
+              'Probe reached the safety floor',
+            );
+          });
+        const ready = await f.recordReference();
+        await f.service.command(ready.id, 'start-unattended-slide', true);
+        await rstest.waitFor(() => {
+          expect(f.service.status()).toMatchObject({
+            id: ready.id,
+            stage: 'interrupted',
+            explorationMode: 'slide',
+            errorDetails: {
+              code:
+                expectedAttempts === 2
+                  ? 'TOUCH_SAFETY_LIMIT'
+                  : 'TOUCH_CONTACT_LOST',
+            },
+          });
+          expect(run).toHaveBeenCalledTimes(expectedAttempts);
+        });
+      } finally {
+        await f.dispose();
+      }
+    },
+  );
+
   it.each([false, true])(
     'only resumes unattended sampling when no operator stop occurred (%s)',
     async (stop) => {
