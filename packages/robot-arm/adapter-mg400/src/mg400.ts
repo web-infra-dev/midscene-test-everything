@@ -574,7 +574,6 @@ class TextChannel {
     command: string;
     resolve: (line: string, receivedAtMs: number) => void;
     reject: (e: unknown) => void;
-    timer: ReturnType<typeof setTimeout>;
   }> = [];
   constructor(
     private host: string,
@@ -651,7 +650,6 @@ class TextChannel {
             );
             return;
           }
-          clearTimeout(p.timer);
           p.resolve(line, receivedAtMs);
           index = this.buffer.indexOf(';');
         }
@@ -803,7 +801,6 @@ class TextChannel {
           for (const command of commands)
             this.pending.push({
               command,
-              timer,
               resolve: (line, receivedAtMs) => {
                 lines.push(line);
                 if (lines.length === commands.length) {
@@ -876,10 +873,7 @@ class TextChannel {
     this.buffer = '';
     const pending = this.pending;
     this.pending = [];
-    for (const p of pending) {
-      clearTimeout(p.timer);
-      p.reject(error);
-    }
+    for (const p of pending) p.reject(error);
     socket?.destroy();
     if (wasOpen && !intentional) this.onUnexpectedClose?.();
   }

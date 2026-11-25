@@ -3,6 +3,7 @@ import { createServer as createHttpServer } from 'node:http';
 import { type Server, type Socket, createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { RobotKernel } from '@midscene/arm-kit/internal/kernel';
 import { RobotDriverBoundary } from '@midscene/arm-kit/internal/kernel/driver-boundary';
 import { RobotArmRuntime } from '@midscene/arm-kit/internal/runtime';
@@ -67,6 +68,8 @@ async function controller(
     keyedPose?: boolean;
     /** Prefix a successful motion ACK with something other than a code. */
     motionReplyNamedPrefix?: boolean;
+    /** Drop the reply to this numbered MovL command, counting from one. */
+    dropLinearReplyAt?: number;
     holdResetReply?: boolean;
     /** Drop the first mode query after a jog release to exercise retry. */
     failJogStopConfirmationOnce?: boolean;
@@ -105,6 +108,7 @@ async function controller(
   let heldDashboardReply:
     | { name: string; hold: (reply: () => void) => void }
     | undefined;
+  let linearReplies = 0;
   let failJogConfirmation = false;
   let jogConfirmationFailed = false;
   const connections = { motion: 0, dashboard: 0 };
@@ -129,6 +133,12 @@ async function controller(
           commands.push(command);
           const name = command.slice(0, command.indexOf('('));
           const reply = (payload = '') => {
+            if (
+              motion &&
+              name === 'MovL' &&
+              ++linearReplies === options.dropLinearReplyAt
+            )
+              return;
             const write = () => {
               if (!socket.destroyed) socket.write(`0,{${payload}},${command};`);
             };
@@ -1944,6 +1954,35 @@ describe('MG400 authoritative Cartesian motion', () => {
       expect(c.commands.filter((v) => v === 'Sync()')).toHaveLength(1);
       // Raw push TCP vectors remain unavailable for screen-plane timing.
       expect(c.adapter.latestToolVectorSample()).toBeUndefined();
+    } finally {
+      await c.cleanup();
+    }
+  });
+  it('times out when an acknowledged motion batch is missing a later reply', async () => {
+    const c = await controller({
+      arrivalDelayMs: 15,
+      dropLinearReplyAt: 3,
+      adapter: { commandTimeoutMs: 250 },
+    });
+    try {
+      await c.adapter.connect();
+      await c.adapter.enable();
+      const sequence = await c.adapter.driver.beginLinearSequence!(
+        [...targets, { ...targets[1], pose: pose(10, 20, 40) }],
+        { timeoutMs: 1000 },
+      );
+      await sequence.submit(0);
+      await sequence.waitForHandoff();
+
+      await expect(
+        Promise.race([
+          sequence.submitQueued!([15, 0]),
+          delay(1500, undefined, { ref: false }),
+        ]),
+      ).rejects.toMatchObject({ code: 'COMMAND_TIMEOUT' });
+      expect(
+        c.commands.filter((command) => command.startsWith('MovL(')),
+      ).toHaveLength(3);
     } finally {
       await c.cleanup();
     }
