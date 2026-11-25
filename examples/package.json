@@ -7,6 +7,6 @@
     "start": "tsx connect.ts"
   },
   "dependencies": {
-    "@midscene/connect": "1.18.2"
+    "@midscene/connect": "1.18.3-beta-20261124111518.0"
   }
 }

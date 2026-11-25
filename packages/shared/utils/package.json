@@ -22,7 +22,9 @@
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -74,6 +76,6 @@
     }
   },
   "dependencies": {
-    "@midscene/connect": "1.18.2"
+    "@midscene/connect": "1.18.3-beta-20261124111518.0"
   }
 }
