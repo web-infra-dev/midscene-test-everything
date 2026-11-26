@@ -71,7 +71,9 @@ test('measurement waits for delayed video to settle instead of fitting intermedi
     );
     assert.ok(error < 3, `must fit the settled endpoint, error=${error}`);
   }
-}, 60_000);
+  // Rasterising every frame is CPU-heavy; shared CI runners took 44.8s with a
+  // 60s limit, which made this timing-sensitive test flake.
+}, 120_000);
 
 test('measured diagonals retain their own gain and unmeasured reports are rejected', () => {
   const model = curveModel();
