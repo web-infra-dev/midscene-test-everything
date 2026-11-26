@@ -214,6 +214,16 @@ export function referencedScreenIds(data: ProfileData): Set<string> {
     if (item.screenProfileId) referenced.add(item.screenProfileId);
   return referenced;
 }
+
+function freezeProfileSnapshot(value: object): void {
+  if (Object.isFrozen(value)) return;
+  Object.freeze(value);
+  for (const child of Object.values(value)) {
+    if (child !== null && typeof child === 'object')
+      freezeProfileSnapshot(child);
+  }
+}
+
 export class ProfileStore {
   private data: ProfileData = {
     format: 'midscene.robot-arm.profiles',
@@ -628,12 +638,14 @@ export class ProfileStore {
     }, guard);
   }
   /**
-   * The current profile data. Returned by reference and treated as read-only:
-   * writes go through `transaction`, which publishes a fresh snapshot.
+   * The current profile data, deeply frozen and shared until the next write.
+   * Copy any data that needs to be edited before saving it.
    */
   list(): ProfileData {
     if (!this.snapshot || this.snapshotRevision !== this.revision) {
-      this.snapshot = structuredClone(this.data);
+      const snapshot = structuredClone(this.data);
+      freezeProfileSnapshot(snapshot);
+      this.snapshot = snapshot;
       this.snapshotRevision = this.revision;
     }
     return this.snapshot;

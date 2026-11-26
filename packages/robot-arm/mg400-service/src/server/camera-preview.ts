@@ -166,11 +166,9 @@ async function streamFrames(
   let nextFrame = 0;
   let nextWrite = 0;
   const completed = new Map<number, Buffer>();
-  // At most two transformed frames in flight per viewer: enough to overlap the
-  // transform with the next capture without letting a backlog turn into
-  // latency. Frames that still cannot be shown are dropped rather than queued;
-  // raw previews are a straight copy and stay uncapped.
-  const maxInFlight = 2;
+  // Uncapped previews can overlap two transforms. A capped preview admits one
+  // frame at a time so the next frame must wait for the last write interval.
+  const maxInFlight = minIntervalMs > 0 ? 1 : 2;
   const flush = () => {
     while (
       !res.destroyed &&

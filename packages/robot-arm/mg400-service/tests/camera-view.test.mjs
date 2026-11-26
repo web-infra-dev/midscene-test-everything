@@ -96,6 +96,27 @@ test('corrected preview uses bounded concurrent transforms and preserves order',
   assert.equal(f.res.writableEnded, true);
 });
 
+test('a capped corrected preview drops frames while a transform is pending', async () => {
+  const f = fixture();
+  let finish;
+  const pending = new Promise((resolve) => {
+    finish = resolve;
+  });
+  let calls = 0;
+  f.entry.camera.rectifiedFrame = () => {
+    calls++;
+    return pending;
+  };
+  await streamCameraPreview(f.res, f.entry, true, undefined, 'twin-test');
+  f.stream.emit('frame', { jpeg: Buffer.from('first') });
+  f.stream.emit('frame', { jpeg: Buffer.from('second') });
+  assert.equal(calls, 1);
+  finish(Buffer.from('corrected'));
+  await tick();
+  assert.equal(f.res.frames.length, 1);
+  f.res.destroy();
+});
+
 test('missing perspective rejects corrected view before streaming; transform failure never falls back to raw', async () => {
   const f = fixture();
   const getTarget = f.entry.camera.getRectifiedPreviewTarget;

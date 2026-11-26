@@ -3862,8 +3862,9 @@ export class RobotArmRuntime extends RobotKernel {
         );
       const context = this.teachingContext(input);
       const previous = this.installationTeachingDraft(input);
-      const draft: import('./contracts.js').InstallationTeachingDraft =
-        previous ?? { ...input, id: randomUUID(), context, poses: {} };
+      const draft: import('./contracts.js').InstallationTeachingDraft = previous
+        ? structuredClone(previous)
+        : { ...input, id: randomUUID(), context, poses: {} };
       if (point === 'reference') draft.poses = {};
       else if (!draft.poses.reference)
         throw new RobotArmError(

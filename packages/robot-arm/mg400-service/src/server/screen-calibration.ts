@@ -803,7 +803,7 @@ export class ScreenCalibration {
   private async page(saved: SavedPage) {
     let page = this.pages.get(saved.id);
     if (!page) {
-      page = new ScreenPage(saved, (id) => this.devices.markerCodes(id));
+      page = new ScreenPage({ ...saved }, (id) => this.devices.markerCodes(id));
       this.pages.set(saved.id, page);
       if (saved.targetId) {
         this.pageHosts.add(saved.targetId);
