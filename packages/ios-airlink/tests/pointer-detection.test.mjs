@@ -5,6 +5,7 @@ import {
   detectPointerChanges,
   scorePointerPositions,
 } from '../dist/hardware/pointer/detector.js';
+import { validateMotionModel } from '../dist/hardware/pointer/motion-model.js';
 
 const width = 192;
 const height = 144;
@@ -90,4 +91,55 @@ test('portrait status bar and home indicator changes do not produce false pointe
     await render({ x: 210, y: 260 }, true),
   );
   assert.equal(candidates.length, 2);
+});
+
+test('exposure drift between segments can be validated without repeating a move', async () => {
+  const model = {
+    reports: [
+      { x: 8, y: 0 },
+      { x: 0, y: 8 },
+      { x: 4, y: 4 },
+      { x: 0, y: 4 },
+    ].map((delta) => ({ delta, displacement: delta })),
+  };
+  let point = { x: 220, y: 400 };
+  let sequence = 0;
+  let brightness = 185;
+  let moves = 0;
+  const result = await validateMotionModel(
+    {
+      getFrame: async () => ({
+        width: 320,
+        height: 640,
+        sequence: ++sequence,
+        receivedAt: Date.now(),
+        jpeg: await sharp(
+          Buffer.from(
+            `<svg width="320" height="640"><rect width="100%" height="100%" fill="rgb(${brightness},${brightness},${brightness})"/><circle cx="${point.x}" cy="${point.y}" r="8" fill="#444"/></svg>`,
+          ),
+        )
+          .png()
+          .toBuffer(),
+      }),
+      close: async () => {},
+    },
+    {
+      moveTo: async (p) => {
+        point = { ...p };
+        brightness += 9;
+      },
+      relative: async () => assert.fail('expected a report batch'),
+      relativeBatch: async (reports) => {
+        moves++;
+        brightness += 9;
+        for (const delta of reports) {
+          point = { x: point.x + delta.x, y: point.y + delta.y };
+        }
+      },
+    },
+    model,
+    new AbortController().signal,
+  );
+  assert.equal(moves, 4);
+  assert.ok(result.maxErrorPx < 3);
 });

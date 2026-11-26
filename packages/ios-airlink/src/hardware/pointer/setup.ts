@@ -3,6 +3,7 @@ import type { Point, ScreenFrame } from '../types.js';
 import {
   type PointerCandidate,
   detectPointerChanges,
+  dominantPointer,
   pointerNear,
   scorePointerPositions,
 } from './detector.js';
@@ -183,8 +184,12 @@ export async function measureAbsoluteCorrection(
           Math.abs(point.y - target.y) <= 0.12
         );
       });
-      const candidate = candidates.length === 1 ? candidates[0] : undefined;
-      if (candidate && previous && pointerNear(candidate, previous, 1.5))
+      const candidate = dominantPointer(candidates);
+      if (
+        candidate &&
+        previous &&
+        Math.hypot(candidate.x - previous.x, candidate.y - previous.y) <= 1.5
+      )
         return candidate;
       if (candidate) seenAt = Date.now();
       previous = candidate;

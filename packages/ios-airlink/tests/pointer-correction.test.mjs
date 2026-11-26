@@ -109,3 +109,60 @@ test('orientation detection tolerates a missed low-contrast probe and stops on t
   assert.equal(result.turn, 0);
   assert.equal(moves, 3, 'stops once two probes agree after one miss');
 });
+
+async function noisyCameraCorrection(ambiguous = false) {
+  const geometry = { width: 390, height: 844, turn: 0 };
+  let position = { x: 0.5, y: 0.5 };
+  let sequence = 0;
+  let probeFrames = 0;
+  return measureAbsoluteCorrection(
+    {
+      getFrame: async () => {
+        // Replay the first corner using only approximate observed positions and sizes.
+        // Real captures intermittently contained 4–11 pixel changes near the cursor.
+        const noisy =
+          position.x === 0.25 && position.y === 0.25 && ++probeFrames % 2 === 1;
+        const jpeg = await sharp(
+          Buffer.from(
+            `<svg width="390" height="844"><rect width="100%" height="100%" fill="white"/>
+          <circle cx="${position.x * 389}" cy="${position.y * 843}" r="10" fill="#333"/>
+          ${ambiguous && position.x === 0.25 ? '<circle cx="124" cy="224" r="9" fill="#333"/>' : ''}
+          ${noisy ? '<rect x="123" y="223" width="3" height="3" fill="#666"/><rect x="80" y="250" width="3" height="3" fill="#666"/>' : ''}
+          </svg>`,
+          ),
+        )
+          .png()
+          .toBuffer();
+        return {
+          ...geometry,
+          jpeg,
+          sequence: ++sequence,
+          receivedAt: Date.now(),
+        };
+      },
+    },
+    {
+      absolute: async (report) => {
+        position = pointerToScreen(report, 0);
+      },
+    },
+    geometry,
+    new AbortController().signal,
+  );
+}
+
+test('camera correction rejects two cursor-sized candidates at a corner', async () => {
+  await assert.rejects(
+    noisyCameraCorrection(true),
+    /Could not measure camera pointer position/,
+  );
+});
+
+test('camera correction can locate a stationary cursor among intermittent small changes', async () => {
+  const { correction } = await noisyCameraCorrection();
+  const target = { x: 0.43, y: 0.57 };
+  const mapped = correctedScreenToPointer(target, 0, correction);
+  assert.ok(
+    Math.hypot((mapped.x - target.x) * 389, (mapped.y - target.y) * 843) < 3,
+  );
+});

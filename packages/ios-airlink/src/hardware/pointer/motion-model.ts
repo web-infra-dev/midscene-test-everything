@@ -3,6 +3,7 @@ import type { Point, ScreenFrame } from '../types.js';
 import {
   type PointerCandidate,
   detectPointerChanges,
+  dominantPointer,
   pointerNear,
 } from './detector.js';
 import { type PointerTurn, screenDeltaToPointer } from './mapping.js';
@@ -250,6 +251,7 @@ async function measureSegment(
   let endSeenAt = 0;
   let stableFrames = 0;
   let exactSince = 0;
+  let useLocalReference = false;
   for (let attempt = 0; attempt < 24; attempt++) {
     signal.throwIfAborted();
     const after = await screen.getFrame({
@@ -271,17 +273,6 @@ async function measureSegment(
       continue;
     }
     lastSequence = after.sequence;
-    let changes;
-    try {
-      changes = await detectPointerChanges(frame, after);
-    } catch {
-      signal.throwIfAborted();
-      previousEnd = undefined;
-      endCandidate = undefined;
-      stableFrames = 0;
-      continue;
-    }
-
     const isEndpoint = (p: PointerCandidate) => {
       if (
         p.area < Math.max(5, observedAnchor.area * 0.22) ||
@@ -303,44 +294,46 @@ async function measureSegment(
         p.y < frame.height * 0.92
       );
     };
-    let ends = changes.filter(
-      (p) =>
-        isEndpoint(p) &&
-        !referenceChanges.some(
-          (old) => Math.hypot(p.x - old.x, p.y - old.y) <= 3,
-        ),
-    );
-    // When the endpoint coincides with the reference cursor, it disappears from
-    // that difference. For a longer move the settled anchor is a second reference.
-    if (!ends.length && attempt >= 3) {
+    // Exposure drift can invalidate the original reference while consecutive
+    // frames still agree on both the departed anchor and the new endpoint.
+    let ends: PointerCandidate[] = [];
+    if (!useLocalReference) {
+      const changes = await detectPointerChanges(frame, after).catch(() => []);
+      ends = changes.filter(
+        (p) =>
+          isEndpoint(p) &&
+          !referenceChanges.some(
+            (old) => Math.hypot(p.x - old.x, p.y - old.y) <= 3,
+          ),
+      );
+    }
+    if (ends.length !== 1 && attempt >= 3) {
       const local = await detectPointerChanges(before, after).catch(() => []);
       const anchors = local.filter(
         (p) => Math.hypot(p.x - observedAnchor.x, p.y - observedAnchor.y) < 3,
       );
-      if (anchors.length === 1)
-        ends = local.filter((p) => p !== anchors[0] && isEndpoint(p));
+      ends =
+        anchors.length === 1
+          ? local.filter((p) => p !== anchors[0] && isEndpoint(p))
+          : [];
+      useLocalReference = ends.length === 1;
     }
+    signal.throwIfAborted();
 
-    if (ends.length === 1) {
-      const end = ends[0];
+    const end = dominantPointer(ends);
+    const shift =
+      end && previousEnd
+        ? Math.hypot(end.x - previousEnd.x, end.y - previousEnd.y)
+        : Number.POSITIVE_INFINITY;
+    // A cluttered frame can confirm an already tracked endpoint. Acquire a
+    // new endpoint only from a frame in which it was uniquely identified.
+    if (end && (ends.length === 1 || shift <= 1.5)) {
       // Acknowledging a HID write does not mean video has reached its final
       // position. Require repeated fresh evidence; at lower frame rates three
       // agreeing observations already span the normal four-frame window.
-      stableFrames =
-        previousEnd &&
-        Math.hypot(end.x - previousEnd.x, end.y - previousEnd.y) <= 1.5
-          ? stableFrames + 1
-          : 0;
-      if (
-        !previousEnd ||
-        Math.hypot(end.x - previousEnd.x, end.y - previousEnd.y) > 1.5
-      )
-        endSeenAt = Date.now();
-      if (
-        !previousEnd ||
-        Math.hypot(end.x - previousEnd.x, end.y - previousEnd.y) > 0.25
-      )
-        exactSince = performance.now();
+      stableFrames = shift <= 1.5 ? stableFrames + 1 : 0;
+      if (shift > 1.5) endSeenAt = Date.now();
+      if (shift > 0.25) exactSince = performance.now();
       const still =
         stableFrames >= 1 &&
         performance.now() - exactSince >= 100 &&

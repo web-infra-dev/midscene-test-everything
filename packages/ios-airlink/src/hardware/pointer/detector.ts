@@ -8,6 +8,14 @@ export interface PointerCandidate extends Point {
   bounds: { left: number; top: number; right: number; bottom: number };
 }
 
+/** A second cursor-sized change is ambiguous; ignore only much smaller fragments. */
+export function dominantPointer(candidates: PointerCandidate[]) {
+  const [first, second] = [...candidates].sort((a, b) => b.area - a.area);
+  return first && (!second || first.area >= second.area * 4)
+    ? first
+    : undefined;
+}
+
 export function pointerNear(
   candidate: PointerCandidate,
   point: Point,
@@ -72,12 +80,27 @@ async function frameDifference(before: ScreenFrame, after: ScreenFrame) {
     decodeGreyscale(after, width, height),
   ]);
   const chrome = chromeInsets(width, height);
-  let { difference, changed } = pixelDifference(a, b, width, height, 0, chrome);
+  let { difference, changed, brighter } = pixelDifference(
+    a,
+    b,
+    width,
+    height,
+    0,
+    chrome,
+  );
   let compared =
     Math.max(1, width - chrome.left - chrome.right) *
     Math.max(1, height - chrome.top - chrome.bottom);
   // Skip registration when the raw difference is already mostly stationary.
-  if (changed > compared * 0.02 && Math.min(width, height) >= 32) {
+  // Translation cannot explain a near-uniform increase or decrease in exposure.
+  // Reject that reference before running ECC on a low-texture image.
+  const exposureShift =
+    Math.max(brighter, changed - brighter) > compared * 0.95;
+  if (
+    !exposureShift &&
+    changed > compared * 0.02 &&
+    Math.min(width, height) >= 32
+  ) {
     const aligned = await alignPointerFrame(a, b, width, height);
     if (aligned) {
       // Compare the same interior on both sides. The warp's outer pixels
@@ -138,16 +161,20 @@ function pixelDifference(
   const maxY = height - Math.max(margin, chrome.bottom);
   const minX = Math.max(margin, chrome.left);
   const maxX = width - Math.max(margin, chrome.right);
+  let brighter = 0;
   for (let y = margin; y < height - margin; y++) {
     const inChromeY = y < minY || y >= maxY;
     for (let x = margin; x < width - margin; x++) {
       const i = y * width + x;
       const delta = Math.abs(before[i] - after[i]);
       difference[i] = delta;
-      if (!inChromeY && x >= minX && x < maxX && delta >= 14) changed++;
+      if (!inChromeY && x >= minX && x < maxX && delta >= 14) {
+        changed++;
+        if (after[i] > before[i]) brighter++;
+      }
     }
   }
-  return { difference, changed };
+  return { difference, changed, brighter };
 }
 
 export interface PointerPositionScore {
