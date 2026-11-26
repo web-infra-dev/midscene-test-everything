@@ -5,6 +5,7 @@ import {
   detectPointerChanges,
   scorePointerPositions,
 } from '../dist/hardware/pointer/detector.js';
+import { validateMotionModel } from '../dist/hardware/pointer/motion-model.js';
 
 const width = 192;
 const height = 144;
@@ -68,4 +69,86 @@ test('large shifts and scene changes still fail pointer detection', async () => 
       /Screen changed during pointer measurement/,
     );
   }
+});
+
+test('portrait status bar and home indicator changes do not produce false pointer candidates', async () => {
+  const pw = 360;
+  const ph = 780;
+  const render = async (pointer, statusBarTick = false) => {
+    const svg = `<svg width="${pw}" height="${ph}">
+      <rect width="100%" height="100%" fill="#eee"/>
+      ${statusBarTick ? '<rect x="30" y="10" width="60" height="18" fill="#111"/><rect x="120" y="762" width="120" height="6" fill="#222"/>' : ''}
+      <circle cx="${pointer.x}" cy="${pointer.y}" r="10" fill="#333"/>
+    </svg>`;
+    return {
+      width: pw,
+      height: ph,
+      jpeg: await sharp(Buffer.from(svg)).jpeg({ quality: 95 }).toBuffer(),
+    };
+  };
+  const candidates = await detectPointerChanges(
+    await render({ x: 90, y: 260 }, false),
+    await render({ x: 210, y: 260 }, true),
+  );
+  assert.equal(candidates.length, 2);
+});
+
+test('exposure drift between segments can be validated without repeating a move', async () => {
+  const model = {
+    reports: [
+      { x: 8, y: 0 },
+      { x: 0, y: 8 },
+      { x: 4, y: 4 },
+      { x: 0, y: 4 },
+    ].map((delta) => ({ delta, displacement: delta })),
+  };
+  let point = { x: 220, y: 400 };
+  let sequence = 0;
+  let brightness = 185;
+  let moves = 0;
+  const reads = [0];
+  const result = await validateMotionModel(
+    {
+      getFrame: async () => {
+        reads[moves]++;
+        return {
+          width: 320,
+          height: 640,
+          sequence: ++sequence,
+          receivedAt: Date.now(),
+          jpeg: await sharp(
+            Buffer.from(
+              `<svg width="320" height="640"><rect width="100%" height="100%" fill="rgb(${brightness},${brightness},${brightness})"/><circle cx="${point.x}" cy="${point.y}" r="8" fill="#444"/></svg>`,
+            ),
+          )
+            .png()
+            .toBuffer(),
+        };
+      },
+      close: async () => {},
+    },
+    {
+      moveTo: async (p) => {
+        point = { ...p };
+        brightness += 9;
+      },
+      relative: async () => assert.fail('expected a report batch'),
+      relativeBatch: async (reports) => {
+        moves++;
+        reads.push(0);
+        if (moves === 1) brightness += 9;
+        for (const delta of reports) {
+          point = { x: point.x + delta.x, y: point.y + delta.y };
+        }
+      },
+    },
+    model,
+    new AbortController().signal,
+  );
+  assert.equal(moves, 4);
+  assert.ok(
+    reads.slice(2).every((n) => n <= 4),
+    'later checkpoints should settle promptly after exposure stabilizes',
+  );
+  assert.ok(result.maxErrorPx < 3);
 });

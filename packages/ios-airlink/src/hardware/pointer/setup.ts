@@ -3,6 +3,7 @@ import type { Point, ScreenFrame } from '../types.js';
 import {
   type PointerCandidate,
   detectPointerChanges,
+  dominantPointer,
   pointerNear,
   scorePointerPositions,
 } from './detector.js';
@@ -32,45 +33,71 @@ export async function measurePointerTurn(
   position?: PointerCandidate;
 }> {
   const votes = [0, 0, 0, 0];
-  let frame = await screen.getFrame({ fresh: true, allowUnchanged: true });
+  let frame = await screen.getFrame();
   const probes = [
     { x: 0.27, y: 0.32 },
     { x: 0.68, y: 0.61 },
     { x: 0.38, y: 0.72 },
+    { x: 0.64, y: 0.36 },
   ];
   let position: PointerCandidate | undefined;
+  let winner: PointerTurn | undefined;
   for (const point of probes) {
     signal.throwIfAborted();
     const before = frame;
+    let lastSequence = before.sequence;
     await input.absolute(point);
     // Poll multiple frames because video delivery can lag the report.
-    const matched = new Set<number>();
-    for (let attempt = 0; attempt < 5; attempt++) {
-      await pause(100);
+    let matchedTurn: PointerTurn | undefined;
+    for (let attempt = 0; attempt < 8; attempt++) {
       signal.throwIfAborted();
       frame = await screen.getFrame({
         fresh: true,
+        afterSequence: lastSequence,
         allowUnchanged: true,
         timeoutMs: 3000,
       });
+      if (frame.sequence <= lastSequence) {
+        await pause(45);
+        continue;
+      }
+      lastSequence = frame.sequence;
       const turns = [0, 1, 2, 3] as const;
-      const scores = await scorePointerPositions(
-        before,
-        frame,
-        turns.map((turn) => pointerToScreen(point, turn)),
-      );
+      let scores;
+      try {
+        scores = await scorePointerPositions(
+          before,
+          frame,
+          turns.map((turn) => pointerToScreen(point, turn)),
+        );
+      } catch {
+        continue;
+      }
       const ranked = turns
         .map((turn) => ({ turn, ...scores[turn] }))
         .sort((a, b) => b.mean - a.mean);
       const [best, second] = ranked;
       if (
-        best.mean >= 8 &&
-        best.fraction >= 0.2 &&
-        best.mean > second.mean * 1.5 + 3
+        best.mean >= 7 &&
+        best.fraction >= 0.16 &&
+        best.mean > second.mean * 1.45 + 2.5
       ) {
-        matched.add(best.turn);
-        if (point === probes.at(-1)) {
-          const expected = pointerToScreen(point, best.turn);
+        matchedTurn = best.turn;
+        break;
+      }
+    }
+    if (matchedTurn !== undefined) {
+      votes[matchedTurn]++;
+      const rankedVotes = [...votes]
+        .map((count, turn) => ({ turn: turn as PointerTurn, count }))
+        .sort((a, b) => b.count - a.count);
+      if (
+        rankedVotes[0].count >= 2 &&
+        rankedVotes[0].count >= rankedVotes[1].count + 2
+      ) {
+        winner = rankedVotes[0].turn;
+        const expected = pointerToScreen(point, winner);
+        try {
           const candidates = await detectPointerChanges(before, frame);
           const nearby = candidates.filter((candidate) =>
             pointerNear(
@@ -79,25 +106,23 @@ export async function measurePointerTurn(
                 x: expected.x * (frame.width - 1),
                 y: expected.y * (frame.height - 1),
               },
-              Math.max(10, Math.min(frame.width, frame.height) * 0.025),
+              Math.max(10, Math.min(frame.width, frame.height) * 0.03),
             ),
           );
           if (nearby.length === 1) position = nearby[0];
+        } catch {
+          position = undefined;
         }
+        break;
       }
-      if (matched.size === 1) break;
     }
-    for (const turn of matched) votes[turn]++;
   }
-  const matches = votes.flatMap((count, turn) =>
-    count === 3 ? [turn as PointerTurn] : [],
-  );
-  if (matches.length !== 1)
+  if (winner === undefined)
     throw new Error(
       'Cannot reliably locate the mouse pointer. Enable AssistiveTouch, keep the phone still on a static bright screen, then retry.',
     );
   return {
-    turn: matches[0],
+    turn: winner,
     width: frame.width,
     height: frame.height,
     position,
@@ -125,12 +150,14 @@ export async function measureAbsoluteCorrection(
     const before = await screen.getFrame(options);
     let sequence = before.sequence;
     let previous: PointerCandidate | undefined;
-    let stable = 0;
+    let seenAt = 0;
     await input.absolute(correctedScreenToPointer(target, turn, correction));
-    for (let attempt = 0; attempt < 15; attempt++) {
-      await pause(100);
+    for (let attempt = 0; attempt < 20; attempt++) {
       signal.throwIfAborted();
-      const after = await screen.getFrame(options);
+      const after = await screen.getFrame({
+        ...options,
+        afterSequence: sequence,
+      });
       if (
         before.width !== width ||
         before.height !== height ||
@@ -138,7 +165,11 @@ export async function measureAbsoluteCorrection(
         after.height !== height
       )
         throw new Error('Screen geometry changed during pointer measurement');
-      if (after.sequence <= sequence) continue;
+      if (after.sequence <= sequence) {
+        if (previous && Date.now() - seenAt >= 220) return previous;
+        await pause(45);
+        continue;
+      }
       sequence = after.sequence;
 
       let changes: PointerCandidate[];
@@ -146,7 +177,6 @@ export async function measureAbsoluteCorrection(
         changes = await detectPointerChanges(before, after);
       } catch {
         previous = undefined;
-        stable = 0;
         continue;
       }
       const candidates = changes.filter((candidate) => {
@@ -156,12 +186,14 @@ export async function measureAbsoluteCorrection(
           Math.abs(point.y - target.y) <= 0.12
         );
       });
-      const candidate = candidates.length === 1 ? candidates[0] : undefined;
-      stable =
-        candidate && previous && pointerNear(candidate, previous, 1.5)
-          ? stable + 1
-          : 0;
-      if (candidate && stable >= 2) return candidate;
+      const candidate = dominantPointer(candidates);
+      if (
+        candidate &&
+        previous &&
+        Math.hypot(candidate.x - previous.x, candidate.y - previous.y) <= 1.5
+      )
+        return candidate;
+      if (candidate) seenAt = Date.now();
       previous = candidate;
     }
     throw new Error(
@@ -171,6 +203,13 @@ export async function measureAbsoluteCorrection(
 
   const low = 0.25;
   const high = 0.75;
+  const maxErrorPx = Math.max(3, Math.min(width, height) * 0.01);
+  const closeTo = (point: Point, target: Point) =>
+    Math.hypot(
+      (point.x - target.x) * (width - 1),
+      (point.y - target.y) * (height - 1),
+    ) <= maxErrorPx;
+
   const topLeft = normalize(await observe({ x: low, y: low }));
   const bottomRight = normalize(await observe({ x: high, y: high }));
   const bottomLeft = normalize(await observe({ x: low, y: high }));
@@ -189,12 +228,6 @@ export async function measureAbsoluteCorrection(
     offset: { x: start.x - low * scale.x, y: start.y - low * scale.y },
   };
   const validationTarget = { x: 0.43, y: 0.57 };
-  const maxErrorPx = Math.max(3, Math.min(width, height) * 0.01);
-  const closeTo = (point: Point, target: Point) =>
-    Math.hypot(
-      (point.x - target.x) * (width - 1),
-      (point.y - target.y) * (height - 1),
-    ) <= maxErrorPx;
   const predict = (x: number, y: number) => ({
     x: x * scale.x + correction.offset.x,
     y: y * scale.y + correction.offset.y,

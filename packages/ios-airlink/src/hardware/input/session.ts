@@ -8,7 +8,6 @@ import {
   validAbsoluteCorrection,
 } from '../pointer/mapping.js';
 import {
-  MotionValidationError,
   type PointerMotionModel,
   type PointerTracking,
   correctMotionModel,
@@ -195,7 +194,14 @@ export class HIDInputSession {
     // Warm up before the direction probes, so the last observed position
     // remains valid when the first motion probe starts.
     await this.absolute({ x: 0.2, y: 0.3 }, signal);
-    await warmUpPointer({ relative: (delta) => this.relative(delta) }, signal);
+    await warmUpPointer(
+      {
+        relative: (delta) => this.relative(delta),
+        relativeBatch: (deltas, buttons, intervalMs) =>
+          this.relativeBatch(deltas, buttons, intervalMs, signal),
+      },
+      signal,
+    );
     const { position, ...mapping } = await measurePointerTurn(
       screen,
       transport,
@@ -239,6 +245,19 @@ export class HIDInputSession {
         signal.throwIfAborted();
         return this.relative(screenDeltaToPointer(delta, mapping.turn));
       },
+      relativeBatch: (
+        deltas: Point[],
+        buttons = 0,
+        intervalMs = REPORT_INTERVAL_MS,
+      ) => {
+        signal.throwIfAborted();
+        return this.relativeBatch(
+          deltas.map((delta) => screenDeltaToPointer(delta, mapping.turn)),
+          buttons,
+          intervalMs,
+          signal,
+        );
+      },
     };
     const cached = config?.pointerMotion;
     if (compatibleMotionProfile(cached, binding)) {
@@ -274,32 +293,21 @@ export class HIDInputSession {
       signal,
       warmedTracking,
     );
-    let validation;
-    // Learn stable discrepancies, then test again with new moves. Never turn a
-    // failed sample itself into a passing validation or save unchecked data.
-    for (let attempt = 0; attempt < 4; attempt++) {
-      try {
-        validation = await validateMotionModel(
-          screen,
-          transport,
-          measured.model,
-          signal,
-          tracking,
-        );
-        break;
-      } catch (error) {
-        signal.throwIfAborted();
-        if (!(error instanceof MotionValidationError) || attempt === 2)
-          throw error;
-        correctMotionModel(measured.model, error.sample);
+    const validation = await validateMotionModel(
+      screen,
+      transport,
+      measured.model,
+      signal,
+      tracking,
+      (sample) => {
+        correctMotionModel(measured.model, sample);
         const index = measured.samples.findIndex(
-          (sample) =>
-            sample.delta.x === error.sample.delta.x &&
-            sample.delta.y === error.sample.delta.y,
+          ({ delta }) =>
+            delta.x === sample.delta.x && delta.y === sample.delta.y,
         );
-        if (index >= 0) measured.samples[index] = error.sample;
-      }
-    }
+        measured.samples[index] = sample;
+      },
+    );
     signal.throwIfAborted();
     await assertGeometry();
     if (config) {
@@ -315,7 +323,7 @@ export class HIDInputSession {
         dragReportLimit: DRAG_REPORT_LIMIT,
         model: measured.model,
         samples: measured.samples,
-        validation: validation!,
+        validation,
         measuredAt: new Date().toISOString(),
       };
       await this.persistProfile?.();
@@ -354,6 +362,49 @@ export class HIDInputSession {
     return this.native
       .send(this.peer, 3, [buttons, delta.x & 255, delta.y & 255, 0])
       .then(() => undefined);
+  }
+  async relativeBatch(
+    deltas: Point[],
+    buttons = 0,
+    intervalMs = REPORT_INTERVAL_MS,
+    signal = this.lifetime.signal,
+  ) {
+    if (!deltas.length) return;
+    for (const delta of deltas) {
+      if (
+        ![delta.x, delta.y].every(
+          (v) => Number.isInteger(v) && v >= -127 && v <= 127,
+        )
+      )
+        throw new Error('Invalid relative report');
+    }
+    if (typeof this.native.sendBatch === 'function') {
+      signal.throwIfAborted();
+      this.relativeSinceAbsolute = true;
+      await this.native.sendBatch(
+        this.peer,
+        3,
+        deltas.map((d) => [buttons, d.x & 255, d.y & 255, 0]),
+        intervalMs,
+      );
+      return;
+    }
+    await this.sendRelativeReports(deltas, buttons, intervalMs, signal);
+  }
+  private async sendRelativeReports(
+    deltas: Point[],
+    buttons: number,
+    intervalMs: number,
+    signal: AbortSignal,
+  ) {
+    let lastStart = 0;
+    for (let i = 0; i < deltas.length; i++) {
+      if (i)
+        await pause(Math.max(0, lastStart + intervalMs - performance.now()));
+      signal.throwIfAborted();
+      lastStart = performance.now();
+      await this.relative(deltas[i], buttons);
+    }
   }
   async execute(
     action: InputAction,
@@ -524,16 +575,12 @@ export class HIDInputSession {
         signal.throwIfAborted();
         await this.relative({ x: 0, y: 0 }, 1);
         if (dragging) await delay(500, undefined, { signal });
-        let lastStart = 0;
-        for (const report of plan.reports) {
-          if (lastStart)
-            await pause(
-              Math.max(0, lastStart + plan.intervalMs - performance.now()),
-            );
-          signal.throwIfAborted();
-          lastStart = performance.now();
-          await this.relative(report, 1);
-        }
+        await this.sendRelativeReports(
+          plan.reports,
+          1,
+          plan.intervalMs,
+          signal,
+        );
       } finally {
         await this.relative({ x: 0, y: 0 }, 0);
       }

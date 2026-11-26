@@ -260,6 +260,43 @@ const phoneConfig = (): DeviceConfig => ({
   screen: { source: 'usb', deviceId: 'usb-a' },
 });
 
+test('a 5000 ms swipe can be cancelled after movement and releases the button', async () => {
+  fastTimers();
+  const cancel = new AbortController();
+  const buttons: number[] = [];
+  const input = new HIDInputSession(
+    {
+      send: async (_peer: string, report: number, bytes: number[]) => {
+        if (report === 3) {
+          buttons.push(bytes[0]);
+          if (bytes[0] && (bytes[1] || bytes[2])) cancel.abort();
+        }
+      },
+      sendBatch: async () => assert.fail('gesture must remain interruptible'),
+    } as unknown as ConstructorParameters<typeof HIDInputSession>[0],
+    'peer-a',
+  );
+  Object.assign(input, {
+    mapping: { width: 800, height: 1200, turn: 0 },
+    motion: linear,
+  });
+  const { screen } = simulatedPhone(phoneConfig());
+  await assert.rejects(
+    input.execute(
+      {
+        type: 'swipe',
+        from: { x: 100, y: 100 },
+        to: { x: 700, y: 1000 },
+        durationMs: 5000,
+      },
+      screen,
+      cancel.signal,
+    ),
+    { name: 'AbortError' },
+  );
+  assert.equal(buttons.at(-1), 0);
+});
+
 test('connection measures and persists movement before the first swipe; reconnect reuses saved data without probes', async () => {
   fastTimers();
   const config = phoneConfig();
@@ -267,9 +304,9 @@ test('connection measures and persists movement before the first swipe; reconnec
   await first.input.verify(first.screen);
   assert.equal(first.pressed(), 0);
   assert.equal(config.pointerMotion!.samples.length, 10);
-  assert.equal(config.pointerMotion!.validation.samples.length, 3);
-  assert.ok(first.probes.some((d) => d.x === 2));
-  assert.ok(first.probes.some((d) => d.y === 2));
+  assert.equal(config.pointerMotion!.validation.samples.length, 4);
+  assert.ok(first.probes.some((d) => Math.abs(d.x) === 2));
+  assert.ok(first.probes.some((d) => Math.abs(d.y) === 2));
   const measuredAt = config.pointerMotion!.measuredAt;
   await first.input.execute(
     {
@@ -317,7 +354,7 @@ test('explicit reconfiguration refits changed pointer sensitivity before any dra
     curveModel({ a: 1.8, b: 0.11 }, { a: 1.7, b: 0.1 }),
   );
   await next.input.verify(next.screen);
-  assert.ok(next.probes.some((p) => p.x === 2));
+  assert.ok(next.probes.some((p) => Math.abs(p.x) === 2));
   assert.ok(
     predictMovement(config.pointerMotion!.model, { x: 8, y: 0 }).x > old + 0.5,
   );
@@ -374,6 +411,16 @@ test('cache binding includes source, Bluetooth identity, dimensions, rotation an
   const geometry = { width: 800, height: 1200, turn: 0 as const };
   const binding = motionBinding(config, geometry);
   assert.ok(compatibleMotionProfile(config.pointerMotion, binding));
+  const missingY = structuredClone(config.pointerMotion!);
+  missingY.validation.samples.pop();
+  assert.equal(compatibleMotionProfile(missingY, binding), false);
+  missingY.validation.samples.push(missingY.validation.samples[0]);
+  assert.equal(compatibleMotionProfile(missingY, binding), false);
+  const unconfirmed = structuredClone(config.pointerMotion!);
+  unconfirmed.samples.find(
+    (s) => s.delta.x === 2 && s.delta.y === 0,
+  )!.repetitions = undefined;
+  assert.equal(compatibleMotionProfile(unconfirmed, binding), false);
   for (const other of [
     { ...config, bluetoothPeerId: 'peer-b' },
     { ...config, screen: { source: 'airplay' as const } },
@@ -471,7 +518,7 @@ test('stable validation drift is corrected and checked again before the table is
   const config = phoneConfig();
   const phone = simulatedPhone(config, response, {
     movement: (delta) => {
-      if (delta.x === 2 && delta.y === 2) warmed = true;
+      if (Math.abs(delta.x) === 2 && Math.abs(delta.y) === 2) warmed = true;
       const d = physicalMovement(response, delta);
       if (warmed && delta.x === 8 && !delta.y) d.x *= 1.12;
       return d;

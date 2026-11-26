@@ -76,7 +76,7 @@ final class FrameWriter: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
         let now = ProcessInfo.processInfo.systemUptime
-        guard now - last >= 1.0 / 12.0,
+        guard now - last >= 1.0 / 24.0,
               let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         last = now
         let original = CIImage(cvPixelBuffer: buffer)
@@ -157,13 +157,17 @@ final class FrameWriter: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
             let error = notification.userInfo?[AVCaptureSessionErrorKey] as? NSError
             fail(error?.localizedDescription ?? "USB capture session failed.")
         }
+        let frames = DispatchQueue(label: "midscene.usb.frames")
+        // Keep the first buffer queued until the socket handshake has been written.
+        frames.suspend()
+        output.setSampleBufferDelegate(writer, queue: frames)
         session.startRunning()
         guard session.isRunning else { fail("USB capture session could not start.") }
         if let output = captureOutput {
             do { try output.write(contentsOf: Data("ready\n".utf8)) }
             catch { exit(1) }
         }
-        output.setSampleBufferDelegate(writer, queue: DispatchQueue(label: "midscene.usb.frames"))
+        frames.resume()
         withExtendedLifetime((session, writer, observer)) { RunLoop.main.run() }
     }
 }

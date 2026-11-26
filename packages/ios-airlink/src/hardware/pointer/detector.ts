@@ -8,6 +8,14 @@ export interface PointerCandidate extends Point {
   bounds: { left: number; top: number; right: number; bottom: number };
 }
 
+/** A second cursor-sized change is ambiguous; ignore only much smaller fragments. */
+export function dominantPointer(candidates: PointerCandidate[]) {
+  const [first, second] = [...candidates].sort((a, b) => b.area - a.area);
+  return first && (!second || first.area >= second.area * 4)
+    ? first
+    : undefined;
+}
+
 export function pointerNear(
   candidate: PointerCandidate,
   point: Point,
@@ -22,36 +30,113 @@ export function pointerNear(
   );
 }
 
+const decodedFrames = new WeakMap<
+  ScreenFrame,
+  { key: string; buffer: Promise<Buffer> }
+>();
+
+function decodeGreyscale(frame: ScreenFrame, width: number, height: number) {
+  const key = `${width}x${height}`;
+  const cached = decodedFrames.get(frame);
+  if (cached?.key === key) return cached.buffer;
+  const buffer = sharp(frame.jpeg)
+    .resize(width, height)
+    .greyscale()
+    .raw()
+    .toBuffer();
+  decodedFrames.set(frame, { key, buffer });
+  return buffer;
+}
+
+function chromeInsets(width: number, height: number) {
+  // Ignore iOS status bar clock/signal ticks and Home indicator bar on phone screens.
+  if (Math.max(width, height) < 300)
+    return { top: 0, bottom: 0, left: 0, right: 0 };
+  if (height >= width * 1.35)
+    return {
+      top: Math.round(height * 0.055),
+      bottom: Math.round(height * 0.035),
+      left: 0,
+      right: 0,
+    };
+  if (width >= height * 1.35)
+    return {
+      top: 0,
+      bottom: Math.round(height * 0.05),
+      left: Math.round(width * 0.045),
+      right: Math.round(width * 0.045),
+    };
+  return { top: 0, bottom: 0, left: 0, right: 0 };
+}
+
 async function frameDifference(before: ScreenFrame, after: ScreenFrame) {
   if (before.width !== after.width || before.height !== after.height)
     throw new Error('Screen geometry changed during pointer measurement');
   const scale = Math.min(1, 720 / Math.max(before.width, before.height));
   const width = Math.round(before.width * scale);
   const height = Math.round(before.height * scale);
-  const decode = (frame: ScreenFrame) =>
-    sharp(frame.jpeg).resize(width, height).greyscale().raw().toBuffer();
-  const [a, b] = await Promise.all([decode(before), decode(after)]);
-  let { difference, changed } = pixelDifference(a, b, width, height);
-  let compared = width * height;
+  const [a, b] = await Promise.all([
+    decodeGreyscale(before, width, height),
+    decodeGreyscale(after, width, height),
+  ]);
+  const chrome = chromeInsets(width, height);
+  let { difference, changed, brighter } = pixelDifference(
+    a,
+    b,
+    width,
+    height,
+    0,
+    chrome,
+  );
+  let compared =
+    Math.max(1, width - chrome.left - chrome.right) *
+    Math.max(1, height - chrome.top - chrome.bottom);
   // Skip registration when the raw difference is already mostly stationary.
-  if (changed > width * height * 0.02 && Math.min(width, height) >= 32) {
+  // Translation cannot explain a near-uniform increase or decrease in exposure.
+  // Reject that reference before running ECC on a low-texture image.
+  const exposureShift =
+    Math.max(brighter, changed - brighter) > compared * 0.95;
+  if (
+    !exposureShift &&
+    changed > compared * 0.02 &&
+    Math.min(width, height) >= 32
+  ) {
     const aligned = await alignPointerFrame(a, b, width, height);
     if (aligned) {
       // Compare the same interior on both sides. The warp's outer pixels
       // have no matching observation in the other frame.
-      const raw = pixelDifference(a, b, width, height, registrationMargin);
+      const raw = pixelDifference(
+        a,
+        b,
+        width,
+        height,
+        registrationMargin,
+        chrome,
+      );
       const registered = pixelDifference(
         a,
         aligned,
         width,
         height,
         registrationMargin,
+        chrome,
       );
       if (registered.changed < raw.changed * 0.5) {
         difference = registered.difference;
         changed = registered.changed;
         compared =
-          (width - 2 * registrationMargin) * (height - 2 * registrationMargin);
+          Math.max(
+            1,
+            width -
+              Math.max(registrationMargin, chrome.left) -
+              Math.max(registrationMargin, chrome.right),
+          ) *
+          Math.max(
+            1,
+            height -
+              Math.max(registrationMargin, chrome.top) -
+              Math.max(registrationMargin, chrome.bottom),
+          );
       }
     }
   }
@@ -59,7 +144,7 @@ async function frameDifference(before: ScreenFrame, after: ScreenFrame) {
     throw new Error(
       'Screen changed during pointer measurement. Keep a static screen visible.',
     );
-  return { difference, width, height, scale };
+  return { difference, width, height, scale, chrome };
 }
 
 function pixelDifference(
@@ -68,18 +153,28 @@ function pixelDifference(
   width: number,
   height: number,
   margin = 0,
+  chrome = { top: 0, bottom: 0, left: 0, right: 0 },
 ) {
   const difference = new Uint8Array(width * height);
   let changed = 0;
+  const minY = Math.max(margin, chrome.top);
+  const maxY = height - Math.max(margin, chrome.bottom);
+  const minX = Math.max(margin, chrome.left);
+  const maxX = width - Math.max(margin, chrome.right);
+  let brighter = 0;
   for (let y = margin; y < height - margin; y++) {
+    const inChromeY = y < minY || y >= maxY;
     for (let x = margin; x < width - margin; x++) {
       const i = y * width + x;
       const delta = Math.abs(before[i] - after[i]);
       difference[i] = delta;
-      if (delta >= 14) changed++;
+      if (!inChromeY && x >= minX && x < maxX && delta >= 14) {
+        changed++;
+        if (after[i] > before[i]) brighter++;
+      }
     }
   }
-  return { difference, changed };
+  return { difference, changed, brighter };
 }
 
 export interface PointerPositionScore {
@@ -130,11 +225,21 @@ export async function detectPointerChanges(
   before: ScreenFrame,
   after: ScreenFrame,
 ): Promise<PointerCandidate[]> {
-  const { difference, width, height, scale } = await frameDifference(
+  const { difference, width, height, scale, chrome } = await frameDifference(
     before,
     after,
   );
-  const mask = Uint8Array.from(difference, (delta) => (delta >= 14 ? 1 : 0));
+  const mask = new Uint8Array(difference.length);
+  const minY = chrome.top;
+  const maxY = height - chrome.bottom;
+  const minX = chrome.left;
+  const maxX = width - chrome.right;
+  for (let y = minY; y < maxY; y++) {
+    for (let x = minX; x < maxX; x++) {
+      const i = y * width + x;
+      if (difference[i] >= 12) mask[i] = 1;
+    }
+  }
   const candidates: PointerCandidate[] = [];
   const queue = new Int32Array(mask.length);
   for (let i = 0; i < mask.length; i++) {
@@ -146,21 +251,24 @@ export async function detectPointerChanges(
     let sx = 0;
     let sy = 0;
     let strength = 0;
-    let minX = width;
-    let minY = height;
-    let maxX = 0;
-    let maxY = 0;
+    let peak = 0;
+    let minBX = width;
+    let minBY = height;
+    let maxBX = 0;
+    let maxBY = 0;
     while (start < end) {
       const index = queue[start++];
       const x = index % width;
       const y = Math.floor(index / width);
+      const delta = difference[index];
       sx += x;
       sy += y;
-      strength += difference[index];
-      minX = Math.min(minX, x);
-      maxX = Math.max(maxX, x);
-      minY = Math.min(minY, y);
-      maxY = Math.max(maxY, y);
+      strength += delta;
+      if (delta > peak) peak = delta;
+      minBX = Math.min(minBX, x);
+      maxBX = Math.max(maxBX, x);
+      minBY = Math.min(minBY, y);
+      maxBY = Math.max(maxBY, y);
       for (const [dx, dy] of [
         [-1, 0],
         [1, 0],
@@ -170,19 +278,21 @@ export async function detectPointerChanges(
         const nx = x + dx;
         const ny = y + dy;
         const next = ny * width + nx;
-        if (nx >= 0 && nx < width && ny >= 0 && ny < height && mask[next]) {
+        if (nx >= minX && nx < maxX && ny >= minY && ny < maxY && mask[next]) {
           mask[next] = 0;
           queue[end++] = next;
         }
       }
     }
-    const w = maxX - minX + 1;
-    const h = maxY - minY + 1;
+    const w = maxBX - minBX + 1;
+    const h = maxBY - minBY + 1;
+    // Allow iOS icon-highlight morphing (larger bounds) and I-beam cursors (smaller area).
     if (
-      end < 5 ||
-      end > width * height * 0.015 ||
-      w > width * 0.15 ||
-      h > height * 0.15
+      end < 4 ||
+      peak < 15 ||
+      end > width * height * 0.04 ||
+      w > width * 0.22 ||
+      h > height * 0.22
     )
       continue;
     candidates.push({
@@ -191,10 +301,10 @@ export async function detectPointerChanges(
       area: end,
       strength: strength / end,
       bounds: {
-        left: minX / scale,
-        top: minY / scale,
-        right: (maxX + 1) / scale,
-        bottom: (maxY + 1) / scale,
+        left: minBX / scale,
+        top: minBY / scale,
+        right: (maxBX + 1) / scale,
+        bottom: (maxBY + 1) / scale,
       },
     });
   }
