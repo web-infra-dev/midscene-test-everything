@@ -15,6 +15,7 @@ import {
   RobotArmError,
   type RobotArmFeedbackStatus,
   type RobotDriver,
+  type RobotFault,
   type RobotKinematics,
   type RobotMotionSample,
   type RobotState,
@@ -92,6 +93,10 @@ export interface Mg400Payload {
 export const MG400_MAX_PAYLOAD_KG = 0.75;
 export interface Mg400Options {
   host: string;
+  /**
+   * Controller HTTP API, 22000 by default: setup, alarm groups for a
+   * realtime-monitored sequence, and clear transactions.
+   */
   httpPort?: number;
   /** Studio's HTTP transaction by default; TCP must be explicitly selected. */
   clearFaultsTransport?: 'studio' | 'tcp';
@@ -170,9 +175,48 @@ const LIFECYCLE_TIMEOUT_MS = 5000;
  * while a caller polling at 50 ms still gets the full interval's freshness.
  */
 const STATE_POLL_IDLE_INTERVALS = 3;
-const SEQUENCE_FAULT_POLL_MS = 40;
+const SEQUENCE_FAULT_POLL_MS = 80;
+/**
+ * How old a dashboard fault sample may be before it can no longer gate motion.
+ * The dashboard is serial and shares its queue with the 10 ms pose poll, so a
+ * scheduling stall of a few hundred milliseconds must not abort a motion; the
+ * next motion reply still reports a real controller fault.
+ */
+const SEQUENCE_FAULT_STATE_MAX_AGE_MS = 500;
+/**
+ * How long a motion sequence may run without a fresh 30004 frame. The push
+ * stream is explicitly best-effort and the controller or host can pause it for
+ * a few hundred milliseconds; a fault is still reported immediately by the
+ * frame flags or by the next motion reply, so a gap only stops the sequence
+ * after the channel's own default staleness window.
+ */
+const SEQUENCE_FEEDBACK_MAX_AGE_MS = 1000;
+/** Log a push-stream gap during a sequence once it is long enough to see. */
+const SEQUENCE_FEEDBACK_GAP_LOG_MS = 100;
+/** A tolerated gap longer than this gets one console line per sequence. */
+const SEQUENCE_FEEDBACK_GAP_WARN_MS = 500;
+/**
+ * Authoritative alarm groups are read over the controller's HTTP channel
+ * (port 22000) while the sequence runs. It is independent of the serial 29999
+ * dashboard queue, so it neither delays nor is delayed by the pose poll.
+ */
+const SEQUENCE_HTTP_ALARM_POLL_MS = 250;
+/** Back off HTTP alarm polling after a failure so a dead endpoint stays quiet. */
+const SEQUENCE_HTTP_ALARM_RETRY_MS = 1000;
+/** A stuck HTTP endpoint must not hold the sequence monitor open. */
+const SEQUENCE_HTTP_ALARM_TIMEOUT_MS = 1000;
+/** How often the realtime monitor re-checks while a motion reply is pending. */
+const SEQUENCE_FEEDBACK_MONITOR_MS = 50;
 const SEQUENCE_MODE_FRAME_MAX_AGE_MS = 100;
-const SEQUENCE_POSE_POLL_MS = 10;
+/**
+ * Delay before the next pose read, measured from the previous reply. This is
+ * not a 100 Hz timer: each GetPose round trip adds to the period, so the
+ * effective rate is `1 / (RTT + delay)`. 25 ms still leaves room for three
+ * stable handoff samples inside ~100 ms while giving the serial dashboard
+ * headroom for preflight, state reads and the pose replies themselves. The
+ * 500 ms pose freshness gate tolerates a slower reply.
+ */
+const SEQUENCE_POSE_POLL_MS = 25;
 /** How long `emergencyStop()` waits for the controller to report no motion. */
 const EMERGENCY_STOP_CONFIRM_MS = 5000;
 /** `MoveJog` acknowledgement window; the controller answers in milliseconds. */
@@ -1032,6 +1076,8 @@ export class Mg400Adapter implements RobotArmAdapter {
   private sampleSequence = 0;
   private motionSequence = 0;
   private lastMotionFrameAt = 0;
+  private lastFeedbackFrameAt = 0;
+  private lastFeedbackControllerMs: bigint | undefined;
   private lastCommandAt = 0;
   private softwarePaused = false;
   private safetyPriority = 0;
@@ -1359,6 +1405,25 @@ export class Mg400Adapter implements RobotArmAdapter {
       staleAfterMs: this.config.feedbackStaleAfterMs,
       onStatusChange: options.onFeedbackStatus,
       onFrame: (frame) => {
+        const previousAt = this.lastFeedbackFrameAt;
+        const previousControllerMs = this.lastFeedbackControllerMs;
+        this.lastFeedbackFrameAt = frame.receivedAt;
+        this.lastFeedbackControllerMs = frame.controllerTimestampMs;
+        const gapMs = previousAt ? frame.receivedAt - previousAt : 0;
+        if (this.sequenceOwner && gapMs >= SEQUENCE_FEEDBACK_GAP_LOG_MS)
+          debugMg400('30004 feedback gap during sequence', {
+            gapMs,
+            // Consecutive controller timestamps across a large wall gap mean
+            // the frames were buffered and read late (the process stalled or
+            // the TCP stream was backed up), not that the controller paused.
+            controllerGapMs:
+              previousControllerMs === undefined
+                ? undefined
+                : Number(frame.controllerTimestampMs - previousControllerMs),
+            mode: frame.mode,
+            running: frame.running,
+            errorActive: frame.errorActive,
+          });
         if (frame.dragStatus !== 0 || frame.mode === MG400_DRAG_MODE)
           this.motionReconnectAfterDrag = true;
       },
@@ -1446,6 +1511,10 @@ export class Mg400Adapter implements RobotArmAdapter {
   }
   private async openConnection() {
     this.connectionReady = false;
+    // A new feedback socket has no history, so the first frame must not be
+    // reported as a multi-second gap against the previous connection.
+    this.lastFeedbackFrameAt = 0;
+    this.lastFeedbackControllerMs = undefined;
     if (this.payloadApplication.read().status !== 'unconfirmed')
       this.payloadApplication.invalidate('connection-lost');
     this.getAnglePaddingLogged = false;
@@ -1649,6 +1718,18 @@ export class Mg400Adapter implements RobotArmAdapter {
   ) {
     targets = structuredClone(targets);
     options = { ...options };
+    let realtimeFaultMonitoring =
+      options.realtimeFaultMonitoring === true &&
+      this.config.feedbackPort !== 0;
+    let feedbackMissingSince: number | undefined;
+    let feedbackGapWarned = false;
+    let lastHttpAlarmAt = 0;
+    let lastHttpFaults: RobotFault[] = [];
+    let httpAlarmInFlight:
+      | Promise<{ faults: RobotFault[]; error?: string }>
+      | undefined;
+    let httpAlarmFailureLogged = false;
+    const httpAlarmAbort = new AbortController();
     if (this.active)
       throw new RobotArmError('BUSY', 'MG400 has an outstanding motion', 409);
     const owner = {};
@@ -1812,6 +1893,7 @@ export class Mg400Adapter implements RobotArmAdapter {
       released = true;
       if (timer) clearTimeout(timer);
       if (poseTimer) clearTimeout(poseTimer);
+      httpAlarmAbort.abort();
       if (this.sequenceOwner === owner) {
         this.sequenceOwner = undefined;
         this.releaseSequence = undefined;
@@ -1960,16 +2042,207 @@ export class Mg400Adapter implements RobotArmAdapter {
       // Never use the incompatible 30004 TCP vector to time a handoff.
       await readSequencePose();
       if (faultError) throw faultError;
+      const httpFault = (faults: RobotFault[]) => {
+        const frame = this.feedback.current();
+        return new RobotArmError(
+          'ROBOT_FAULT',
+          `MG400 reported a controller fault during the sequence: ${faults[0].message}`,
+          409,
+          {
+            faults,
+            mode: frame ? String(frame.mode) : undefined,
+            errorActive: frame?.errorActive,
+            source: 'http-alarms',
+          },
+        );
+      };
+      const checkRealtimeState = () => {
+        if (realtimeFaultMonitoring && lastHttpFaults.length)
+          throw httpFault(lastHttpFaults);
+        const frame = this.feedback.current();
+        if (!frame) return;
+        if (
+          frame.enabled &&
+          frame.dragStatus === 0 &&
+          !frame.pauseCmdFlag &&
+          [5, 7, 8].includes(frame.mode) &&
+          !this.softwarePaused
+        )
+          return;
+        throw new RobotArmError(
+          'ROBOT_FAULT',
+          'MG400 sequence interrupted by controller state',
+          409,
+          {
+            mode: String(frame.mode),
+            errorActive: frame.errorActive,
+            ...(lastHttpFaults.length ? { faults: lastHttpFaults } : {}),
+          },
+        );
+      };
+      /**
+       * Authoritative alarm groups over the controller's HTTP channel. Reads
+       * are deduplicated so concurrent motion boundaries share one request. A
+       * failure is diagnostic only: the 30004 fast trip still gates motion.
+       */
+      const readHttpAlarms = () => {
+        if (httpAlarmInFlight) return httpAlarmInFlight;
+        lastHttpAlarmAt = Date.now();
+        httpAlarmInFlight = this.readControllerAlarms(
+          httpAlarmAbort.signal,
+          SEQUENCE_HTTP_ALARM_TIMEOUT_MS,
+        )
+          .then((faults) => {
+            lastHttpFaults = faults;
+            httpAlarmFailureLogged = false;
+            return { faults };
+          })
+          .catch((error) => {
+            if (
+              httpAlarmAbort.signal.aborted ||
+              (isRobotArmError(error) && error.code === 'ACTION_STOPPED')
+            )
+              return { faults: [] as RobotFault[] };
+            const message =
+              error instanceof Error ? error.message : String(error);
+            if (!httpAlarmFailureLogged) {
+              httpAlarmFailureLogged = true;
+              debugMg400('MG400 HTTP alarm read failed; relying on 30004', {
+                error: message,
+              });
+            }
+            return { faults: [] as RobotFault[], error: message };
+          })
+          .finally(() => {
+            httpAlarmInFlight = undefined;
+          });
+        return httpAlarmInFlight;
+      };
+      /**
+       * 30004 is the fast trip; the HTTP groups are the authoritative codes.
+       * Periodic reads run in the background so a slow endpoint cannot delay
+       * motion, while a 30004 alarm is confirmed before it is reported.
+       */
+      const confirmRealtimeFault = async () => {
+        if (!realtimeFaultMonitoring) return;
+        const frame = this.feedback.current();
+        if (frame?.errorActive) {
+          let result = await readHttpAlarms();
+          control();
+          if (!result.faults.length && !result.error) {
+            // The alarm bit can lead the HTTP snapshot by one poll; one fresh
+            // read keeps a confirmed alarm from being reported without codes.
+            result = await readHttpAlarms();
+            control();
+          }
+          if (result.faults.length) throw httpFault(result.faults);
+          throw new RobotArmError(
+            'ROBOT_FAULT',
+            'MG400 realtime state reports an alarm during the sequence',
+            409,
+            {
+              mode: String(frame.mode),
+              errorActive: true,
+              source: '30004',
+              alarmReadError: result.error,
+            },
+          );
+        }
+        const due =
+          Date.now() - lastHttpAlarmAt >=
+          (httpAlarmFailureLogged
+            ? SEQUENCE_HTTP_ALARM_RETRY_MS
+            : SEQUENCE_HTTP_ALARM_POLL_MS);
+        if (due) void readHttpAlarms();
+        if (lastHttpFaults.length) throw httpFault(lastHttpFaults);
+      };
+      const feedbackLost = (now: number, alarmReadError?: string) => {
+        const frame = this.feedback.latestFrame();
+        return new RobotArmError(
+          'SEQUENCE_FEEDBACK_LOST',
+          'MG400 realtime state is missing or stale during the sequence',
+          409,
+          {
+            feedbackAgeMs: frame ? now - frame.receivedAt : undefined,
+            missingForMs:
+              frame || feedbackMissingSince === undefined
+                ? undefined
+                : now - feedbackMissingSince,
+            maxAgeMs: SEQUENCE_FEEDBACK_MAX_AGE_MS,
+            reason: this.feedback.status().reason,
+            alarmReadError,
+          },
+        );
+      };
+      /**
+       * The push stream is best-effort. A reconnect has no frame at all, and a
+       * delivered frame ages while the controller or host is busy, so both
+       * share the same budget instead of failing on the first empty check.
+       */
+      const realtimeFeedbackTooOld = (now: number) => {
+        const frame = this.feedback.latestFrame();
+        if (!frame) {
+          feedbackMissingSince ??= now;
+          return now - feedbackMissingSince > SEQUENCE_FEEDBACK_MAX_AGE_MS;
+        }
+        feedbackMissingSince = undefined;
+        return now - frame.receivedAt > SEQUENCE_FEEDBACK_MAX_AGE_MS;
+      };
+      /**
+       * Check the push stream after giving pending socket data a turn. Node
+       * runs timers before socket callbacks, so a check that fires right after
+       * the process was busy would otherwise count frames it has not read yet
+       * as a lost stream. `setImmediate` runs in the check phase, after the
+       * poll phase has decoded anything already queued on the socket.
+       */
+      const checkRealtimeAfterIO = async () => {
+        if (!realtimeFaultMonitoring) return;
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        control();
+        checkRealtimeState();
+        await confirmRealtimeFault();
+        const now = Date.now();
+        const frame = this.feedback.latestFrame();
+        const ageMs = frame ? now - frame.receivedAt : undefined;
+        if (
+          !feedbackGapWarned &&
+          ageMs !== undefined &&
+          ageMs >= SEQUENCE_FEEDBACK_GAP_WARN_MS
+        ) {
+          // One console line per sequence is enough to show that a degraded
+          // stream was tolerated instead of treated as a robot fault.
+          feedbackGapWarned = true;
+          logMg400('30004 feedback gap tolerated during the sequence', {
+            ageMs,
+            maxAgeMs: SEQUENCE_FEEDBACK_MAX_AGE_MS,
+          });
+        }
+        if (realtimeFeedbackTooOld(now)) {
+          // The push stream is blind. Before declaring it lost, use the
+          // independent HTTP channel to report a real fault with codes.
+          const result = await readHttpAlarms();
+          control();
+          if (result.faults.length) throw httpFault(result.faults);
+          throw feedbackLost(now, result.error);
+        }
+      };
       const checkFeedback = (controlOnly?: boolean) => {
         control();
         if (controlOnly) return;
         if (faultError) throw faultError;
+        if (realtimeFaultMonitoring) {
+          // A definite controller state fault fails immediately. Stream age is
+          // checked at the async motion boundaries, where unread frames can
+          // drain before the sequence is declared blind.
+          checkRealtimeState();
+          return;
+        }
         const now = Date.now();
         const faultSampleAgeMs = now - faultAt;
-        if (faultSampleAgeMs > 200)
+        if (faultSampleAgeMs > SEQUENCE_FAULT_STATE_MAX_AGE_MS)
           throw new RobotArmError(
             'SEQUENCE_FAULT_STATE_STALE',
-            'MG400 fault state is older than 200 ms',
+            `MG400 fault state is older than ${SEQUENCE_FAULT_STATE_MAX_AGE_MS} ms`,
             409,
             {
               faultSampleAgeMs,
@@ -1992,21 +2265,48 @@ export class Mg400Adapter implements RobotArmAdapter {
                 faultReadTiming?.modeFallbackStartedAt,
             },
           );
-        const frame = this.feedback.current();
-        if (
-          frame &&
-          (!frame.enabled ||
-            frame.dragStatus !== 0 ||
-            frame.pauseCmdFlag ||
-            ![5, 7, 8].includes(frame.mode) ||
-            this.softwarePaused)
-        )
-          throw new RobotArmError(
-            'ROBOT_FAULT',
-            'MG400 sequence interrupted by controller state',
-            409,
-          );
+        checkRealtimeState();
       };
+      // A motion-channel reply can take longer than the realtime freshness
+      // window, including when Sync is waiting for the final lift. Monitor the
+      // push stream while the reply is outstanding.
+      const observeMotionReply = async <T>(send: () => Promise<T>) => {
+        if (!realtimeFaultMonitoring) return send();
+        await checkRealtimeAfterIO();
+        let monitoring = true;
+        const interrupted = (async (): Promise<never> => {
+          while (monitoring) {
+            await new Promise<void>((resolve) =>
+              setTimeout(resolve, SEQUENCE_FEEDBACK_MONITOR_MS),
+            );
+            if (!monitoring) break;
+            await checkRealtimeAfterIO();
+          }
+          // The reply won the race; never resolve the loser and never let a
+          // late rejection escape after the sequence stopped observing.
+          return new Promise<never>(() => undefined);
+        })();
+        interrupted.catch(() => undefined);
+        try {
+          return await Promise.race([send(), interrupted]);
+        } finally {
+          monitoring = false;
+        }
+      };
+      // A controller without a usable 30004 stream is a downgrade, not a
+      // reason to refuse the logo: the adapter still has dashboard fault
+      // polling. Only a stream that was working and then went silent is a
+      // reason to stop once the budget above expires.
+      if (
+        realtimeFaultMonitoring &&
+        this.feedback.latestFrame() === undefined
+      ) {
+        realtimeFaultMonitoring = false;
+        logMg400(
+          '30004 feedback is unavailable; using dashboard fault polling for this sequence',
+        );
+      }
+      await checkRealtimeAfterIO();
       const sequence = createLinearMotionSequence(targets, options, {
         check: checkFeedback,
         feedback: () => latest,
@@ -2035,8 +2335,10 @@ export class Mg400Adapter implements RobotArmAdapter {
           tracedTarget = target.options.traceCompletion
             ? { submittedAtMs: submittedAt, pose: target.pose }
             : undefined;
-          await this.motion.send(
-            buildMg400MotionCommand('MovL', target.pose, target.options),
+          await observeMotionReply(() =>
+            this.motion.send(
+              buildMg400MotionCommand('MovL', target.pose, target.options),
+            ),
           );
           control();
           return { id: randomUUID(), acceptedAt: Date.now(), submittedAt };
@@ -2072,11 +2374,12 @@ export class Mg400Adapter implements RobotArmAdapter {
           queuedTrace = timing;
           for (let start = 0; start < commands.length; start += 4) {
             checkFeedback();
+            await checkRealtimeAfterIO();
             this.invalidateStateSample();
             const group = commands.slice(start, start + 4);
             this.lastCommandAt = Date.now();
             const submittedMs = this.lastCommandAt - submittedAt;
-            await this.motion.sendBatch(group);
+            await observeMotionReply(() => this.motion.sendBatch(group));
             timing.groups.push({
               firstTarget: start + 1,
               targets: group.length,
@@ -2089,9 +2392,11 @@ export class Mg400Adapter implements RobotArmAdapter {
         },
         terminal: async (target) => {
           control();
-          await this.motion.send(
-            'Sync()',
-            Math.min(options.timeoutMs, this.config.motionTimeoutMs),
+          await observeMotionReply(() =>
+            this.motion.send(
+              'Sync()',
+              Math.min(options.timeoutMs, this.config.motionTimeoutMs),
+            ),
           );
           const syncRepliedAtMs = Date.now();
           control();
@@ -2173,10 +2478,11 @@ export class Mg400Adapter implements RobotArmAdapter {
         stopped: () => this.sequenceOwner !== owner,
         release,
       });
-      timer = setTimeout(
-        () => void pollFaults(),
-        Math.max(0, faultAt + SEQUENCE_FAULT_POLL_MS - Date.now()),
-      );
+      if (!realtimeFaultMonitoring)
+        timer = setTimeout(
+          () => void pollFaults(),
+          Math.max(0, faultAt + SEQUENCE_FAULT_POLL_MS - Date.now()),
+        );
       return sequence;
     } catch (error) {
       release();
@@ -2514,11 +2820,28 @@ export class Mg400Adapter implements RobotArmAdapter {
     this.lastFaultSampleAt = sampledAt;
     return { fault, sampledAt };
   }
+  /**
+   * Authoritative alarm groups over the controller's HTTP channel. It is
+   * independent of the serial 29999 dashboard queue, so a sequence can use it
+   * while the pose poll owns that queue. Ordinary state reads keep using
+   * GetErrorID(); this channel only supplies codes for the fast 30004 trip.
+   */
+  private readControllerAlarms(
+    signal?: AbortSignal,
+    timeoutMs = SEQUENCE_HTTP_ALARM_TIMEOUT_MS,
+  ): Promise<RobotFault[]> {
+    return this.controller
+      .readState(signal, timeoutMs)
+      .then((sample) =>
+        mg400Faults(sample.raw.alarms.map((group) => group ?? [])),
+      );
+  }
   private async queryState(forcePolling = false): Promise<RobotState> {
     const payloadGeneration = this.payloadEvidence().generation;
     // A fresh 30004 frame supplies mode and motion flags, never Base poses.
-    // Faults always come from GetErrorID(): the four-axis realtime safety bits
-    // and ErrorStatus are not a trustworthy fault source.
+    // Faults for ordinary state reads still come from GetErrorID(); the HTTP
+    // alarm groups are only used inside a realtime-monitored sequence, where
+    // the serial dashboard queue is busy with pose polling.
     const candidate = forcePolling ? undefined : this.feedback.current();
     const feedback =
       candidate && candidate.receivedAt >= this.lastCommandAt

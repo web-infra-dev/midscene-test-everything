@@ -232,6 +232,14 @@ export class Mg400RealtimeChannel {
   current(): Mg400RealtimeFeedback | undefined {
     return this.isUsable() ? this.latest : undefined;
   }
+  /**
+   * Newest decoded frame even after it has aged past the channel's usable
+   * window. Callers that own their own freshness budget (a motion sequence,
+   * for example) need the age to report why they no longer trust it.
+   */
+  latestFrame(): Mg400RealtimeFeedback | undefined {
+    return this.latest;
+  }
   status(): RobotArmFeedbackStatus {
     const usable = this.isUsable();
     return {

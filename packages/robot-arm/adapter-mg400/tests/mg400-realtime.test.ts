@@ -1,4 +1,8 @@
 import { Buffer } from 'node:buffer';
+import {
+  type Server as HttpServer,
+  createServer as createHttpServer,
+} from 'node:http';
 import { type Server, type Socket, createServer } from 'node:net';
 import type { RobotArmFeedbackStatus } from '@midscene/arm-kit/internal/contracts';
 import {
@@ -81,6 +85,21 @@ function feedbackFrame(options: FrameOptions = {}): Buffer {
   return frame;
 }
 
+/** Minimal valid `/protocol/exchange` snapshot for the HTTP alarm channel. */
+function exchangeState(alarms: (number[] | null)[]) {
+  return {
+    controlMode: 'enable',
+    coordinate: 'cartesian',
+    jogMode: 'step',
+    toolCoordinate: 0,
+    userCoordinate: 0,
+    alarms,
+    outputs: [0, 0, 0, 0, 0, 0, 0, 0],
+    jointCoordinate: [0, 0, 0, 0],
+    cartesianCoordinate: [111, 222, 333, 0],
+  };
+}
+
 function listen(server: Server): Promise<number> {
   return new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -104,6 +123,8 @@ function textServer(
   sockets: Set<Socket>,
   commands: string[],
   reply: (command: string) => string,
+  delayMs: number | ((command: string) => number) = 0,
+  onCommand?: (command: string) => void,
 ): Server {
   return createServer((socket) => {
     sockets.add(socket);
@@ -117,8 +138,15 @@ function textServer(
         const command = buffer.slice(0, end + 1);
         buffer = buffer.slice(end + 1);
         commands.push(command);
-        if (!socket.destroyed)
-          socket.write(`0,{${reply(command)}},${command};`);
+        onCommand?.(command);
+        const write = () => {
+          if (!socket.destroyed)
+            socket.write(`0,{${reply(command)}},${command};`);
+        };
+        const delay =
+          typeof delayMs === 'function' ? delayMs(command) : delayMs;
+        if (delay > 0) setTimeout(write, delay);
+        else write();
         end = buffer.indexOf(')');
       }
     });
@@ -128,6 +156,8 @@ function textServer(
 interface Bench {
   adapter: Mg400Adapter;
   commands: string[];
+  httpRequests: { method: string; path: string }[];
+  httpCompleted(): number;
   push(frame: Buffer): void;
   connectedFeedbackClients(): number;
   cleanup(): Promise<void>;
@@ -135,8 +165,20 @@ interface Bench {
 
 interface BenchOptions {
   onCommand?: (command: string) => void;
+  /** Called when the motion channel receives a command, before its reply. */
+  onMotionCommand?: (command: string) => void;
+  /** Delay motion-channel replies, per command, so a pending command covers a gap. */
+  motionReplyDelayMs?: number | ((command: string) => number);
+  /** Command reply budget; long delayed-reply cases need more than the default. */
+  commandTimeoutMs?: number;
+  /** Sync/motion budget; long delayed-reply cases need more than the default. */
+  motionTimeoutMs?: number;
   /** 'closed' binds and releases a port so that nothing listens on 30004. */
   feedbackPort?: 'listen' | 'closed';
+  /** Alarm groups served by GET /protocol/exchange; a function runs per request. */
+  httpAlarms?: (number[] | null)[] | (() => (number[] | null)[]);
+  /** Bind and release the HTTP port so the alarm channel fails fast. */
+  httpFail?: boolean;
   mode?: () => string;
   pose?: () => string;
   feedbackStaleAfterMs?: number;
@@ -145,9 +187,12 @@ interface BenchOptions {
 
 async function bench(options: BenchOptions = {}): Promise<Bench> {
   const commands: string[] = [];
+  const httpRequests: { method: string; path: string }[] = [];
+  let httpCompletedCount = 0;
   const sockets = new Set<Socket>();
   const feedbackClients = new Set<Socket>();
   const servers: Server[] = [];
+  let http: HttpServer | undefined;
   const dashboard = textServer(sockets, commands, (command) => {
     options.onCommand?.(command);
     if (command.startsWith('RobotMode(')) return options.mode?.() ?? '4';
@@ -163,7 +208,13 @@ async function bench(options: BenchOptions = {}): Promise<Bench> {
       return options.pose?.() ?? DASHBOARD_POSE;
     return '';
   });
-  const motion = textServer(sockets, commands, () => '');
+  const motion = textServer(
+    sockets,
+    commands,
+    () => '',
+    options.motionReplyDelayMs ?? 0,
+    (command) => options.onMotionCommand?.(command),
+  );
   servers.push(dashboard, motion);
   const dashboardPort = await listen(dashboard);
   const motionPort = await listen(motion);
@@ -181,13 +232,42 @@ async function bench(options: BenchOptions = {}): Promise<Bench> {
     servers.push(feedback);
     feedbackPort = await listen(feedback);
   }
+  let httpPort: number;
+  if (options.httpFail) {
+    const probe = createHttpServer();
+    httpPort = await listen(probe);
+    await closeServer(probe);
+  } else {
+    http = createHttpServer((req, res) => {
+      httpRequests.push({ method: req.method ?? '', path: req.url ?? '' });
+      if (req.method !== 'GET' || req.url !== '/protocol/exchange') {
+        res.statusCode = 404;
+        res.end();
+        return;
+      }
+      const alarms =
+        typeof options.httpAlarms === 'function'
+          ? options.httpAlarms()
+          : (options.httpAlarms ?? []);
+      res.setHeader('content-type', 'application/json');
+      // Keep-alive would make the fake server wait for an idle socket on
+      // close; alarm reads are short and one-shot.
+      res.setHeader('connection', 'close');
+      res.on('finish', () => {
+        httpCompletedCount += 1;
+      });
+      res.end(JSON.stringify(exchangeState(alarms)));
+    });
+    httpPort = await listen(http);
+  }
   const adapter = new Mg400Adapter({
     host: '127.0.0.1',
     dashboardPort,
     motionPort,
     feedbackPort,
-    commandTimeoutMs: 200,
-    motionTimeoutMs: 1000,
+    httpPort,
+    commandTimeoutMs: options.commandTimeoutMs ?? 200,
+    motionTimeoutMs: options.motionTimeoutMs ?? 1000,
     onFeedbackStatus: options.onFeedbackStatus,
     ...(options.feedbackStaleAfterMs === undefined
       ? {}
@@ -196,6 +276,8 @@ async function bench(options: BenchOptions = {}): Promise<Bench> {
   return {
     adapter,
     commands,
+    httpRequests,
+    httpCompleted: () => httpCompletedCount,
     push(frame) {
       for (const socket of feedbackClients)
         if (!socket.destroyed) socket.write(frame);
@@ -205,6 +287,10 @@ async function bench(options: BenchOptions = {}): Promise<Bench> {
       await adapter.disconnect();
       for (const socket of sockets) socket.destroy();
       for (const socket of feedbackClients) socket.destroy();
+      if (http) {
+        http.closeAllConnections();
+        await closeServer(http);
+      }
       await Promise.all(servers.map(closeServer));
     },
   };
@@ -444,6 +530,272 @@ describe('MG400 ordered motion sequence', () => {
       expect(b.commands.some((command) => command.startsWith('MovL('))).toBe(
         true,
       );
+    } finally {
+      await b.cleanup();
+    }
+  });
+});
+
+describe('MG400 realtime fault monitoring during a sequence', () => {
+  /** Hold the event loop so frames queued on the socket cannot be decoded. */
+  function blockEventLoop(ms: number) {
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+      // Deliberately empty: this is the stall the freshness check must tolerate.
+    }
+  }
+
+  async function connected(
+    options: BenchOptions,
+    hooks: { onMotion?: (command: string) => void },
+  ) {
+    const b = await bench({
+      ...options,
+      onMotionCommand: (command) => hooks.onMotion?.(command),
+    });
+    const connecting = b.adapter.connect();
+    await waitFor(() => b.connectedFeedbackClients() === 1);
+    b.push(feedbackFrame({ mode: 5 }));
+    await connecting;
+    return b;
+  }
+
+  async function sequenceFor(b: Bench) {
+    // Start each case from a known-fresh frame so the measured gap is the one
+    // the case introduces, not connection setup time.
+    b.push(feedbackFrame({ mode: 5 }));
+    await b.adapter.waitForRealtimeFrame(1000);
+    return b.adapter.driver.beginLinearSequence!(
+      [
+        {
+          pose: pose(111, 222, 333),
+          options: { speed: { kind: 'ratio', value: 0.1 } },
+        },
+      ],
+      { timeoutMs: 5000, realtimeFaultMonitoring: true },
+    );
+  }
+
+  it('rides out a brief 30004 gap instead of aborting the sequence', async () => {
+    // The reply is outstanding longer than the old 100/200 ms freshness gate,
+    // with no new frame pushed during that time.
+    const b = await connected(
+      {
+        mode: () => '5',
+        feedbackStaleAfterMs: 250,
+        motionReplyDelayMs: 350,
+        commandTimeoutMs: 5000,
+        motionTimeoutMs: 8000,
+      },
+      {},
+    );
+    try {
+      const sequence = await sequenceFor(b);
+      await sequence.submit(0);
+      await sequence.waitForHandoff();
+      // Refresh before the terminal Sync so this case measures only the gap
+      // introduced while the motion reply was pending, not test scheduling.
+      b.push(feedbackFrame({ mode: 5 }));
+      await b.adapter.waitForRealtimeFrame(1000);
+      await expect(sequence.finish()).resolves.toMatchObject({
+        status: 'completed',
+      });
+    } finally {
+      await b.cleanup();
+    }
+  });
+
+  it('stops once the 30004 stream stays silent past its budget', async () => {
+    const b = await connected(
+      {
+        mode: () => '5',
+        feedbackStaleAfterMs: 5000,
+        motionReplyDelayMs: 1400,
+        commandTimeoutMs: 5000,
+        motionTimeoutMs: 8000,
+      },
+      {},
+    );
+    try {
+      const sequence = await sequenceFor(b);
+      await expect(sequence.submit(0)).rejects.toMatchObject({
+        code: 'SEQUENCE_FEEDBACK_LOST',
+        details: { maxAgeMs: 1000 },
+      });
+    } finally {
+      await b.cleanup();
+    }
+  });
+
+  it('falls back to dashboard polling when 30004 never delivers a frame', async () => {
+    const b = await bench({ feedbackPort: 'closed', mode: () => '5' });
+    try {
+      await b.adapter.connect();
+      const sequence = await b.adapter.driver.beginLinearSequence!(
+        [
+          {
+            pose: pose(111, 222, 333),
+            options: { speed: { kind: 'ratio', value: 0.1 } },
+          },
+        ],
+        { timeoutMs: 5000, realtimeFaultMonitoring: true },
+      );
+      await sequence.submit(0);
+      await sequence.waitForHandoff();
+      await expect(sequence.finish()).resolves.toMatchObject({
+        status: 'completed',
+      });
+      expect(b.commands).toContain('GetErrorID()');
+    } finally {
+      await b.cleanup();
+    }
+  });
+
+  it('confirms a 30004 alarm with the controller HTTP alarm groups', async () => {
+    let alarms: (number[] | null)[] = [];
+    const b = await connected(
+      {
+        mode: () => '5',
+        feedbackStaleAfterMs: 5000,
+        httpAlarms: () => alarms,
+        motionReplyDelayMs: 1400,
+        commandTimeoutMs: 5000,
+        motionTimeoutMs: 8000,
+      },
+      {},
+    );
+    try {
+      const sequence = await sequenceFor(b);
+      await waitFor(() => b.httpCompleted() >= 1);
+      expect(b.httpRequests).toContainEqual({
+        method: 'GET',
+        path: '/protocol/exchange',
+      });
+      alarms = [[70]];
+      b.push(feedbackFrame({ mode: 7, running: true, errorActive: true }));
+      await expect(sequence.submit(0)).rejects.toMatchObject({
+        code: 'ROBOT_FAULT',
+        details: {
+          source: 'http-alarms',
+          faults: [expect.objectContaining({ code: '70' })],
+        },
+      });
+    } finally {
+      await b.cleanup();
+    }
+  });
+
+  it('detects a fault from the HTTP alarm layer without a 30004 error flag', async () => {
+    let alarms: (number[] | null)[] = [];
+    const b = await connected(
+      {
+        mode: () => '5',
+        feedbackStaleAfterMs: 5000,
+        httpAlarms: () => alarms,
+        motionReplyDelayMs: 1400,
+        commandTimeoutMs: 5000,
+        motionTimeoutMs: 8000,
+      },
+      {},
+    );
+    try {
+      const sequence = await sequenceFor(b);
+      await waitFor(() => b.httpCompleted() >= 1);
+      alarms = [[70]];
+      await expect(sequence.submit(0)).rejects.toMatchObject({
+        code: 'ROBOT_FAULT',
+        details: {
+          source: 'http-alarms',
+          faults: [expect.objectContaining({ code: '70' })],
+        },
+      });
+    } finally {
+      await b.cleanup();
+    }
+  });
+
+  it('fails safe on a 30004 alarm when the HTTP alarm channel is unavailable', async () => {
+    const b = await connected(
+      {
+        mode: () => '5',
+        feedbackStaleAfterMs: 5000,
+        httpFail: true,
+        motionReplyDelayMs: 1400,
+        commandTimeoutMs: 5000,
+        motionTimeoutMs: 8000,
+      },
+      {},
+    );
+    try {
+      const sequence = await sequenceFor(b);
+      b.push(feedbackFrame({ mode: 7, running: true, errorActive: true }));
+      await expect(sequence.submit(0)).rejects.toMatchObject({
+        code: 'ROBOT_FAULT',
+        details: {
+          source: '30004',
+          errorActive: true,
+          alarmReadError: expect.any(String),
+        },
+      });
+    } finally {
+      await b.cleanup();
+    }
+  });
+
+  it('keeps drawing when only the HTTP alarm channel is unavailable', async () => {
+    const b = await connected(
+      {
+        mode: () => '5',
+        feedbackStaleAfterMs: 5000,
+        httpFail: true,
+      },
+      {},
+    );
+    try {
+      const sequence = await sequenceFor(b);
+      await sequence.submit(0);
+      await sequence.waitForHandoff();
+      b.push(feedbackFrame({ mode: 5 }));
+      await b.adapter.waitForRealtimeFrame(1000);
+      await expect(sequence.finish()).resolves.toMatchObject({
+        status: 'completed',
+      });
+    } finally {
+      await b.cleanup();
+    }
+  });
+
+  it('drains frames queued during a blocked event loop before judging', async () => {
+    const hooks: { onMotion?: (command: string) => void } = {};
+    const b = await connected(
+      {
+        mode: () => '5',
+        feedbackStaleAfterMs: 5000,
+        motionReplyDelayMs: (command) =>
+          command.startsWith('MovL(') ? 1600 : 0,
+        commandTimeoutMs: 5000,
+        motionTimeoutMs: 8000,
+      },
+      hooks,
+    );
+    let scheduled = false;
+    hooks.onMotion = () => {
+      if (scheduled) return;
+      scheduled = true;
+      setTimeout(() => {
+        // Queue a fresh frame, then stall before the client can read it. When
+        // the loop resumes, the monitor's timer runs before socket callbacks.
+        b.push(feedbackFrame({ mode: 7, running: true }));
+        blockEventLoop(1200);
+      }, 200);
+    };
+    try {
+      const sequence = await sequenceFor(b);
+      await sequence.submit(0);
+      await sequence.waitForHandoff();
+      await expect(sequence.finish()).resolves.toMatchObject({
+        status: 'completed',
+      });
     } finally {
       await b.cleanup();
     }

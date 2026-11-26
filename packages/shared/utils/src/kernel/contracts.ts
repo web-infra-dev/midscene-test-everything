@@ -229,6 +229,8 @@ export interface CartesianHandoff {
 export interface LinearSequenceOptions {
   readonly timeoutMs: number;
   readonly signal?: AbortSignal;
+  /** Use fresh push feedback for in-motion fault monitoring on supporting drivers. */
+  readonly realtimeFaultMonitoring?: boolean;
 }
 /** A command receipt is not a terminal result. Only finish confirms the tail. */
 export interface LinearMotionSequence {

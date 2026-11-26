@@ -1080,7 +1080,10 @@ export class RobotArmRuntime extends RobotKernel {
       const observation =
         saved && atTravelHeight(calibration.observationPose, ctx);
       await drawCalibrationLogo(
-        this.screenMotionHost({ reuseSequencePreflight: true }),
+        this.screenMotionHost({
+          reuseSequencePreflight: true,
+          realtimeFaultMonitoring: true,
+        }),
         calibration,
         ctx,
         canvas.viewport,
@@ -1328,7 +1331,10 @@ export class RobotArmRuntime extends RobotKernel {
     }
   }
   private screenMotionHost(
-    options: { reuseSequencePreflight?: boolean } = {},
+    options: {
+      reuseSequencePreflight?: boolean;
+      realtimeFaultMonitoring?: boolean;
+    } = {},
   ): ScreenMotionHost {
     const preflight =
       options.reuseSequencePreflight && this.abort
@@ -1355,7 +1361,12 @@ export class RobotArmRuntime extends RobotKernel {
             : undefined,
         ),
       beginSequence: (targets, ctx) =>
-        this.beginScreenSequence(targets, ctx, preflight),
+        this.beginScreenSequence(
+          targets,
+          ctx,
+          preflight,
+          options.realtimeFaultMonitoring,
+        ),
       stable: (p, ctx) => this.stable(p, ctx),
       hold: (ms) => this.hold(ms),
       safeLift: (p, c, ctx, onScreen) => this.safeLift(p, c, ctx, onScreen),
@@ -1366,6 +1377,7 @@ export class RobotArmRuntime extends RobotKernel {
     targets: readonly LinearSequenceTarget[],
     ctx: Context,
     preflight?: LinearPreflightScope,
+    realtimeFaultMonitoring?: boolean,
   ) {
     if (!this.adapter.resolver.descriptor('motion.linear-sequence'))
       return undefined;
@@ -1381,6 +1393,7 @@ export class RobotArmRuntime extends RobotKernel {
       {
         timeoutMs: ctx.screen.motionTimeoutMs,
         signal: this.abort?.signal,
+        realtimeFaultMonitoring,
       },
       preflight,
     );

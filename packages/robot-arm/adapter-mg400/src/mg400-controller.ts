@@ -124,7 +124,10 @@ export class Mg400ControllerClient {
       );
   }
 
-  async readState(signal?: AbortSignal): Promise<Mg400ControllerState> {
+  async readState(
+    signal?: AbortSignal,
+    timeoutMs = this.options.timeoutMs,
+  ): Promise<Mg400ControllerState> {
     const controller = new AbortController();
     const abort = () => controller.abort(signal?.reason);
     signal?.addEventListener('abort', abort, { once: true });
@@ -134,6 +137,7 @@ export class Mg400ControllerClient {
       const raw = parseMg400ExchangeState(
         await exchangeMg400Http(this.host, {
           ...this.options,
+          timeoutMs,
           path: '/protocol/exchange',
           signal: controller.signal,
         }),
