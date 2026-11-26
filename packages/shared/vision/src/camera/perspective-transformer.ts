@@ -68,56 +68,77 @@ export class PerspectiveTransformer {
     const nearest = options.sampling === 'nearest';
 
     const source = decoded.data;
+    // The mapping is projective, so the row-only terms can be stepped and the
+    // pixel terms updated incrementally. One reciprocal per pixel is enough;
+    // the previous form divided twice and floored with Math.floor for every
+    // pixel, which dominated the cost of a preview-sized warp.
+    const [m0, m1, m2, m3, m4, m5, m6, m7, m8] = destinationToSource as [
+      number,
+      number,
+      number,
+      number,
+      number,
+      number,
+      number,
+      number,
+      number,
+    ];
+    const maxX = sourceWidth - 1;
+    const maxY = sourceHeight - 1;
+
+    let offset = 0;
     for (let y = 0; y < targetHeight; y += 1) {
-      let numeratorX = destinationToSource[1] * y + destinationToSource[2];
-      let numeratorY = destinationToSource[4] * y + destinationToSource[5];
-      let denominator = destinationToSource[7] * y + destinationToSource[8];
+      let numeratorX = m1 * y + m2;
+      let numeratorY = m4 * y + m5;
+      let denominator = m7 * y + m8;
       for (let x = 0; x < targetWidth; x += 1) {
-        const sourceX = numeratorX / denominator;
-        const sourceY = numeratorY / denominator;
-        const offset = (y * targetWidth + x) * 3;
-        numeratorX += destinationToSource[0];
-        numeratorY += destinationToSource[3];
-        denominator += destinationToSource[6];
+        const inverse = 1 / denominator;
+        const sourceX = numeratorX * inverse;
+        const sourceY = numeratorY * inverse;
+        numeratorX += m0;
+        numeratorY += m3;
+        denominator += m6;
+        // Written so a NaN coordinate also fails the test.
         if (
-          !Number.isFinite(sourceX) ||
-          !Number.isFinite(sourceY) ||
-          sourceX < 0 ||
-          sourceY < 0 ||
-          sourceX > sourceWidth - 1 ||
-          sourceY > sourceHeight - 1
+          !(sourceX >= 0 && sourceY >= 0 && sourceX <= maxX && sourceY <= maxY)
         ) {
           output[offset] = 0;
           output[offset + 1] = 0;
           output[offset + 2] = 0;
+          offset += 3;
           continue;
         }
-        const x0 = Math.floor(sourceX);
-        const y0 = Math.floor(sourceY);
-        if (nearest) {
-          const pixel = (y0 * sourceWidth + x0) * 3;
-          output[offset] = source[pixel];
-          output[offset + 1] = source[pixel + 1];
-          output[offset + 2] = source[pixel + 2];
-          continue;
-        }
-        const x1 = Math.min(sourceWidth - 1, x0 + 1);
-        const y1 = Math.min(sourceHeight - 1, y0 + 1);
-        const dx = sourceX - x0;
-        const dy = sourceY - y0;
+        const x0 = sourceX | 0;
+        const y0 = sourceY | 0;
         const topLeft = (y0 * sourceWidth + x0) * 3;
+        if (nearest) {
+          output[offset] = source[topLeft]!;
+          output[offset + 1] = source[topLeft + 1]!;
+          output[offset + 2] = source[topLeft + 2]!;
+          offset += 3;
+          continue;
+        }
+        const x1 = x0 < maxX ? x0 + 1 : maxX;
+        const y1 = y0 < maxY ? y0 + 1 : maxY;
+        const fx = sourceX - x0;
+        const fy = sourceY - y0;
         const topRight = (y0 * sourceWidth + x1) * 3;
         const bottomLeft = (y1 * sourceWidth + x0) * 3;
         const bottomRight = (y1 * sourceWidth + x1) * 3;
         for (let channel = 0; channel < 3; channel += 1) {
-          const top =
-            source[topLeft + channel] * (1 - dx) +
-            source[topRight + channel] * dx;
-          const bottom =
-            source[bottomLeft + channel] * (1 - dx) +
-            source[bottomRight + channel] * dx;
-          output[offset + channel] = Math.round(top * (1 - dy) + bottom * dy);
+          const top = source[topLeft + channel]!;
+          const bottom = source[bottomLeft + channel]!;
+          const interpolatedTop =
+            top + (source[topRight + channel]! - top) * fx;
+          const interpolatedBottom =
+            bottom + (source[bottomRight + channel]! - bottom) * fx;
+          output[offset + channel] =
+            (interpolatedTop +
+              (interpolatedBottom - interpolatedTop) * fy +
+              0.5) |
+            0;
         }
+        offset += 3;
       }
     }
 
