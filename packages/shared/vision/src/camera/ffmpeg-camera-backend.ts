@@ -25,6 +25,14 @@ export interface FfmpegCameraBackendOptions {
    * with `ROBOT_VISION_INCLUDE_VIRTUAL_DEVICES=true`.
    */
   includeVirtualDevices?: boolean;
+  /**
+   * Ask DirectShow for the camera's own MJPEG samples and copy them to the
+   * pipe instead of decoding and re-encoding every frame. Off by default: it
+   * only works when the device really delivers complete JPEG frames, and it
+   * cannot be combined with the mirroring filters. Enable with
+   * `ROBOT_VISION_FFMPEG_COPY_INPUT=true`.
+   */
+  copyMjpegInput?: boolean;
 }
 
 interface DeviceDescriptor extends CameraDevice {
@@ -193,6 +201,7 @@ export class FfmpegCameraBackend implements CameraBackend {
   private readonly platform: NodeJS.Platform;
   private readonly spawnProcess: SpawnProcess;
   private readonly includeVirtualDevices: boolean;
+  private readonly copyMjpegInput: boolean;
   private deviceCache = new Map<string, DeviceDescriptor>();
 
   constructor(options: FfmpegCameraBackendOptions = {}) {
@@ -205,6 +214,9 @@ export class FfmpegCameraBackend implements CameraBackend {
     this.includeVirtualDevices =
       options.includeVirtualDevices ??
       process.env.ROBOT_VISION_INCLUDE_VIRTUAL_DEVICES === 'true';
+    this.copyMjpegInput =
+      options.copyMjpegInput ??
+      process.env.ROBOT_VISION_FFMPEG_COPY_INPUT === 'true';
 
     if (!this.ffmpegPath || !existsSync(this.ffmpegPath)) {
       throw new RobotVisionError(
@@ -330,9 +342,24 @@ export class FfmpegCameraBackend implements CameraBackend {
       '-video_size',
       `${options.width}x${options.height}`,
     ];
+    // Copying the camera's own MJPEG samples skips a decode and a re-encode per
+    // frame. Filters would force a decode, and only DirectShow exposes its
+    // compressed samples reliably, so every other case keeps the encoder.
+    const wantCopy =
+      this.copyMjpegInput &&
+      device.backend === 'dshow' &&
+      !options.horizontalFlip &&
+      !options.verticalFlip;
     let input: string[];
     if (device.backend === 'dshow') {
-      input = [...commonInput, '-f', 'dshow', '-i', `video=${device.input}`];
+      input = [
+        ...commonInput,
+        ...(wantCopy ? ['-vcodec', 'mjpeg'] : []),
+        '-f',
+        'dshow',
+        '-i',
+        `video=${device.input}`,
+      ];
     } else if (device.backend === 'avfoundation') {
       input = [
         ...commonInput,
@@ -358,6 +385,11 @@ export class FfmpegCameraBackend implements CameraBackend {
     if (options.horizontalFlip) filters.push('hflip');
     if (options.verticalFlip) filters.push('vflip');
 
+    if (wantCopy) {
+      // Filters would force a decode, so `wantCopy` already excludes mirroring.
+      return [...input, '-an', '-f', 'image2pipe', '-c:v', 'copy', 'pipe:1'];
+    }
+
     return [
       ...input,
       ...(filters.length > 0 ? ['-vf', filters.join(',')] : []),
@@ -375,8 +407,14 @@ export class FfmpegCameraBackend implements CameraBackend {
       // with "Invalid pts (n) <= last (n)". With the default frame rate
       // handling a repeated timestamp costs one duplicated or dropped frame
       // instead of the stream.
+      //
+      // Two encoder threads are plenty for 1080p MJPEG. Slice threading with
+      // the default thread count spawned ~46 threads per camera, and two
+      // cameras then competed with the preview workers for schedulers.
       '-thread_type',
       'slice',
+      '-threads',
+      '2',
       '-q:v',
       '3',
       'pipe:1',
