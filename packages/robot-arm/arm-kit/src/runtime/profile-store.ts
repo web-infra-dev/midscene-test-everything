@@ -195,6 +195,25 @@ function geometry(value: VersionedProfile): string {
   const r = rest as unknown as RobotArmProfile;
   return semanticJson([r.adapterId, r.connectionIdentity, r.installation]);
 }
+/**
+ * Screen profiles that something still uses: a device binding, the workstation,
+ * an unfinished calibration session, a teaching draft, or a pending batch item.
+ * Everything else is history left behind by a superseded calibration run.
+ */
+export function referencedScreenIds(data: ProfileData): Set<string> {
+  const referenced = new Set<string>();
+  for (const device of data.devices ?? [])
+    referenced.add(device.screenProfileId);
+  if (data.workstation) referenced.add(data.workstation.screenProfileId);
+  for (const session of data.sessions ?? [])
+    if (session.status === 'active' || session.status === 'interrupted')
+      referenced.add(session.screenProfileId);
+  for (const teaching of data.installationTeachingDrafts ?? [])
+    referenced.add(teaching.screenProfileId);
+  for (const item of data.calibrationBatch?.items ?? [])
+    if (item.screenProfileId) referenced.add(item.screenProfileId);
+  return referenced;
+}
 export class ProfileStore {
   private data: ProfileData = {
     format: 'midscene.robot-arm.profiles',
@@ -792,6 +811,92 @@ export class ProfileStore {
       draft.devices = draft.devices?.filter(
         (d) => d.calibrationProfileId !== id,
       );
+      this.removeUnreferencedScreens(draft);
+    });
+  }
+  /**
+   * Screen profiles are created per calibration run, not per console screen, so
+   * abandoned or superseded runs leave profiles behind. A profile is in use
+   * while a device, the workstation, an unfinished session, a teaching draft or
+   * a calibration batch still points at it; everything else is history, and its
+   * calibrations and sessions go with it.
+   */
+  private removeUnreferencedScreens(draft: ProfileData) {
+    const referenced = referencedScreenIds(draft);
+    const removed = draft.screens.filter(
+      (screen) => !referenced.has(screen.id),
+    );
+    if (!removed.length) return { screens: 0, calibrations: 0, sessions: 0 };
+    const ids = new Set(removed.map((screen) => screen.id));
+    const calibrations = draft.calibrations.filter((calibration) =>
+      ids.has(calibration.screenProfileId),
+    );
+    const sessions = (draft.sessions ?? []).filter((session) =>
+      ids.has(session.screenProfileId),
+    );
+    draft.screens = draft.screens.filter((screen) => !ids.has(screen.id));
+    draft.calibrations = draft.calibrations.filter(
+      (calibration) => !ids.has(calibration.screenProfileId),
+    );
+    draft.sessions = (draft.sessions ?? []).filter(
+      (session) => !ids.has(session.screenProfileId),
+    );
+    return {
+      screens: removed.length,
+      calibrations: calibrations.length,
+      sessions: sessions.length,
+    };
+  }
+  /** Keep only the screen profiles that are still in use. */
+  pruneUnreferencedScreens() {
+    return this.transaction((draft) => this.removeUnreferencedScreens(draft));
+  }
+  /**
+   * Remove one screen profile with its calibrations and sessions. Deleting a
+   * screen from the console passes `release`: the device and workstation
+   * bindings that point at it are dropped in the same transaction. Without
+   * `release` a live binding makes the call fail instead of leaving a dangling
+   * reference behind.
+   */
+  deleteScreenProfile(screenId: string, options: { release?: boolean } = {}) {
+    return this.transaction((draft) => {
+      if (!draft.screens.some((screen) => screen.id === screenId))
+        return { screens: 0, calibrations: 0, sessions: 0 };
+      if (options.release) {
+        draft.devices = (draft.devices ?? []).filter(
+          (device) => device.screenProfileId !== screenId,
+        );
+        if (draft.workstation?.screenProfileId === screenId)
+          draft.workstation = undefined;
+      }
+      const used =
+        (draft.devices ?? []).some(
+          (device) => device.screenProfileId === screenId,
+        ) || draft.workstation?.screenProfileId === screenId;
+      if (used)
+        throw new RobotArmError(
+          'SCREEN_IN_USE',
+          'The screen is still bound to a device or the workstation',
+          409,
+        );
+      const calibrations = draft.calibrations.filter(
+        (calibration) => calibration.screenProfileId === screenId,
+      );
+      const sessions = (draft.sessions ?? []).filter(
+        (session) => session.screenProfileId === screenId,
+      );
+      draft.screens = draft.screens.filter((screen) => screen.id !== screenId);
+      draft.calibrations = draft.calibrations.filter(
+        (calibration) => calibration.screenProfileId !== screenId,
+      );
+      draft.sessions = (draft.sessions ?? []).filter(
+        (session) => session.screenProfileId !== screenId,
+      );
+      return {
+        screens: 1,
+        calibrations: calibrations.length,
+        sessions: sessions.length,
+      };
     });
   }
   saveCalibrationBatch(
@@ -1076,6 +1181,10 @@ export class ProfileStore {
     );
     if (index < 0) draft.devices.push(value);
     else draft.devices[index] = value;
+    // Acceptance is where a Device moves to a new screen profile. The profile
+    // it just left is no longer referenced by anything, so its calibrations and
+    // sessions are history that would otherwise accumulate per calibration.
+    this.removeUnreferencedScreens(draft);
     return structuredClone(value);
   }
   putWorkstation(input: WorkstationBinding): Promise<WorkstationBinding> {

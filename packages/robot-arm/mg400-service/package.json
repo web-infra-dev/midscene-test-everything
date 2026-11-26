@@ -15,6 +15,7 @@
     "build": "node -e \"const { rmSync } = require('node:fs'); for (const dir of ['dist/server', 'dist/cli']) rmSync(dir, { recursive: true, force: true });\" && tsc -p tsconfig.server.json && rsbuild build",
     "typecheck": "tsc --noEmit -p tsconfig.server.json && tsc --noEmit",
     "test": "rstest run",
+    "profile:prune": "node scripts/prune-profile.mjs",
     "calibration:baseline": "node scripts/calibration-baseline.mjs",
     "calibration:report": "node scripts/calibration-log-report.mjs",
     "prepack": "pnpm build",

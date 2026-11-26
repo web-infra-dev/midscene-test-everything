@@ -1576,7 +1576,16 @@ export class ScreenCalibration {
           'Screen belongs to another camera',
           409,
         );
-      await this.removeScreen(target, { onlyIfEmpty: input.onlyIfEmpty });
+      // Deleting a screen also deletes the profile its calibration produced,
+      // with that screen's calibrations and sessions. Otherwise every
+      // recalibration leaves a screen profile behind forever.
+      const screenProfiles = this.screenProfilesForTarget(target.id);
+      const removed = await this.removeScreen(target, {
+        onlyIfEmpty: input.onlyIfEmpty,
+      });
+      if (removed)
+        for (const screenId of screenProfiles)
+          await this.store.deleteScreenProfile(screenId, { release: true });
       return {};
     }
     if (input.action === 'delete-perspective') {
@@ -1783,7 +1792,7 @@ export class ScreenCalibration {
       discard?: boolean;
       deletePerspective?: boolean;
     } = {},
-  ) {
+  ): Promise<boolean> {
     // Forgetting an offline phone must also work with its camera unplugged.
     const entry =
       options.onlyIfEmpty || options.discard
@@ -1799,7 +1808,7 @@ export class ScreenCalibration {
         entry?.camera.hasSavedPerspective() ||
         this.store.deviceBinding(id))
     )
-      return;
+      return false;
     const savedPage = this.store
       .list()
       .screenPages?.find(
@@ -1846,6 +1855,32 @@ export class ScreenCalibration {
     for (const display of this.displays.values())
       if (display.visionTargetId === id) display.state = 'closed';
     if (id !== cameraId) await this.devices.stop(id);
+    return true;
+  }
+  /**
+   * Screen profiles that belong to one console screen. The accepted device
+   * binding names it explicitly; a camera-level target can also be the
+   * workstation's screen before a device binding exists.
+   */
+  private screenProfilesForTarget(targetId: string): string[] {
+    const profiles = this.store.list();
+    const ids = new Set<string>();
+    const binding = profiles.devices?.find(
+      (device) => device.deviceId === targetId,
+    );
+    if (binding) ids.add(binding.screenProfileId);
+    const workstation = profiles.workstation;
+    if (
+      workstation &&
+      targetId === workstation.cameraId &&
+      !profiles.devices?.some(
+        (device) =>
+          device.deviceId !== targetId &&
+          device.screenProfileId === workstation.screenProfileId,
+      )
+    )
+      ids.add(workstation.screenProfileId);
+    return [...ids];
   }
   private async assign(
     page: ScreenPage,
