@@ -13,6 +13,81 @@ import { ArmController } from '../src/controller.js';
 import { robotSetupDefaults } from '../src/setup-contracts.js';
 import { fixture } from './fixtures.js';
 
+it('shares the saved touch tool across screens while keeping each screen output size', async () => {
+  const f = await fixture();
+  await f.runtime.shutdown();
+  Object.assign(f.adapter, { setupDefaults: robotSetupDefaults('mg400') });
+  const arm = new ArmController({ adapter: f.adapter, profileStore: f.store });
+  await arm.connect();
+  const cameraId = 'shared-tool-camera';
+  const camera = () =>
+    ({
+      camera: { id: cameraId, name: 'Camera' },
+      stream: { getInfo: () => ({ state: 'running' }) },
+      getCorrection: () => undefined,
+      getRectifiedPreviewTarget: () => undefined,
+      getPerspectiveValidity: () => undefined,
+    }) as unknown as CameraSession;
+  const main = new CalibrationHost({
+    arm,
+    camera: camera(),
+    deviceId: cameraId,
+    sharedTool: true,
+  });
+  const second = new CalibrationHost({
+    arm,
+    camera: camera(),
+    deviceId: 'second',
+    sharedTool: true,
+  });
+  try {
+    const legacyTool = await f.store.putTool({
+      id: 'legacy-tool',
+      name: 'Legacy tool',
+      contactDirection: f.tool.contactDirection,
+      offsetMm: { x: 0, y: 0, z: -115 },
+    });
+    const setup = {
+      robotProfileId: f.robot.id,
+      cameraId,
+      height: 800,
+      autoOutput: false,
+      motion: f.screen,
+    };
+    await f.store.saveCalibrationSetup({
+      ...setup,
+      deviceId: cameraId,
+      width: 600,
+      toolProfileId: f.tool.id,
+    });
+    await f.store.saveCalibrationSetup({
+      ...setup,
+      deviceId: 'second',
+      width: 700,
+      toolProfileId: legacyTool.id,
+    });
+    expect((await second.configuration()).input?.toolProfileId).toBe(f.tool.id);
+    await main.prepare();
+    const selected = await second.configure({ tool: legacyTool });
+    await f.store.load();
+    expect((await main.configuration()).input).toMatchObject({
+      toolProfileId: selected.input?.toolProfileId,
+      width: 600,
+    });
+    expect(selected.input).toMatchObject({
+      toolProfileId: legacyTool.id,
+      width: 700,
+    });
+    expect(() => f.store.assertCurrentCalibrationTool(f.binding)).toThrow(
+      'Recalibrate this screen for the current touch tool',
+    );
+  } finally {
+    await Promise.all([main.close(), second.close()]);
+    await arm.close();
+    await f.cleanup();
+  }
+});
+
 it('prepares first-time measured setup without inventing tool geometry or replacing accepted profiles', async () => {
   const f = await fixture();
   await f.runtime.shutdown();

@@ -1049,6 +1049,7 @@ export class CalibrationWorkflow {
       );
       guard();
       this.beginTask(mapping, s.referencePosition, s.safePosition);
+      this.state!.drawLogo = s.drawLogo;
       this.state!.teachingId = s.teachingId;
       this.state!.cameraBoundaryPosition = s.cameraBoundaryPosition;
       this.state!.cameraBoundaryEndPosition = s.cameraBoundaryEndPosition;
@@ -1319,7 +1320,7 @@ export class CalibrationWorkflow {
   }
   private batchAttempt?: string;
   async create(
-    options: { batch?: boolean } = {},
+    options: { batch?: boolean; drawLogo?: boolean } = {},
   ): Promise<AssistedCalibrationState> {
     if (
       this.activeAction ||
@@ -1338,6 +1339,7 @@ export class CalibrationWorkflow {
       const mapping = await this.configuration.assertCurrent();
       this.assertAttempt(revision);
       this.beginTask(mapping);
+      this.state!.drawLogo = options.drawLogo;
       this.batchAttempt = options.batch ? this.state!.id : undefined;
       const teaching = this.runtime.profileStore.installationTeaching(
         this.input!,
@@ -1583,6 +1585,7 @@ export class CalibrationWorkflow {
     action: AssistedCalibrationAction,
     confirmed = false,
     _attemptId?: string,
+    drawLogo?: boolean,
   ): Promise<AssistedCalibrationState> {
     const s =
       action === 'restart' && this.state?.id === id
@@ -1676,6 +1679,7 @@ export class CalibrationWorkflow {
           ? s.cameraBoundaryPosition
           : undefined;
         this.beginTask(mapping, referencePosition, safePosition);
+        this.state!.drawLogo = s.drawLogo;
         this.state!.teachingId = teachingId;
         this.state!.cameraBoundaryPosition = cameraBoundaryPosition;
         this.state!.cameraBoundaryEndPosition = sameGeometry
@@ -1993,6 +1997,7 @@ export class CalibrationWorkflow {
           action !== 'start',
           confirmed,
           finish,
+          drawLogo,
         );
       } else if (
         action === 'stop-capture' &&
@@ -2096,15 +2101,16 @@ export class CalibrationWorkflow {
               }
             : undefined,
           () => this.assertAttempt(revision),
-          s.mapping &&
-            this.prepareLogoCanvas(
-              s.mapping.layout,
-              (logo) => {
-                s.logo = logo;
-              },
-              () => this.assertAttempt(revision),
-              this.batchTravelTipZMm,
-            ),
+          s.drawLogo !== false && s.mapping
+            ? this.prepareLogoCanvas(
+                s.mapping.layout,
+                (logo) => {
+                  s.logo = logo;
+                },
+                () => this.assertAttempt(revision),
+                this.batchTravelTipZMm,
+              )
+            : undefined,
         );
         if (this.attemptRevision === revision) s.stage = 'completed';
       } else
@@ -2124,6 +2130,7 @@ export class CalibrationWorkflow {
     automaticWorkflow: boolean,
     confirmed: boolean,
     finish = false,
+    drawLogo?: boolean,
   ) {
     if (this.capture || s.stage !== 'ready')
       throw new RobotArmError(
@@ -2162,6 +2169,7 @@ export class CalibrationWorkflow {
         409,
       );
     this.captureStopRevision = stopRevision;
+    s.drawLogo = drawLogo ?? s.drawLogo;
     s.automaticWorkflow = automaticWorkflow;
     s.explorationMode = mode;
     s.stage = 'collecting';

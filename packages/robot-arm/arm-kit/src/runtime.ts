@@ -1674,6 +1674,7 @@ export class RobotArmRuntime extends RobotKernel {
     return this.connectionEstablished;
   }
   private context(binding: ProfileBinding): Context {
+    this.profileStore.assertCurrentCalibrationTool(binding);
     const robot = this.profileStore.getRobot(binding.robotProfileId);
     const tool = this.profileStore.getTool(binding.toolProfileId);
     const screen = this.profileStore.getScreen(binding.screenProfileId);

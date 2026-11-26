@@ -50,18 +50,23 @@ import { validateScreenMotionSettings } from '../screen-interaction/motion-polic
 import { backupPreviousFile, robotDataRoot } from '../storage/layout.js';
 
 export function sharedCalibrationTool(
-  profiles: Pick<ProfileData, 'calibrationSetups' | 'robots' | 'screenTargets'>,
+  profiles: Pick<
+    ProfileData,
+    'calibrationTools' | 'calibrationSetups' | 'robots' | 'screenTargets'
+  >,
   adapterId: string,
   connectionIdentity: string,
 ): Pick<ProfileBinding, 'robotProfileId' | 'toolProfileId'> | undefined {
-  const matching = (profiles.calibrationSetups ?? []).filter((setup) =>
+  const matchesRobot = (selection: Pick<ProfileBinding, 'robotProfileId'>) =>
     profiles.robots.some(
       (robot) =>
-        robot.id === setup.robotProfileId &&
+        robot.id === selection.robotProfileId &&
         robot.adapterId === adapterId &&
         robot.connectionIdentity === connectionIdentity,
-    ),
-  );
+    );
+  const selected = profiles.calibrationTools?.find(matchesRobot);
+  if (selected) return { ...selected };
+  const matching = (profiles.calibrationSetups ?? []).filter(matchesRobot);
   const active = matching.filter(
     (setup) =>
       !profiles.screenTargets?.some(
@@ -70,19 +75,27 @@ export function sharedCalibrationTool(
   );
   // Retiring a screen does not retire the physical tool on the arm.
   const candidates = active.length ? active : matching;
-  const first = candidates[0];
-  if (
-    first &&
-    candidates.every(
-      (setup) =>
-        setup.robotProfileId === first.robotProfileId &&
-        setup.toolProfileId === first.toolProfileId,
+  const agreedTool = (setups: typeof candidates) => {
+    const first = setups[0];
+    if (
+      !first ||
+      !setups.every(
+        (setup) =>
+          setup.robotProfileId === first.robotProfileId &&
+          setup.toolProfileId === first.toolProfileId,
+      )
     )
-  )
+      return undefined;
     return {
       robotProfileId: first.robotProfileId,
       toolProfileId: first.toolProfileId,
     };
+  };
+  // Older batches used the camera's own setup ahead of its child screens.
+  return (
+    agreedTool(candidates) ??
+    agreedTool(active.filter(({ deviceId, cameraId }) => deviceId === cameraId))
+  );
 }
 
 export function validateScreen(s: ProfileInput<ScreenProfile>): void {
@@ -511,6 +524,28 @@ export class ProfileStore {
     for (const setup of parsed.calibrationSetups ?? []) {
       if (setup.motion) validateScreenMotionSettings(setup.motion);
     }
+    const selections = parsed.calibrationTools;
+    if (
+      selections !== undefined &&
+      (!Array.isArray(selections) ||
+        selections.some(
+          (selection) =>
+            !selection ||
+            !parsed.robots.some(
+              (robot: RobotArmProfile) => robot.id === selection.robotProfileId,
+            ) ||
+            !parsed.tools.some(
+              (tool: ToolProfile) => tool.id === selection.toolProfileId,
+            ),
+        ) ||
+        new Set(selections.map((selection) => selection.robotProfileId))
+          .size !== selections.length)
+    )
+      throw new RobotArmError(
+        'INVALID_PROFILE_FILE',
+        'Invalid shared calibration tool',
+        500,
+      );
     this.data = parsed;
     await this.transaction((d) => {
       for (const s of d.sessions ?? []) {
@@ -846,16 +881,50 @@ export class ProfileStore {
     );
     return setup && structuredClone(setup);
   }
+  sharedCalibrationTool(adapterId: string, connectionIdentity: string) {
+    return sharedCalibrationTool(this.data, adapterId, connectionIdentity);
+  }
+
+  assertCurrentCalibrationTool(
+    binding: Pick<ProfileBinding, 'robotProfileId' | 'toolProfileId'>,
+    includeLegacy = false,
+  ) {
+    if (!includeLegacy && !this.data.calibrationTools?.length) return;
+    const robot = this.getRobot(binding.robotProfileId);
+    const active = sharedCalibrationTool(
+      includeLegacy
+        ? this.data
+        : {
+            robots: this.data.robots,
+            calibrationTools: this.data.calibrationTools,
+          },
+      robot.adapterId,
+      robot.connectionIdentity,
+    );
+    if (
+      active &&
+      (active.robotProfileId !== binding.robotProfileId ||
+        active.toolProfileId !== binding.toolProfileId)
+    )
+      throw new RobotArmError(
+        'CALIBRATION_REQUIRED',
+        'Recalibrate this screen for the current touch tool',
+        409,
+      );
+  }
+
   saveCalibrationSetup(
     input: NonNullable<ProfileData['calibrationSetups']>[number],
+    selectSharedTool = false,
   ) {
     const setup = structuredClone(input);
     if (setup.motion) validateScreenMotionSettings(setup.motion);
     return this.transaction((draft) => {
+      const robot = draft.robots.find(({ id }) => id === setup.robotProfileId);
       if (
         !setup.deviceId ||
         !setup.cameraId ||
-        !draft.robots.some((robot) => robot.id === setup.robotProfileId) ||
+        !robot ||
         !draft.tools.some((tool) => tool.id === setup.toolProfileId) ||
         ![setup.width, setup.height].every(
           (value) => Number.isInteger(value) && value >= 180 && value <= 4096,
@@ -872,6 +941,23 @@ export class ProfileStore {
         ),
         setup,
       ];
+      if (selectSharedTool) {
+        const installations = new Set(
+          draft.robots
+            .filter(
+              (entry) =>
+                entry.adapterId === robot.adapterId &&
+                entry.connectionIdentity === robot.connectionIdentity,
+            )
+            .map(({ id }) => id),
+        );
+        draft.calibrationTools = [
+          ...(draft.calibrationTools ?? []).filter(
+            (selection) => !installations.has(selection.robotProfileId),
+          ),
+          { robotProfileId: robot.id, toolProfileId: setup.toolProfileId },
+        ];
+      }
     });
   }
   calibrationMapping(deviceId: string) {

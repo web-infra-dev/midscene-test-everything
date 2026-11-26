@@ -726,6 +726,8 @@ export interface ProfileData {
   sessions?: CalibrationSession[];
   workstation?: WorkstationBinding;
   devices?: DeviceBinding[];
+  /** The touch tool selected for each physical robot installation. */
+  calibrationTools?: Pick<ProfileBinding, 'robotProfileId' | 'toolProfileId'>[];
   /** Measured setup preferences only; never an accepted calibration or motion permission. */
   calibrationSetups?: {
     deviceId: string;

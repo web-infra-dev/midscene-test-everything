@@ -32,7 +32,6 @@ import {
 import { controllerRuntime } from '../controller-runtime.js';
 import type { ArmController } from '../controller.js';
 import { contactPoint, flangePose } from '../domain.js';
-import { sharedCalibrationTool } from '../runtime/profile-store.js';
 import { createCalibrationHandler } from './handler.js';
 
 import { PhoneSocketServer } from './phone-socket.js';
@@ -61,6 +60,7 @@ export interface CalibrationHostOptions {
   camera: CameraSession;
   deviceId: string;
   input?: AssistedCalibrationInput;
+  sharedTool?: boolean;
   markerCodes?: readonly number[];
   basePath?: string;
   phoneLinks?: () => { name: string; url: string }[];
@@ -77,6 +77,7 @@ export class CalibrationHost {
   private readonly previews = new Map<string, ServerResponse>();
   private autoOutput = false;
   private input?: AssistedCalibrationInput;
+  private preparing?: Promise<void>;
   constructor(private readonly options: CalibrationHostOptions) {
     this.basePath = (options.basePath ?? '/api/calibration').replace(
       /\/+$/,
@@ -194,10 +195,33 @@ export class CalibrationHost {
     const frame = this.options.camera.stream?.currentFrame;
     ref.frame = frame && frame.capturedAt > ref.since ? frame : undefined;
   }
-  async prepare(): Promise<void> {
+  prepare(force = true): Promise<void> {
+    if (this.preparing)
+      return force ? this.preparing.then(() => this.prepare()) : this.preparing;
+    this.preparing = this.prepareInput(force).finally(() => {
+      this.preparing = undefined;
+    });
+    return this.preparing;
+  }
+  private async prepareInput(force: boolean): Promise<void> {
+    const runtime = controllerRuntime(this.options.arm);
+    const store = runtime.profileStore;
+    const shared =
+      (this.options.sharedTool || !this.input) &&
+      store.sharedCalibrationTool(runtime.id, runtime.connectionIdentity);
+    const prepared = shared && this.service.setup().selection;
+    if (
+      this.input &&
+      !force &&
+      (!shared ||
+        (this.input.robotProfileId === shared.robotProfileId &&
+          this.input.toolProfileId === shared.toolProfileId &&
+          prepared &&
+          prepared.robotProfileId === shared.robotProfileId &&
+          prepared.toolProfileId === shared.toolProfileId))
+    )
+      return;
     if (!this.input) {
-      const store = controllerRuntime(this.options.arm).profileStore;
-      const runtime = controllerRuntime(this.options.arm);
       const remembered = store.calibrationSetup(this.options.deviceId);
       const robot = remembered && store.getRobot(remembered.robotProfileId);
       if (
@@ -222,22 +246,23 @@ export class CalibrationHost {
           motion: screen,
         };
       }
-      if (!this.input && runtime.describeCapabilities().setupDefaults?.motion) {
-        const cameraId = this.options.camera.camera.id;
-        const tool = sharedCalibrationTool(
-          store.list(),
-          runtime.id,
-          runtime.connectionIdentity,
-        );
-        if (tool) {
-          const selection = { ...tool, cameraId, width: 720, height: 1280 };
-          await this.service.prepare(selection);
-          if (!this.input) {
-            this.input = selection;
-            this.autoOutput = true;
-          }
-          return;
+      if (
+        !this.input &&
+        shared &&
+        runtime.describeCapabilities().setupDefaults?.motion
+      ) {
+        const selection = {
+          ...shared,
+          cameraId: this.options.camera.camera.id,
+          width: 720,
+          height: 1280,
+        };
+        await this.service.prepare(selection);
+        if (!this.input) {
+          this.input = selection;
+          this.autoOutput = true;
         }
+        return;
       }
     }
     if (this.input) {
@@ -246,20 +271,29 @@ export class CalibrationHost {
           'VISION_BINDING_CHANGED',
           'Calibration input references another camera',
         );
-      await this.service.prepare(this.input);
+      const selection =
+        this.options.sharedTool && shared
+          ? { ...this.input, ...shared }
+          : this.input;
+      await this.service.prepare(selection);
+      this.input = selection;
     }
   }
   /** Save measured setup without replacing an accepted Device binding. */
-  async configure(input: {
-    width?: number;
-    height?: number;
-    tool: Pick<
-      ToolProfile,
-      'offsetMm' | 'contactDirection' | 'payload' | 'contactFrame'
-    >;
-    motion?: AssistedCalibrationInput['motion'];
-  }) {
+  async configure(
+    input: {
+      width?: number;
+      height?: number;
+      tool: Pick<
+        ToolProfile,
+        'offsetMm' | 'contactDirection' | 'payload' | 'contactFrame'
+      >;
+      motion?: AssistedCalibrationInput['motion'];
+    },
+    selectSharedTool = this.options.sharedTool,
+  ) {
     this.editable();
+    await this.prepare(false);
     // A fresh session needs an initial render size before the phone connects.
     const width = input?.width ?? this.input?.width ?? 720;
     const height = input?.height ?? this.input?.height ?? 1280;
@@ -277,13 +311,21 @@ export class CalibrationHost {
         400,
       );
     const arm = controllerRuntime(this.options.arm);
-    let robot = arm.profileStore
-      .list()
-      .robots.find(
-        (entry) =>
-          entry.adapterId === arm.id &&
-          entry.connectionIdentity === arm.connectionIdentity,
-      );
+    let robot = this.input
+      ? arm.profileStore.getRobot(this.input.robotProfileId)
+      : arm.profileStore
+          .list()
+          .robots.find(
+            (entry) =>
+              entry.adapterId === arm.id &&
+              entry.connectionIdentity === arm.connectionIdentity,
+          );
+    if (
+      robot &&
+      (robot.adapterId !== arm.id ||
+        robot.connectionIdentity !== arm.connectionIdentity)
+    )
+      robot = undefined;
     robot ??= await arm.putRobot({
       id: randomUUID(),
       name: arm.id,
@@ -305,14 +347,13 @@ export class CalibrationHost {
         tool.payload,
         tool.contactFrame,
       ]);
-    const remembered = arm.profileStore.calibrationSetup(this.options.deviceId);
-    const rememberedTool =
-      remembered?.robotProfileId === robot.id
-        ? arm.profileStore.getTool(remembered.toolProfileId)
+    const currentTool =
+      this.input?.robotProfileId === robot.id
+        ? arm.profileStore.getTool(this.input.toolProfileId)
         : undefined;
     const existing =
-      (rememberedTool && geometryKey(rememberedTool) === geometryKey(input.tool)
-        ? rememberedTool
+      (currentTool && geometryKey(currentTool) === geometryKey(input.tool)
+        ? currentTool
         : undefined) ??
       arm.profileStore
         .list()
@@ -338,18 +379,23 @@ export class CalibrationHost {
       motion: input.motion ?? this.input?.motion,
     };
     await this.service.prepare(selection);
-    this.autoOutput =
+    const autoOutput =
       input.width === undefined && (!this.input || this.autoOutput);
-    await arm.profileStore.saveCalibrationSetup({
-      ...selection,
-      deviceId: this.options.deviceId,
-      autoOutput: this.autoOutput,
-    });
+    await arm.profileStore.saveCalibrationSetup(
+      {
+        ...selection,
+        deviceId: this.options.deviceId,
+        autoOutput,
+      },
+      selectSharedTool,
+    );
     this.input = selection;
+    this.autoOutput = autoOutput;
     return this.configuration();
   }
   async enable(syncPayload = false) {
     this.editable();
+    await this.prepare(false);
     if (!this.input)
       throw new RobotArmError(
         'SETUP_REQUIRED',
@@ -394,7 +440,7 @@ export class CalibrationHost {
     );
   }
   async configuration(teachingView = false) {
-    if (!this.input) await this.prepare();
+    await this.prepare(false);
     const { camera, deviceId } = this.options;
     const arm = controllerRuntime(this.options.arm);
     const state = await arm.state(this.input?.toolProfileId);
@@ -437,9 +483,13 @@ export class CalibrationHost {
               })
             ).fingerprint
           : undefined,
-      result: saved
-        ? arm.profileStore.getCalibration(saved.calibrationProfileId)
-        : undefined,
+      result:
+        saved &&
+        (!this.options.sharedTool ||
+          (saved.robotProfileId === this.input?.robotProfileId &&
+            saved.toolProfileId === this.input?.toolProfileId))
+          ? arm.profileStore.getCalibration(saved.calibrationProfileId)
+          : undefined,
       editable: this.isEditable(),
       measuredSetup: this.input
         ? {
@@ -829,6 +879,7 @@ export class CalibrationHost {
     const relative = path.slice(this.basePath.length);
     try {
       if (relative === '/installation-teaching' && req.method === 'POST') {
+        await this.prepare(false);
         if (!this.input)
           throw new RobotArmError(
             'SETUP_REQUIRED',

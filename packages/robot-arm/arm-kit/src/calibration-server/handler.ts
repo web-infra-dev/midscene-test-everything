@@ -95,7 +95,9 @@ export function createCalibrationHandler(options: {
           if (
             typeof input.action !== 'string' ||
             (input.confirmed !== undefined &&
-              typeof input.confirmed !== 'boolean')
+              typeof input.confirmed !== 'boolean') ||
+            (input.drawLogo !== undefined &&
+              typeof input.drawLogo !== 'boolean')
           )
             throw new RobotArmError(
               'INVALID_REQUEST',
@@ -108,6 +110,7 @@ export function createCalibrationHandler(options: {
               input.action as AssistedCalibrationAction,
               input.confirmed === true,
               input.attemptId,
+              input.drawLogo,
             ),
           });
         }

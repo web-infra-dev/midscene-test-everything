@@ -445,6 +445,7 @@ export interface WebVerificationEvidence {
 }
 export interface AssistedCalibrationState {
   id: string;
+  drawLogo?: boolean;
   logo?: CalibrationLogoStatus;
   cameraBoundaryPosition?: CartesianPose;
   cameraBoundaryEndPosition?: CartesianPose;
@@ -685,6 +686,7 @@ export interface CalibrationBatchState {
   sharedVisibility?: import('./contracts.js').ScreenVisibilityEvidence;
   sharedParkingOperatorConfirmedAt?: string;
   acceptance?: 'manual' | 'automatic';
+  drawLogo?: boolean;
   error?: string;
   visibilityMissingScreens?: string[];
   sharedParkingFailureVisibility?: ScreenVisibilityEvidence;

@@ -26,6 +26,8 @@ export interface RobotArmDeviceOptions {
   screenId?: string;
   /** @internal Injected camera ownership for hosts and tests. */
   cameraManager?: CameraSessionManager;
+  /** @internal Resolve the legacy installation tool as well as a shared selection. */
+  sharedTool?: boolean;
 }
 interface DeviceContext {
   screen: MappedScreenProfile;
@@ -168,6 +170,7 @@ export class RobotArmDevice {
         'CALIBRATION_REQUIRED',
         'Calibrate this device before running tasks',
       );
+    store.assertCurrentCalibrationTool(saved, this.options.sharedTool);
     if (
       this.context &&
       saved.calibrationProfileId !== this.context.calibration.id
