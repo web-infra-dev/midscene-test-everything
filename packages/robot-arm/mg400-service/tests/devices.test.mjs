@@ -77,7 +77,12 @@ function fixture(pairings, screenTargets = []) {
   }
   const arm = {};
   registerControllerRuntime(arm, {
-    profileStore: { list: () => ({ screenTargets }) },
+    // Calibration starts once a shared tool is configured for the arm, so the
+    // stub has to answer that lookup; individual tests do not inspect it.
+    profileStore: {
+      list: () => ({ screenTargets }),
+      sharedCalibrationTool: () => ({ toolProfileId: 'tool' }),
+    },
   });
   const registry = new PlaygroundDevices(arm, {
     cameras,
