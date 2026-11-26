@@ -46,7 +46,13 @@ it('uses the same mounted routes and session identifiers from the browser client
   });
   expect(await client.assistedCalibration()).toEqual(state);
   await client.assistedCalibrationCommand(state.id, 'start', true);
-  expect(command).toHaveBeenCalledWith('session/a', 'start', true, undefined);
+  expect(command).toHaveBeenCalledWith(
+    'session/a',
+    'start',
+    true,
+    undefined,
+    undefined,
+  );
 });
 it('does not interpret a string confirmation as permission to run a command', async () => {
   const command = rstest.fn();
