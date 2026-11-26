@@ -153,9 +153,11 @@ export async function measureAbsoluteCorrection(
     let seenAt = 0;
     await input.absolute(correctedScreenToPointer(target, turn, correction));
     for (let attempt = 0; attempt < 20; attempt++) {
-      await pause(attempt === 0 ? 25 : 20);
       signal.throwIfAborted();
-      const after = await screen.getFrame(options);
+      const after = await screen.getFrame({
+        ...options,
+        afterSequence: sequence,
+      });
       if (
         before.width !== width ||
         before.height !== height ||

@@ -222,6 +222,7 @@ export class AirPlayScreenSession implements ScreenSession {
   async getFrame(
     options: {
       fresh?: boolean;
+      afterSequence?: number;
       timeoutMs?: number;
       allowUnchanged?: boolean;
     } = {},
@@ -244,6 +245,7 @@ export class AirPlayScreenSession implements ScreenSession {
       try {
         frame = await this.stream.getFrame({
           fresh: options.fresh,
+          afterSequence: options.afterSequence,
           timeoutMs: Math.max(1, Math.min(500, deadline - Date.now())),
         });
       } catch (error) {

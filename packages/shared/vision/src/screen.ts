@@ -19,7 +19,13 @@ export class CameraScreen {
     readonly settings: CameraScreenSettings,
   ) {}
 
-  async getFrame(options: { fresh?: boolean; timeoutMs?: number } = {}) {
+  async getFrame(
+    options: {
+      fresh?: boolean;
+      afterSequence?: number;
+      timeoutMs?: number;
+    } = {},
+  ) {
     const frame = await this.stream.getFrame(options);
     const jpeg = await rectifyCameraFrame(
       frame.jpeg,

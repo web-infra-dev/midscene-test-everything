@@ -30,6 +30,7 @@ test('measurement waits for delayed video to settle instead of fitting intermedi
   let displayed = { ...actual };
   let sequence = 0;
   let writes = 0;
+  let slowHorizontalWrites = 0;
   const measured = await measureMotionModel(
     {
       getFrame: async () => {
@@ -62,6 +63,13 @@ test('measurement waits for delayed video to settle instead of fitting intermedi
       relative: async (delta) => {
         const movement = physicalMovement(model, delta);
         const coldGain = ++writes <= 12 ? 0.7 : 1;
+        // One anomalous low-speed segment must not become the saved X gain.
+        if (
+          Math.abs(delta.x) === 2 &&
+          delta.y === 0 &&
+          ++slowHorizontalWrites <= 28
+        )
+          movement.x *= 2;
         movement.x *= coldGain;
         movement.y *= coldGain;
         actual = { x: actual.x + movement.x, y: actual.y + movement.y };

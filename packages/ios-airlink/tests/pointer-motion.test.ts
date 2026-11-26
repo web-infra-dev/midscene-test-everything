@@ -411,6 +411,16 @@ test('cache binding includes source, Bluetooth identity, dimensions, rotation an
   const geometry = { width: 800, height: 1200, turn: 0 as const };
   const binding = motionBinding(config, geometry);
   assert.ok(compatibleMotionProfile(config.pointerMotion, binding));
+  const missingY = structuredClone(config.pointerMotion!);
+  missingY.validation.samples.pop();
+  assert.equal(compatibleMotionProfile(missingY, binding), false);
+  missingY.validation.samples.push(missingY.validation.samples[0]);
+  assert.equal(compatibleMotionProfile(missingY, binding), false);
+  const unconfirmed = structuredClone(config.pointerMotion!);
+  unconfirmed.samples.find(
+    (s) => s.delta.x === 2 && s.delta.y === 0,
+  )!.repetitions = undefined;
+  assert.equal(compatibleMotionProfile(unconfirmed, binding), false);
   for (const other of [
     { ...config, bluetoothPeerId: 'peer-b' },
     { ...config, screen: { source: 'airplay' as const } },

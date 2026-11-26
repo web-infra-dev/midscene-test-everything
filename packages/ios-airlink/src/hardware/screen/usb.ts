@@ -94,18 +94,16 @@ export class USBScreenSession implements ScreenSession {
     } = {},
   ) {
     let frame;
-    const latest = this.stream.currentFrame;
+    // Only a calibration observer that has already seen a frame can use
+    // an unchanged sequence. Fresh screenshots and input preflights must wait.
     if (
-      latest &&
       options.fresh &&
-      options.afterSequence !== undefined &&
-      latest.id > options.afterSequence
+      options.allowUnchanged &&
+      options.afterSequence !== undefined
     ) {
-      frame = latest;
-    } else if (options.fresh && options.allowUnchanged && latest) {
       try {
         frame = await this.stream.getFrame({
-          fresh: true,
+          ...options,
           timeoutMs: Math.min(options.timeoutMs ?? 2000, 300),
         });
       } catch (error) {

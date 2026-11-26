@@ -21,6 +21,17 @@ export const CALIBRATION_REPORTS = [
   })),
 ];
 
+export const VALIDATION_DELTAS = [
+  { x: 8, y: 0 },
+  { x: 0, y: 8 },
+  { x: 4, y: 4 },
+  { x: 0, y: 4 },
+];
+export const REPEAT_REPORTS = CALIBRATION_REPORTS.filter(
+  ({ delta }) =>
+    !VALIDATION_DELTAS.some((p) => p.x === delta.x && p.y === delta.y),
+);
+
 export interface MotionSample {
   delta: Point;
   reports: number;
@@ -135,7 +146,28 @@ export function compatibleMotionProfile(
     profile.samples.length === CALIBRATION_REPORTS.length &&
     Boolean(profile.validation) &&
     validSamples(profile.validation.samples) &&
-    [3, 4].includes(profile.validation.samples.length) &&
+    profile.validation.samples.length === VALIDATION_DELTAS.length &&
+    VALIDATION_DELTAS.every((p) =>
+      profile.validation.samples.some(
+        ({ delta }) => delta.x === p.x && delta.y === p.y,
+      ),
+    ) &&
+    REPEAT_REPORTS.every(({ delta }) =>
+      profile.samples.some(
+        (s) =>
+          s.delta.x === delta.x &&
+          s.delta.y === delta.y &&
+          Array.isArray(s.repetitions) &&
+          [2, 3].includes(s.repetitions.length) &&
+          s.repetitions.every(
+            (r) =>
+              r &&
+              validPoint(r.displacement) &&
+              Number.isFinite(r.elapsedMs) &&
+              r.elapsedMs >= 0,
+          ),
+      ),
+    ) &&
     Number.isFinite(profile.validation.maxErrorPx) &&
     profile.validation.maxErrorPx >= 0 &&
     Number.isFinite(profile.validation.maxRelativeError) &&

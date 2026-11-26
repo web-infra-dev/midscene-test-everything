@@ -378,12 +378,7 @@ export class HIDInputSession {
       )
         throw new Error('Invalid relative report');
     }
-    // Use native timer batching when speaking to the real helper and this.relative
-    // has not been overridden by a test stub.
-    if (
-      typeof this.native.sendBatch === 'function' &&
-      this.relative === HIDInputSession.prototype.relative
-    ) {
+    if (typeof this.native.sendBatch === 'function') {
       signal.throwIfAborted();
       this.relativeSinceAbsolute = true;
       await this.native.sendBatch(

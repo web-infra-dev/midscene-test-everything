@@ -181,6 +181,7 @@ export class CameraStream extends EventEmitter {
   async getFrame(
     options: {
       fresh?: boolean;
+      afterSequence?: number;
       timeoutMs?: number;
     } = {},
   ): Promise<CameraFrame> {
@@ -193,8 +194,9 @@ export class CameraStream extends EventEmitter {
       );
     }
 
-    if (currentFrame && !options.fresh) return currentFrame;
-    const afterFrameId = currentFrame?.id ?? 0;
+    const afterFrameId = options.afterSequence ?? currentFrame?.id ?? 0;
+    if (currentFrame && (!options.fresh || currentFrame.id > afterFrameId))
+      return currentFrame;
     const timeoutMs = options.timeoutMs ?? 2_000;
     return new Promise<CameraFrame>((resolve, reject) => {
       const onFrame = (frame: CameraFrame) => {

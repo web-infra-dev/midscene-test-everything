@@ -106,21 +106,25 @@ test('exposure drift between segments can be validated without repeating a move'
   let sequence = 0;
   let brightness = 185;
   let moves = 0;
+  const reads = [0];
   const result = await validateMotionModel(
     {
-      getFrame: async () => ({
-        width: 320,
-        height: 640,
-        sequence: ++sequence,
-        receivedAt: Date.now(),
-        jpeg: await sharp(
-          Buffer.from(
-            `<svg width="320" height="640"><rect width="100%" height="100%" fill="rgb(${brightness},${brightness},${brightness})"/><circle cx="${point.x}" cy="${point.y}" r="8" fill="#444"/></svg>`,
-          ),
-        )
-          .png()
-          .toBuffer(),
-      }),
+      getFrame: async () => {
+        reads[moves]++;
+        return {
+          width: 320,
+          height: 640,
+          sequence: ++sequence,
+          receivedAt: Date.now(),
+          jpeg: await sharp(
+            Buffer.from(
+              `<svg width="320" height="640"><rect width="100%" height="100%" fill="rgb(${brightness},${brightness},${brightness})"/><circle cx="${point.x}" cy="${point.y}" r="8" fill="#444"/></svg>`,
+            ),
+          )
+            .png()
+            .toBuffer(),
+        };
+      },
       close: async () => {},
     },
     {
@@ -131,7 +135,8 @@ test('exposure drift between segments can be validated without repeating a move'
       relative: async () => assert.fail('expected a report batch'),
       relativeBatch: async (reports) => {
         moves++;
-        brightness += 9;
+        reads.push(0);
+        if (moves === 1) brightness += 9;
         for (const delta of reports) {
           point = { x: point.x + delta.x, y: point.y + delta.y };
         }
@@ -141,5 +146,9 @@ test('exposure drift between segments can be validated without repeating a move'
     new AbortController().signal,
   );
   assert.equal(moves, 4);
+  assert.ok(
+    reads.slice(2).every((n) => n <= 4),
+    'later checkpoints should settle promptly after exposure stabilizes',
+  );
   assert.ok(result.maxErrorPx < 3);
 });

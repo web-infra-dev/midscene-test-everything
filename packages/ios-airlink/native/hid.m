@@ -389,40 +389,33 @@ static void PeerMessage(id peer, SEL selector, int message, id args) {
             [payloads addObject:[NSData dataWithBytes:payload length:expectedLength]];
         }
         __block NSUInteger index = 0;
-        __block NSUInteger completed = 0;
-        __block BOOL finished = NO;
+        HIDChannel *channel = self.channels[[self key:peerID psm:19]];
         NSUInteger total = packets.count;
         dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
-        dispatch_source_set_timer(timer, DISPATCH_TIME_NOW, (uint64_t)intervalMs * NSEC_PER_MSEC, 1 * NSEC_PER_MSEC);
+        uint64_t spacing = (uint64_t)intervalMs * NSEC_PER_MSEC;
+        dispatch_source_set_timer(timer, DISPATCH_TIME_NOW, DISPATCH_TIME_FOREVER, 0);
         dispatch_source_set_event_handler(timer, ^{
-            if (finished) return;
-            NSUInteger current = index++;
-            if (current >= total) {
-                dispatch_source_cancel(timer);
-                return;
-            }
-            HIDChannel *ch = self.channels[[self key:peerID psm:19]];
-            if (self.stopping || !ch || !self.channels[[self key:peerID psm:17]]) {
-                finished = YES;
+            if (self.stopping || channel.closed || self.channels[[self key:peerID psm:19]] != channel ||
+                !self.channels[[self key:peerID psm:17]]) {
                 dispatch_source_cancel(timer);
                 Reply(requestID, nil, @"Selected phone's classic Bluetooth HID is not connected");
                 return;
             }
-            if (current + 1 == total) dispatch_source_cancel(timer);
-            NSData *last = payloads[current];
-            [self enqueue:packets[current] channel:ch completion:^(NSString *error) {
-                if (finished) return;
+            NSUInteger current = index++;
+            [self enqueue:packets[current] channel:channel completion:^(NSString *error) {
                 if (error) {
-                    finished = YES;
                     dispatch_source_cancel(timer);
                     Reply(requestID, nil, error);
                     return;
                 }
                 if (!self.reports[peerID]) self.reports[peerID] = [NSMutableDictionary new];
-                self.reports[peerID][report] = last;
-                if (++completed == total) {
-                    finished = YES;
+                self.reports[peerID][report] = payloads[current];
+                if (index == total) {
+                    dispatch_source_cancel(timer);
                     Reply(requestID, @YES, nil);
+                } else {
+                    // Space actual writes even after the socket becomes writable again.
+                    dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, spacing), DISPATCH_TIME_FOREVER, 0);
                 }
             }];
         });

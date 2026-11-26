@@ -12,7 +12,9 @@ import {
   DRAG_REPORT_LIMIT,
   type MotionSample,
   type MotionValidation,
+  REPEAT_REPORTS,
   REPORT_INTERVAL_MS,
+  VALIDATION_DELTAS,
 } from './motion-profile.js';
 
 export interface RelativeTransport {
@@ -252,6 +254,7 @@ async function measureSegment(
   let stableFrames = 0;
   let exactSince = 0;
   let useLocalReference = false;
+  let localBackground: PointerCandidate[] | undefined;
   for (let attempt = 0; attempt < 24; attempt++) {
     signal.throwIfAborted();
     const after = await screen.getFrame({
@@ -307,8 +310,9 @@ async function measureSegment(
           ),
       );
     }
+    let local: PointerCandidate[] | undefined;
     if (ends.length !== 1 && attempt >= 3) {
-      const local = await detectPointerChanges(before, after).catch(() => []);
+      local = await detectPointerChanges(before, after).catch(() => []);
       const anchors = local.filter(
         (p) => Math.hypot(p.x - observedAnchor.x, p.y - observedAnchor.y) < 3,
       );
@@ -338,6 +342,7 @@ async function measureSegment(
         stableFrames >= 1 &&
         performance.now() - exactSince >= 100 &&
         performance.now() - sentAt >= 180;
+      localBackground = local?.filter((p) => p !== end);
       previousEnd = end;
       endCandidate = end;
       if (
@@ -362,11 +367,19 @@ async function measureSegment(
       reports,
       elapsedMs,
       displacement: {
-        x: (end.x - observedAnchor.x) * signX,
-        y: (end.y - observedAnchor.y) * signY,
+        x: signX > 0 ? end.x - observedAnchor.x : observedAnchor.x - end.x,
+        y: signY > 0 ? end.y - observedAnchor.y : observedAnchor.y - end.y,
       },
     };
-    return { sample, next: { ...start, position: end, current } };
+    return {
+      sample,
+      next: {
+        reference: localBackground ? before : frame,
+        background: localBackground ?? referenceChanges,
+        position: end,
+        current,
+      },
+    };
   }
 }
 
@@ -499,6 +512,30 @@ export async function measureMotionModel(
     signal,
     tracking,
   );
+  // These entries have no independent validation checkpoint. Confirm them
+  // on a second track and take a third observation only on disagreement.
+  const repeats = await measureTrack(
+    screen,
+    transport,
+    REPEAT_REPORTS,
+    signal,
+    tracking,
+  );
+  for (const repeat of repeats) {
+    const index = samples.findIndex(
+      ({ delta }) => delta.x === repeat.delta.x && delta.y === repeat.delta.y,
+    );
+    samples[index] = await reconcileMoves(samples[index], repeat, async () => {
+      const [move] = await measureTrack(
+        screen,
+        transport,
+        [repeat],
+        signal,
+        tracking,
+      );
+      return move;
+    });
+  }
   for (const sample of samples) {
     const { delta, reports } = sample;
     model.reports.push({
@@ -564,12 +601,7 @@ export async function validateMotionModel(
   const samples: MotionSample[] = [];
   let maxErrorPx = 0;
   let maxRelativeError = 0;
-  for (const delta of [
-    { x: 8, y: 0 },
-    { x: 0, y: 8 },
-    { x: 4, y: 4 },
-    { x: 0, y: 4 },
-  ]) {
+  for (const delta of VALIDATION_DELTAS) {
     const predicted = predictMovement(model, delta);
     // Long enough for distinct pointer blobs, but stay clear of clamped edges.
     const available = Math.min(
