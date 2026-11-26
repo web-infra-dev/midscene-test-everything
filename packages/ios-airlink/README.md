@@ -18,14 +18,14 @@
 
 ## 💡 Overview
 
-**iOS AirLink** is a macOS implementation of the **Universal Device protocol** for physical iPhones, letting Midscene and AI agents operate unmodified devices like a real user.
+**iOS AirLink** serves physical iPhones over the **[Midscene Connect](https://github.com/web-infra-dev/midscene/tree/main/packages/connect) protocol** from a Mac, letting Midscene and AI agents operate unmodified devices like a real user.
 
 Traditional iOS automation tools (such as Appium / WebDriverAgent) typically require Developer Mode, Xcode signing, provisioning profiles, and 7-day re-signing. AirLink bypasses all of that by pairing screen capture with Bluetooth HID input.
 
 - **Zero setup on the iPhone:** No jailbreak, no Developer Mode, no companion app, and no certificate signing.
 - **Works across any app:** Test system settings, third-party apps, cross-app flows, or even capture-blocked screens via an external camera.
 - **Three screen sources, multi-device ready:** Connect via USB, AirPlay, or an external camera, and manage multiple iPhones from one Mac.
-- **Full Midscene compatibility:** Exposes standard Universal Device HTTP endpoints for `aiAct`, `aiAssert`, `aiQuery`, the CLI, and MCP.
+- **Full Midscene compatibility:** Each phone is a Midscene Connect device at `/devices/<id>`, ready for `aiAct`, `aiAssert`, `aiQuery`, the `midscene-connect` CLI, and the Playground.
 
 ## 🔌 Architecture
 
@@ -35,7 +35,7 @@ Traditional iOS automation tools (such as Appium / WebDriverAgent) typically req
    Screenshots │    │ Actions
                │    ▼
 ┌──────────────────────────┐                                                        ┌────────┐
-│ Universal Device (HTTP)  │                                                        │        │
+│ Midscene Connect (HTTP)  │                                                        │        │
 ├──────────────────────────┤ <-- Screen: USB | AirPlay | Camera (Perspective) ----- │ iPhone │
 │    iOS AirLink (Mac)     │                                                        │        │
 │                          │ ------------------- Bluetooth HID -------------------> │        │
@@ -189,10 +189,11 @@ The device card should show **Connected** with a live preview, and its details s
 Once a device is added, write tests against it in natural language:
 
 ```js
-import { agentFromUniversalDevice } from '@midscene/universal-device';
+import { agentOverConnectProtocol } from '@midscene/connect';
 
-const agent = await agentFromUniversalDevice({
-  host: 'http://localhost:5801',
+const agent = await agentOverConnectProtocol({
+  url: 'http://localhost:5801/devices/<device-id>',
+  token: process.env.MIDSCENE_CONNECT_TOKEN, // from `ios-airlink token`
 });
 
 try {
@@ -203,8 +204,9 @@ try {
 }
 ```
 
-- **Remote host:** Replace `host` with the **Connect** URL printed when AirLink starts and allow port `5801` in the macOS firewall.
-- **Multiple devices:** Pass `deviceId` (from the device details) to `agentFromUniversalDevice`.
+- **Device URL:** Copy the device ID from the device details, or list devices with `curl -H "Authorization: Bearer $MIDSCENE_CONNECT_TOKEN" http://localhost:5801/devices`.
+- **Remote host:** Replace `localhost` with the **Connect** address printed when AirLink starts and allow port `5801` in the macOS firewall.
+- **CLI:** `MIDSCENE_CONNECT_URL=http://localhost:5801/devices/<device-id> npx @midscene/connect act --prompt "..."`.
 
 ## 🛠️ Troubleshooting
 

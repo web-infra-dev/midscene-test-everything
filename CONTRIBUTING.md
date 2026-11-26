@@ -31,12 +31,12 @@ pnpm test
 ## Package boundaries
 
 - Keep vendor commands, units, and completion checks in adapters that implement `@midscene/arm-kit/adapter-development`. The controller owns the queue shared by its devices.
-- Keep shared browser-safe types and camera geometry in `packages/shared/utils`, user-facing controls in `packages/universal-device-playground`, and MG400 setup and calibration in `packages/robot-arm/mg400-service`.
+- Keep shared browser-safe types, camera geometry, and the Midscene Connect adapters in `packages/shared/utils`, and MG400 setup and calibration in `packages/robot-arm/mg400-service`.
 - For calibration packaging changes, build and pack the arm service. Check that the package contains the built manager UI and exercise the embedded calibration routes with the test adapter.
 
 ## Documentation
 
-Keep the root READMEs focused on the project overview and quick start. Update both languages when that content changes. Document protocol and action changes in the [Universal Device RFC](./packages/universal-device/rfc/index.html) and the [API schema](./packages/universal-device/src/server/openapi.ts). Keep credentials and local machine settings out of examples.
+Keep the root READMEs focused on the project overview and quick start. Update both languages when that content changes. The device protocol lives in [`@midscene/connect`](https://github.com/web-infra-dev/midscene/tree/main/packages/connect) in the Midscene repository; propose protocol and action changes there. Keep credentials and local machine settings out of examples.
 
 ## Pull requests
 

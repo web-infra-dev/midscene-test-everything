@@ -4,7 +4,7 @@ export type {
   InputAction,
   Point,
   ScreenFrame,
-} from '@midscene/universal-device';
+} from '@midscene/robotics-shared/device-protocol';
 
 export type ScreenOptions =
   | { source: 'usb'; deviceId?: string }

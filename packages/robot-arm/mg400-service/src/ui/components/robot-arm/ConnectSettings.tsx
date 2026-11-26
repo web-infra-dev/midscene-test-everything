@@ -2,14 +2,12 @@ import { App, Button, Input, Space, Typography } from 'antd';
 import { Copy } from 'lucide-react';
 import { useState } from 'react';
 
-export function UniversalDeviceSettings({
-  language,
-}: { language: 'zh' | 'en' }) {
+export function ConnectSettings({ language }: { language: 'zh' | 'en' }) {
   const zh = language === 'zh';
   const { message } = App.useApp();
   const [credentials, setCredentials] = useState<{
-    url: string;
     token: string;
+    devices: { name: string; url: string }[];
   }>();
   const [loading, setLoading] = useState(false);
 
@@ -50,14 +48,17 @@ export function UniversalDeviceSettings({
   }
 
   return (
-    <section className="robot-settings-group" aria-label="Universal Device">
-      <Typography.Text type="secondary">Universal Device</Typography.Text>
+    <section className="robot-settings-group" aria-label="Midscene Connect">
+      <Typography.Text type="secondary">Midscene Connect</Typography.Text>
       {credentials ? (
         [
-          { label: zh ? '服务地址' : 'Service URL', value: credentials.url },
+          ...credentials.devices.map(({ name, url }) => ({
+            label: name,
+            value: url,
+          })),
           { label: 'Token', value: credentials.token },
         ].map(({ label, value }) => (
-          <div key={label} className="universal-device-field">
+          <div key={label} className="connect-field">
             <Typography.Text>{label}</Typography.Text>
             <Space.Compact block>
               <Input readOnly value={value} aria-label={label} />

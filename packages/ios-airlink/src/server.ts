@@ -3,8 +3,8 @@ import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { runConnectivityTest } from '@midscene/core';
 import { ModelConfigManager } from '@midscene/shared/env';
-import { createDeviceHandler } from '@midscene/universal-device/server';
 import express, { type Request } from 'express';
+import { createPhoneConnect } from './connect-devices.js';
 import type { DeviceConfig } from './hardware/types.js';
 import { PhoneCalibration } from './phone-calibration.js';
 import { ensureToken, label } from './settings.js';
@@ -45,39 +45,11 @@ export async function runServer(
   const { version } = JSON.parse(
     await readFile(new URL('../package.json', import.meta.url), 'utf8'),
   );
-  const phoneActions = [
-    'home',
-    'back',
-    'clearInput',
-    'tap',
-    'doubleTap',
-    'longPress',
-    'swipe',
-    'scroll',
-    'dragAndDrop',
-    'typeText',
-    'key',
-  ] as const;
-  const deviceAPI = createDeviceHandler({
+  const phones = createPhoneConnect({
     token: serviceToken,
-    readyDevice: (id) => {
-      const device = workspaces.readyDevice(id);
-      return device && { ...device, actions: [...phoneActions] };
-    },
-    async listDevices() {
-      return (await savedDevices()).map(({ id, name, screen }) => ({
-        id,
-        name,
-        screenSource: screen.source,
-        status: workspaces.readyDevice(id) ? 'available' : 'offline',
-        actions: [...phoneActions],
-        preview: 'mjpeg',
-        inputGuidance:
-          'Input supports ASCII only. For other text, tap the on-screen keyboard and verify the committed text. Avoid starting swipes on the floating AssistiveTouch menu.',
-      }));
-    },
+    readyDevice: (id) => workspaces.readyDevice(id),
+    listDevices: savedDevices,
   });
-  const sessions = deviceAPI.sessions;
   const app = express();
   app.disable('x-powered-by');
   app.get('/health', (_req, res) => {
@@ -132,10 +104,21 @@ export async function runServer(
       );
     },
   );
-  workspaces.mount(app, (id) => sessions.busy(id), phoneCalibration);
+  workspaces.mount(app, (id) => phones.busy(id), phoneCalibration);
   app.use(express.static(fileURLToPath(new URL('./ui/', import.meta.url))));
   const server = createServer((req, res) => {
-    if (!deviceAPI.handle(req, res)) app(req, res);
+    phones.handle(req, res).then(
+      (handled) => {
+        if (!handled) app(req, res);
+      },
+      (error: Error) => {
+        if (res.headersSent) return res.destroy(error);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({ error: error.message, code: 'INTERNAL_ERROR' }),
+        );
+      },
+    );
   });
   server.on('upgrade', (req, stream, head) => {
     const phone = req.url?.startsWith('/phone-calibration/session?')
@@ -153,7 +136,6 @@ export async function runServer(
       });
     });
   } catch (error) {
-    await sessions.close();
     await workspaces.close();
     throw error;
   }
@@ -169,7 +151,6 @@ export async function runServer(
       });
       server.closeAllConnections();
       try {
-        await sessions.close();
         await workspaces.close();
       } finally {
         await phoneCalibration.close();

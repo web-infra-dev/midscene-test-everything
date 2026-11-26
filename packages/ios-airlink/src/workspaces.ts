@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import type { ServerResponse } from 'node:http';
-import type { ControlledDevice } from '@midscene/universal-device/server';
 import express, { type Request, type Router } from 'express';
-import { DeviceConnection } from './device-connection.js';
+import {
+  type ControlledDevice,
+  DeviceConnection,
+} from './device-connection.js';
 import { DeviceConfigStore } from './hardware/config/store.js';
 import { ConnectionManager } from './hardware/runtime/connections.js';
 import { IPhoneRuntime } from './hardware/runtime/runtime.js';

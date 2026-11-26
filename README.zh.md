@@ -15,7 +15,7 @@
 
 <p align="center">
   <a href="https://github.com/web-infra-dev/midscene-test-everything/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/web-infra-dev/midscene-test-everything/ci.yml?branch=main&label=CI&style=flat-square&color=00a8f0" alt="CI" /></a>
-  <a href="https://midscenejs.com/zh/universal-device/"><img src="https://img.shields.io/badge/Docs-Universal%20Device-00a8f0?style=flat-square" alt="Docs" /></a>
+  <a href="https://github.com/web-infra-dev/midscene/tree/main/packages/connect"><img src="https://img.shields.io/badge/Docs-Midscene%20Connect-00a8f0?style=flat-square" alt="Docs" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-00a8f0?style=flat-square" alt="License" /></a>
   <a href="./package.json"><img src="https://img.shields.io/badge/Node.js-%5E20.19%20%7C%7C%20%5E22.12%20%7C%7C%20%3E%3D24-00a8f0?style=flat-square" alt="Node.js" /></a>
   <a href="https://midscenejs.com/zh/"><img src="https://badge.midscenejs.com/by-midscene" alt="E2E by Midscene.js" /></a>
@@ -66,18 +66,17 @@
 
 ```text
 ┌────────────────────────────────────────────────────────┐
-│               本项目提供（通用测试基建）                 │
+│          @midscene/connect 提供（通用测试基建）          │
 │  • 自然语言 E2E 测试 (aiAct / aiAssert / aiQuery)        │
-│  • 浏览器调试控制台 (Playground 实时预览与交互)          │
-│  • 服务端底座 (会话独占锁、鉴权、OpenAPI、预览推流)       │
-│  • AI Agent 工具链 (内置 MCP Server、CLI、Skills)       │
+│  • CLI、Skill 与浏览器 Playground                       │
+│  • HTTP 服务（Token 鉴权、Swagger 接口文档）             │
 └───────────────────────────┬────────────────────────────┘
-                            │ Universal Device 开放协议 (HTTP)
+                            │ Midscene Connect 协议 (HTTP)
 ┌───────────────────────────┴────────────────────────────┐
-│               开发者负责（实现极简核心接口）             │
-│  • screenshot()：采集当前画面 (JPEG Buffer)             │
-│  • execute(action)：执行点击、滑动等硬件操作            │
-│  • listDevices()：汇报设备状态与支持的操作列表          │
+│          开发者负责（一个 device.mjs 文件）              │
+│  • screenshot()：采集当前画面 (PNG/JPEG)                │
+│  • actions：tap / swipe / typeText / homeButton 等      │
+│  • 自定义动作（参数用 JSON Schema 描述）                 │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -90,45 +89,45 @@
 
 ### 2. 端到端接入示例（Demos）
 
-#### Demo 1：实现设备服务（封装硬件接口）
+#### Demo 1：定义并启动设备
 
-使用 `@midscene/universal-device/server` 将准备好的感知与执行接口暴露为标准服务：
+在一个文件里描述画面采集与操作执行，再用 [`@midscene/connect`](https://github.com/web-infra-dev/midscene/tree/main/packages/connect) 启动服务：
 
-```ts
-import { createServer } from 'node:http';
-import { createDeviceHandler } from '@midscene/universal-device/server';
-
-const api = createDeviceHandler({
-  token: process.env.MIDSCENE_UNIVERSAL_DEVICE_SERVICE_TOKEN ?? 'my-token',
-  listDevices: () => [{ id: 'my-screen', name: 'My Screen', status: 'available', actions: ['tap'] }],
-  readyDevice: (id) => ({
-    signal: new AbortController().signal,
-    // 1. 画面采集：返回当前屏幕截图
-    screenshot: async () => ({ jpeg: getScreenBuffer(), width: 1920, height: 1080, sequence: 1, receivedAt: Date.now() }),
-    // 2. 动作执行：驱动硬件完成点击或滑动
-    execute: async (action) => { if (action.type === 'tap') await myDeviceDriver.tap(action.point.x, action.point.y); },
-  }),
-});
-
-createServer((req, res) => { if (!api.handle(req, res)) res.writeHead(404).end(); }).listen(5801);
+```js
+// my-screen.mjs
+export default {
+  name: 'My Screen',
+  pointerType: 'touch',
+  async connect() {
+    return {
+      screenshot: () => getScreenJpeg(), // 1. 画面采集
+      actions: {
+        tap: (p) => myHardware.tap(p.x, p.y), // 2. 操作执行
+        swipe: (from, to) => myHardware.swipe(from, to),
+      },
+    };
+  },
+};
 ```
+
+```sh
+npx @midscene/connect serve ./my-screen.mjs
+```
+
+服务启动后会打印访问地址，接口文档位于 `/api/docs/`。
 
 #### Demo 2：使用 Playground 调试设备（可选）
 
-服务启动后，可在浏览器中打开 Playground 实时预览设备画面并手动点击调试，验证软硬件连通性：
-
 ```sh
-npx @midscene/universal-device-playground
+npx @midscene/connect playground --url http://127.0.0.1:5820
 ```
 
 #### Demo 3：编写并运行自然语言 E2E 测试
 
-设备服务与硬件就绪后，通过 Midscene Agent 用自然语言编写测试用例驱动该设备：
-
 ```ts
-import { agentFromUniversalDevice } from '@midscene/universal-device';
+import { agentOverConnectProtocol } from '@midscene/connect';
 
-const agent = await agentFromUniversalDevice({ host: 'http://localhost:5801' });
+const agent = await agentOverConnectProtocol({ url: 'http://127.0.0.1:5820' });
 
 try {
   await agent.aiAct('打开音乐应用，搜索“周杰伦”');
@@ -138,14 +137,12 @@ try {
 }
 ```
 
-完整协议与高级用法见 [Universal Device 文档](./packages/universal-device/README.zh.md)。
+iOS AirLink 与 MG400 服务会同时托管多台设备，每台设备的地址是 `http://<host>:<port>/devices/<id>`，`GET /devices` 可列出全部设备。
 
 ## 📦 主要组件
 
 | 组件 | 用途 |
 | --- | --- |
-| [`universal-device`](./packages/universal-device/README.zh.md) | 统一设备接口、TypeScript SDK、HTTP API、CLI 和 MCP Server |
-| [`universal-device-playground`](./packages/universal-device-playground/README.md) | 在浏览器里预览设备画面并调试操作 |
 | [`mg400-service`](./packages/robot-arm/mg400-service/README.zh.md) | DOBOT MG400 设备服务，提供配置、校准和触屏操作 |
 | [`arm-kit`](./packages/robot-arm/arm-kit/README.zh.md) | 机械臂适配器接口，可用于接入自定义机械臂 |
 | [`ios-airlink`](./packages/ios-airlink/README.md) | 在 macOS 上连接和控制 iPhone 真机 |

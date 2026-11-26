@@ -18,14 +18,14 @@
 
 ## 💡 简介
 
-**iOS AirLink** 是 **Universal Device 协议**面向 iPhone 真机的实现，以本地服务的形式运行在 Mac 上，让 Midscene 和各类 AI Agent 像真人一样直接操控未修改过的真机。
+**iOS AirLink** 以本地服务的形式运行在 Mac 上，通过 **[Midscene Connect](https://github.com/web-infra-dev/midscene/tree/main/packages/connect) 协议**提供 iPhone 真机，让 Midscene 和各类 AI Agent 像真人一样直接操控未修改过的真机。
 
 传统的 iOS 自动化方案（如 Appium / WebDriverAgent）通常需要开启开发者模式、配置 Xcode 签名与描述文件，甚至每 7 天重签一次。AirLink 绕开了这些限制——通过画面采集和蓝牙外设模拟，零侵入地完成真机端到端测试。
 
 - **手机端零侵入**：无需越狱、无需开启开发者模式、无需安装测试 App 或重签证书。
 - **不挑 App 与场景**：系统设置、第三方应用、跨 App 跳转都能测；遇到禁止录屏的页面，还可切换外置相机采集。
 - **三种画面 + 一机多控**：支持 USB 直连、AirPlay 投屏、外置相机三种画面来源，一台 Mac 可同时管理多台 iPhone。
-- **原生兼容 Midscene 生态**：作为 Universal Device 的标准设备服务，开箱支持 `aiAct`、`aiAssert`、`aiQuery` 以及 CLI 和 MCP 调用。
+- **原生兼容 Midscene 生态**：每台手机都是一个位于 `/devices/<id>` 的 Midscene Connect 设备，开箱支持 `aiAct`、`aiAssert`、`aiQuery`、`midscene-connect` CLI 和 Playground。
 
 ## 🔌 工作原理
 
@@ -35,7 +35,7 @@
    Screenshots │    │ Actions
                │    ▼
 ┌──────────────────────────┐                                                        ┌────────┐
-│ Universal Device (HTTP)  │                                                        │        │
+│ Midscene Connect (HTTP)  │                                                        │        │
 ├──────────────────────────┤ <-- Screen: USB | AirPlay | Camera (Perspective) ----- │ iPhone │
 │    iOS AirLink (Mac)     │                                                        │        │
 │                          │ ------------------- Bluetooth HID -------------------> │        │
@@ -190,10 +190,11 @@ pnpm ios-airlink start
 添加设备后，就可以用自然语言编写测试：
 
 ```js
-import { agentFromUniversalDevice } from '@midscene/universal-device';
+import { agentOverConnectProtocol } from '@midscene/connect';
 
-const agent = await agentFromUniversalDevice({
-  host: 'http://localhost:5801',
+const agent = await agentOverConnectProtocol({
+  url: 'http://localhost:5801/devices/<device-id>',
+  token: process.env.MIDSCENE_CONNECT_TOKEN, // 通过 `ios-airlink token` 获取
 });
 
 try {
@@ -204,8 +205,9 @@ try {
 }
 ```
 
-- **远程运行**：将 `host` 改为 AirLink 启动时输出的 **Connect** 地址，并放行 `5801` 端口。
-- **多台设备**：在设备详情复制 `deviceId` 传入 `agentFromUniversalDevice`。
+- **设备地址**：在设备详情复制设备 ID，或用 `curl -H "Authorization: Bearer $MIDSCENE_CONNECT_TOKEN" http://localhost:5801/devices` 列出全部设备。
+- **远程运行**：将 `localhost` 改为 AirLink 启动时输出的 **Connect** 地址，并放行 `5801` 端口。
+- **CLI**：`MIDSCENE_CONNECT_URL=http://localhost:5801/devices/<device-id> npx @midscene/connect act --prompt "..."`。
 
 ## 🛠️ 故障排查
 

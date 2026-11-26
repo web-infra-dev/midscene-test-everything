@@ -23,9 +23,9 @@ import {
   robotAuditDirectory,
   robotDataRoot,
 } from '@midscene/arm-kit/internal/storage/layout';
+import { createConnectRegistry } from '@midscene/robotics-shared/connect-registry';
 import { SCREEN_DRIFT_DETECTION_ENABLED } from '@midscene/robotics-shared/contracts';
-import type { InputAction } from '@midscene/universal-device/protocol';
-import { createDeviceHandler } from '@midscene/universal-device/server';
+import { connectPrimitives } from '@midscene/robotics-shared/device-protocol';
 import { PlaygroundArmControls } from './arm-controls.js';
 import {
   type CameraPreviewView,
@@ -184,7 +184,6 @@ export async function startPlaygroundHost({
   let host: string | undefined;
   let connecting = false;
   let connectionError: string | undefined;
-  const armResource = 'arm-controller';
   let armLifetime = new AbortController();
   let managerWrites = 0;
   const universalDeviceActions = () =>
@@ -207,10 +206,31 @@ export async function startPlaygroundHost({
         !devices.batch.active &&
         !devices.hasActiveScreenCalibration,
     );
+  // Remote actions on any screen share one arm: run them one at a time.
+  let remoteQueue: Promise<unknown> = Promise.resolve();
+  let remoteActions = 0;
+  const remoteBusy = () => remoteActions > 0;
+  const runRemote = <T>(task: () => Promise<T>) => {
+    remoteActions++;
+    const run = remoteQueue.then(task).finally(() => {
+      remoteActions--;
+    });
+    remoteQueue = run.catch(() => {});
+    return run;
+  };
+  const readyScreen = (id: string) => {
+    const entry = devices?.entries.get(id);
+    const control = screenControl;
+    if (!entry || !control || !ready() || !control.screens().get(id)?.ready)
+      throw new Error(
+        'The screen is offline. Reconnect the arm and finish calibration in the arm manager.',
+      );
+    return { entry, control };
+  };
   const deviceAPI = deviceAccessToken
-    ? createDeviceHandler({
+    ? createConnectRegistry({
         token: deviceAccessToken,
-        listDevices() {
+        list() {
           const screens = screenControl?.screens();
           return (devices?.screens() ?? [])
             .filter((screen) => screens?.get(screen.id)?.calibrationAccepted)
@@ -221,71 +241,39 @@ export async function startPlaygroundHost({
                 ready() && screens?.get(screen.id)?.ready
                   ? 'available'
                   : 'offline',
-              actions: universalDeviceActions(),
-              preview: 'mjpeg',
-              resourceId: armResource,
             }));
         },
-        readyDevice(id) {
-          const entry = devices?.entries.get(id);
-          const control = screenControl;
-          if (
-            !entry ||
-            !control ||
-            !ready() ||
-            !control.screens().get(id)?.ready
-          )
-            return;
-          const signal = armLifetime.signal;
-          let sequence = 0;
-          return {
-            resourceId: armResource,
-            signal,
-            actions: universalDeviceActions(),
-            async screenshot() {
-              signal.throwIfAborted();
-              const { width, height } = await entry.device.size();
-              const image = await entry.device.screenshotBase64();
-              return {
-                jpeg: Buffer.from(
-                  image.replace(/^data:image\/jpeg;base64,/, ''),
-                  'base64',
-                ),
-                width,
-                height,
-                receivedAt: Date.now(),
-                sequence: ++sequence,
-              };
-            },
-            async execute(action: InputAction, cancellation) {
-              cancellation.throwIfAborted();
-              if (
-                action.type !== 'tap' &&
-                action.type !== 'swipe' &&
-                action.type !== 'longPress' &&
-                action.type !== 'dragAndDrop'
-              )
-                throw new Error('Unsupported mechanical arm action');
-              await control.perform(id, action, cancellation);
-            },
-            openPreview(previewSignal) {
-              let previous: number | undefined;
-              return {
-                async getFrame() {
-                  previewSignal.throwIfAborted();
-                  const frame = await entry.camera.stream.getFrame();
-                  if (frame.id === previous) return;
-                  previous = frame.id;
-                  return {
-                    sequence: frame.id,
-                    jpeg: await rectifyPreviewFrame(entry.camera, frame),
-                  };
-                },
-                async close() {},
-              };
-            },
-          };
-        },
+        device: ({ id, name }) => ({
+          name,
+          description: 'A physical touchscreen operated by a robot arm',
+          pointerType: 'touch',
+          async screenshot() {
+            armLifetime.signal.throwIfAborted();
+            return readyScreen(id).entry.device.screenshotBase64();
+          },
+          size: () => readyScreen(id).entry.device.size(),
+          // Capabilities are resolved per call because the arm can be swapped.
+          actions: connectPrimitives(
+            (action) =>
+              runRemote(async () => {
+                const signal = armLifetime.signal;
+                signal.throwIfAborted();
+                const { control } = readyScreen(id);
+                if (
+                  !(universalDeviceActions() as string[]).includes(action.type)
+                )
+                  throw new Error(
+                    `The connected arm does not support ${action.type}`,
+                  );
+                await control.perform(
+                  id,
+                  action as Parameters<typeof control.perform>[1],
+                  signal,
+                );
+              }),
+            ['tap', 'swipe', 'longPress', 'dragAndDrop'],
+          ),
+        }),
       })
     : undefined;
 
@@ -321,7 +309,7 @@ export async function startPlaygroundHost({
           ? {
               control: {
                 ...screenControl.controlState(),
-                remoteBusy: deviceAPI?.sessions.busy(armResource) ?? false,
+                remoteBusy: remoteBusy(),
               },
             }
           : {}),
@@ -466,7 +454,7 @@ export async function startPlaygroundHost({
       res.end(JSON.stringify(data));
     };
     if (!url) return send(400, { error: 'Invalid URL' });
-    if (deviceAPI?.handle(req, res)) return;
+    if (await deviceAPI?.handle(req, res)) return;
     if (
       url.pathname === '/s' ||
       url.pathname.startsWith('/phone-calibration')
@@ -582,22 +570,27 @@ export async function startPlaygroundHost({
       )
         return send(403, { error: 'Open the arm manager on this computer' });
       if (!deviceAccessToken)
-        return send(404, { error: 'Universal Device is unavailable' });
+        return send(404, { error: 'Remote device access is unavailable' });
+      const screens = screenControl?.screens();
       return send(200, {
-        url: managerOrigins[0],
         token: deviceAccessToken,
+        devices: (devices?.screens() ?? [])
+          .filter((screen) => screens?.get(screen.id)?.calibrationAccepted)
+          .map((screen) => ({
+            name: screen.name,
+            url: `${managerOrigins[0]}/devices/${encodeURIComponent(screen.id)}`,
+          })),
       });
     }
     const write = req.method !== 'GET' && req.method !== 'HEAD';
-    const remoteBusy = deviceAPI?.sessions.busy(armResource);
     if (
-      remoteBusy &&
+      remoteBusy() &&
       write &&
       !['/api/arm/stop', '/api/arm/control'].includes(url.pathname)
     )
       return send(409, {
         error:
-          'Disconnect the Universal Device session before changing the arm configuration',
+          'Wait for the running remote action to finish before changing the arm configuration',
       });
     if (write) managerWrites++;
     try {
@@ -649,12 +642,9 @@ export async function startPlaygroundHost({
         );
       if (url.pathname === '/api/arm/control' && req.method === 'POST') {
         const input = await readBody(req);
-        if (
-          deviceAPI?.sessions.busy(armResource) &&
-          !['pause', 'emergencyStop'].includes(input.action)
-        )
+        if (remoteBusy() && !['pause', 'emergencyStop'].includes(input.action))
           return send(409, {
-            error: 'The arm is reserved by a Universal Device session',
+            error: 'The arm is running a remote action',
           });
         await statusPanel.command(input);
         return send(200, { ok: true });
@@ -1619,7 +1609,6 @@ export async function startPlaygroundHost({
         const drained = new Promise((resolve) => server.close(resolve));
         server.closeAllConnections();
         await setup.pending?.catch(() => {});
-        await deviceAPI?.close();
         await disconnectArm();
         for (const preview of markerPreviews.values()) preview.close();
         markerPreviews.clear();

@@ -156,7 +156,7 @@ export function ManagerLayout({
           <Button
             size="small"
             className="ios-airlink-outline-btn"
-            href="/api/docs/"
+            href="https://github.com/web-infra-dev/midscene/tree/main/packages/connect#http-api"
             target="_blank"
             rel="noreferrer"
           >

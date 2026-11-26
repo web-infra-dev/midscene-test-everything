@@ -24,20 +24,19 @@
     "dev:mock": "pnpm run dev --mock"
   },
   "dependencies": {
+    "@clack/prompts": "^0.11.0",
+    "@midscene/arm-adapter-mg400": "workspace:*",
+    "@midscene/arm-kit": "workspace:*",
     "@midscene/preview-controls": "workspace:*",
     "@midscene/robotics-shared": "workspace:*",
-    "@midscene/arm-kit": "workspace:*",
+    "@midscene/robotics-vision": "workspace:*",
     "@midscene/shared": "1.17.5",
     "antd": "^5.21.6",
     "lucide-react": "0.553.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "zustand": "^5.0.0",
-    "@midscene/universal-device": "workspace:*",
-    "@midscene/arm-adapter-mg400": "workspace:*",
-    "@clack/prompts": "^0.11.0",
-    "@midscene/robotics-vision": "workspace:*",
-    "three": "^0.168.0"
+    "three": "^0.168.0",
+    "zustand": "^5.0.0"
   },
   "devDependencies": {
     "@rsbuild/core": "^1.6.15",

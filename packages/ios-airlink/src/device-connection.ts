@@ -1,12 +1,21 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { ControlledDevice } from '@midscene/universal-device/server';
 import type { ConnectionManager } from './hardware/runtime/connections.js';
 import { LocalDevice } from './hardware/runtime/local-device.js';
+import type { PreviewReader } from './hardware/screen/source.js';
 import type {
   ConnectionState,
+  InputAction,
   ScreenFrame,
   ScreenOptions,
 } from './hardware/types.js';
+
+/** A ready phone that remote clients can drive until `signal` aborts. */
+export type ControlledDevice = {
+  signal: AbortSignal;
+  screenshot(): Promise<ScreenFrame>;
+  openPreview?(signal: AbortSignal): PreviewReader;
+  execute(action: InputAction, signal: AbortSignal): Promise<void>;
+};
 
 export class DeviceConnection {
   private stateListeners = new Set<() => void>();

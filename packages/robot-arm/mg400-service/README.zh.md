@@ -2,7 +2,7 @@
 
 [English](./README.md) / 简体中文
 
-`@midscene/mg400-service` 通过 Universal Device 将 DOBOT MG400 和俯视摄像头接入 Midscene。摄像头采集屏幕画面，机械臂带动触控笔在实体屏幕上点击和滑动，可用于测试车机和嵌入式界面，无需修改被测设备的软件。
+`@midscene/mg400-service` 通过 [Midscene Connect](https://github.com/web-infra-dev/midscene/tree/main/packages/connect) 将 DOBOT MG400 和俯视摄像头接入 Midscene。摄像头采集屏幕画面，机械臂带动触控笔在实体屏幕上点击和滑动，可用于测试车机和嵌入式界面，无需修改被测设备的软件。
 
 ## 本地启动
 
@@ -75,8 +75,8 @@ pnpm dev
 ## 运行测试
 
 1. 在管理台打开已标定的设备，检查校正预览，再试点或试滑，确认触控笔落在预期位置。
-2. 在运行服务的电脑上通过 `localhost` 打开管理台。在设置的 **Universal Device** 区域点击 **查看连接信息**，复制服务地址和 Token。
-3. 在 [Universal Device Playground](../../universal-device-playground/README.md) 中填入连接信息，或用 `agentFromUniversalDevice({ host, token, deviceId })` 运行 Midscene 测试。服务有多个设备时传入 `deviceId`。测试结束后调用 `agent.destroy()` 释放会话。[Universal Device 示例](../../../examples/universal-device.ts) 展示了如何连接设备并查询屏幕内容。
+2. 在运行服务的电脑上通过 `localhost` 打开管理台。在设置的 **Midscene Connect** 区域点击 **查看连接信息**，复制屏幕地址和 Token。
+3. 用 `@midscene/connect` 的 `agentOverConnectProtocol({ url, token })` 运行 Midscene 测试，或通过 `npx @midscene/connect playground --url <屏幕地址> --token <token>` 打开 Playground。每块已校准的屏幕都有独立地址（`/devices/<screen-id>`）。[connect 示例](../../../examples/connect.ts) 展示了如何连接设备并查询屏幕内容。
 
 ## 调参小技巧
 

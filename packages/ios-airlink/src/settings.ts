@@ -4,7 +4,7 @@ import { styleText } from 'node:util';
 import {
   ensureDeviceToken,
   readDeviceToken,
-} from '@midscene/universal-device/server';
+} from '@midscene/robotics-shared/device-protocol';
 
 export const defaultPort = 5801;
 export const label = 'com.midscene.ios-airlink';
@@ -43,11 +43,15 @@ export function printRunningService(port: number) {
       `✓ iOS AirLink   ${style('green', 'Running')}`,
       '',
       ...rows('🖥️', 'Manage', [`${local}/`]),
-      ...rows('🌐', 'Connect', addresses),
       ...rows(
-        '📚',
-        'API Docs',
-        addresses.map((address) => `${address}/api/docs/`),
+        '🌐',
+        'Connect',
+        addresses.map((address) => `${address}/devices/<device-id>`),
+      ),
+      ...rows(
+        '📋',
+        'Devices',
+        addresses.map((address) => `${address}/devices`),
       ),
       '',
       `  🔑  Get an access token with ${style('bold', 'ios-airlink token')}`,

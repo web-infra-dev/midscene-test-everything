@@ -15,7 +15,7 @@
 
 <p align="center">
   <a href="https://github.com/web-infra-dev/midscene-test-everything/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/web-infra-dev/midscene-test-everything/ci.yml?branch=main&label=CI&style=flat-square&color=00a8f0" alt="CI" /></a>
-  <a href="https://midscenejs.com/universal-device/"><img src="https://img.shields.io/badge/Docs-Universal%20Device-00a8f0?style=flat-square" alt="Docs" /></a>
+  <a href="https://github.com/web-infra-dev/midscene/tree/main/packages/connect"><img src="https://img.shields.io/badge/Docs-Midscene%20Connect-00a8f0?style=flat-square" alt="Docs" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-00a8f0?style=flat-square" alt="License" /></a>
   <a href="./package.json"><img src="https://img.shields.io/badge/Node.js-%5E20.19%20%7C%7C%20%5E22.12%20%7C%7C%20%3E%3D24-00a8f0?style=flat-square" alt="Node.js" /></a>
   <a href="https://midscenejs.com/"><img src="https://badge.midscenejs.com/by-midscene" alt="E2E by Midscene.js" /></a>
@@ -65,23 +65,22 @@ We warmly welcome community contributions of successful integrations across diff
 ## 🏗️ Architecture & Workflow
 
 We provide the complete infrastructure needed to bridge any physical device into vision-based AI testing:
-- **AI Testing Infrastructure (Provided)**: Natural-language test execution (`aiAct`, `aiAssert`), Web Playground for live visual inspection, session management, and Agent tooling (MCP Server, CLI).
-- **Universal Device Interface**: A minimal contract where developers only need to connect screen capture (`screenshot`) and action execution (`execute`).
+- **AI Testing Infrastructure (Provided)**: [`@midscene/connect`](https://github.com/web-infra-dev/midscene/tree/main/packages/connect) in the Midscene repository provides natural-language test execution (`aiAct`, `aiAssert`), a Playground for live visual inspection, and Agent tooling (CLI, Skill).
+- **Device Definition**: A minimal contract. Developers connect screen capture (`screenshot`) and input primitives (`tap`, `swipe`, ...) in one `.mjs` file.
 
 ```text
 ┌────────────────────────────────────────────────────────┐
-│               Provided by this project (Infra)         │
+│            Provided by @midscene/connect               │
 │  • Natural-language E2E tests (aiAct / aiAssert)       │
-│  • Web Playground (live visual inspection & debugging) │
-│  • Server foundation (session locks, auth, OpenAPI)    │
-│  • AI Agent tooling (built-in MCP Server, CLI, Skills) │
+│  • CLI, Skill, and browser Playground                  │
+│  • HTTP server with token auth and Swagger docs        │
 └───────────────────────────┬────────────────────────────┘
-                            │ Universal Device Protocol (HTTP)
+                            │ Midscene Connect protocol (HTTP)
 ┌───────────────────────────┴────────────────────────────┐
-│               Implemented by developers (Core API)     │
-│  • screenshot(): capture screen frame (JPEG Buffer)    │
-│  • execute(action): execute physical tap/swipe actions │
-│  • listDevices(): report device info & supported actions│
+│            Implemented by developers (device.mjs)      │
+│  • screenshot(): capture the screen (PNG/JPEG)         │
+│  • actions: tap / swipe / typeText / homeButton / ...  │
+│  • custom actions with JSON Schema params              │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -94,45 +93,45 @@ A complete physical test pipeline typically requires three fundamental component
 
 ### 2. End-to-End Demos
 
-#### Demo 1: Implementing a Device Service
+#### Demo 1: Define and serve a device
 
-Wrap your screen capture and actuator logic into a standard service with `@midscene/universal-device/server`:
+Describe your screen capture and actuator in one file, then serve it with [`@midscene/connect`](https://github.com/web-infra-dev/midscene/tree/main/packages/connect):
 
-```ts
-import { createServer } from 'node:http';
-import { createDeviceHandler } from '@midscene/universal-device/server';
-
-const api = createDeviceHandler({
-  token: process.env.MIDSCENE_UNIVERSAL_DEVICE_SERVICE_TOKEN ?? 'my-token',
-  listDevices: () => [{ id: 'my-screen', name: 'My Screen', status: 'available', actions: ['tap'] }],
-  readyDevice: (id) => ({
-    signal: new AbortController().signal,
-    // 1. Visual sensing: return current screen frame
-    screenshot: async () => ({ jpeg: getScreenJpeg(), width: 1920, height: 1080, sequence: 1, receivedAt: Date.now() }),
-    // 2. Action execution: trigger hardware tap/swipe
-    execute: async (action) => { if (action.type === 'tap') await myHardware.tap(action.point.x, action.point.y); },
-  }),
-});
-
-createServer((req, res) => { if (!api.handle(req, res)) res.writeHead(404).end(); }).listen(5801);
+```js
+// my-screen.mjs
+export default {
+  name: 'My Screen',
+  pointerType: 'touch',
+  async connect() {
+    return {
+      screenshot: () => getScreenJpeg(), // 1. Visual sensing
+      actions: {
+        tap: (p) => myHardware.tap(p.x, p.y), // 2. Input
+        swipe: (from, to) => myHardware.swipe(from, to),
+      },
+    };
+  },
+};
 ```
-
-#### Demo 2: Visual Debugging in Playground (Optional)
-
-Once the service is running, open the browser Playground to inspect live screen feeds and manually test hardware interactions:
 
 ```sh
-npx @midscene/universal-device-playground
+npx @midscene/connect serve ./my-screen.mjs
 ```
 
-#### Demo 3: Writing Natural-Language E2E Tests
+The service prints its URL and serves API docs at `/api/docs/`.
 
-With the device service ready, drive your tests in plain language via the Midscene Agent:
+#### Demo 2: Visual debugging in the Playground (optional)
+
+```sh
+npx @midscene/connect playground --url http://127.0.0.1:5820
+```
+
+#### Demo 3: Natural-language E2E tests
 
 ```ts
-import { agentFromUniversalDevice } from '@midscene/universal-device';
+import { agentOverConnectProtocol } from '@midscene/connect';
 
-const agent = await agentFromUniversalDevice({ host: 'http://localhost:5801' });
+const agent = await agentOverConnectProtocol({ url: 'http://127.0.0.1:5820' });
 
 try {
   await agent.aiAct('Open the music app and search for "Jay Chou"');
@@ -142,14 +141,12 @@ try {
 }
 ```
 
-See the [Universal Device documentation](./packages/universal-device/README.md) for complete protocol specs and advanced usage.
+iOS AirLink and the MG400 service host many devices. Each one is at `http://<host>:<port>/devices/<id>`, and `GET /devices` lists them.
 
 ## 📦 Packages
 
 | Package | What it does |
 | --- | --- |
-| [`universal-device`](./packages/universal-device/README.md) | Shared device interface, TypeScript SDK, HTTP API, CLI, and MCP server |
-| [`universal-device-playground`](./packages/universal-device-playground/README.md) | Preview device screens and try actions in a browser |
 | [`mg400-service`](./packages/robot-arm/mg400-service/README.md) | DOBOT MG400 device service, including setup, calibration, and touchscreen control |
 | [`arm-kit`](./packages/robot-arm/arm-kit/README.md) | Adapter API for integrating custom robot arms |
 | [`ios-airlink`](./packages/ios-airlink/README.md) | Connect to and control physical iPhones from macOS |

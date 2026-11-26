@@ -1,5 +1,5 @@
 import { loadEnvFile } from 'node:process';
-import { agentFromUniversalDevice } from '@midscene/universal-device';
+import { agentOverConnectProtocol } from '@midscene/connect';
 
 try {
   loadEnvFile(new URL('../.env', import.meta.url));
@@ -8,11 +8,10 @@ try {
     throw error;
 }
 
-const agent = await agentFromUniversalDevice({
-  host:
-    process.env.MIDSCENE_UNIVERSAL_DEVICE_SERVICE_URL ||
-    'http://localhost:5801',
-  deviceId: process.env.MIDSCENE_UNIVERSAL_DEVICE_ID || undefined,
+// A device URL, e.g. http://localhost:5801/devices/<id> for iOS AirLink.
+const agent = await agentOverConnectProtocol({
+  url: process.env.MIDSCENE_CONNECT_URL,
+  token: process.env.MIDSCENE_CONNECT_TOKEN,
 });
 
 try {

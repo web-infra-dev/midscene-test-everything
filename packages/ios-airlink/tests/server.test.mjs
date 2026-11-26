@@ -42,40 +42,30 @@ test('LAN clients can discover saved devices with a token, while setup stays loc
       }).on('error', reject);
     });
 
-  assert.equal((await request('/api/docs/')).status, 200);
-  const schema = await (await request('/api/openapi.json')).json();
-  assert.ok(schema.paths['/api/v1/devices']);
-  assert.equal((await request('/api/v1/devices')).status, 401);
+  assert.equal((await request('/devices')).status, 401);
   const authenticated = { ...lan, Authorization: 'Bearer test-token' };
-  const devices = await (
-    await request('/api/v1/devices', authenticated)
-  ).json();
+  const devices = await (await request('/devices', authenticated)).json();
   assert.deepEqual(devices, {
     devices: [
       {
         id: 'phone-1',
         name: 'Test iPhone',
         screenSource: 'usb',
-        actions: [
-          'home',
-          'back',
-          'clearInput',
-          'tap',
-          'doubleTap',
-          'longPress',
-          'swipe',
-          'scroll',
-          'dragAndDrop',
-          'typeText',
-          'key',
-        ],
-        preview: 'mjpeg',
-        inputGuidance:
-          'Input supports ASCII only. For other text, tap the on-screen keyboard and verify the committed text. Avoid starting swipes on the floating AssistiveTouch menu.',
         status: 'offline',
+        path: '/devices/phone-1',
       },
     ],
   });
+  assert.equal(
+    (await request('/devices/phone-1/api/info', authenticated)).status,
+    200,
+  );
+  assert.equal((await request('/devices/phone-1/api/info')).status, 401);
+  assert.equal((await request('/devices/phone-1/api/docs/')).status, 200);
+  assert.equal(
+    (await request('/devices/unknown/api/info', authenticated)).status,
+    404,
+  );
   assert.equal(
     (await request('/ios-airlink/workspaces', authenticated)).status,
     403,
@@ -96,7 +86,6 @@ test('LAN clients can discover saved devices with a token, while setup stays loc
   assert.equal((await request('/', authenticated)).status, 403);
   const localManager = await request('/', {});
   assert.equal(localManager.status, 200);
-  assert.equal((await request('/api/docs/swagger-initializer.js')).status, 200);
 });
 
 test(
@@ -210,64 +199,56 @@ test(
       `data:image/jpeg;base64,${frame.jpeg.toString('base64')}`,
     );
 
-    const api = `${origin}/api/v1`;
     const authorization = { Authorization: 'Bearer test-token' };
     const { devices } = await (
-      await fetch(`${api}/devices`, { headers: authorization })
+      await fetch(`${origin}/devices`, { headers: authorization })
     ).json();
     assert.deepEqual(devices, [
       {
         id: deviceId,
         name: peer.name,
         screenSource: 'airplay',
-        actions: [
-          'home',
-          'back',
-          'clearInput',
-          'tap',
-          'doubleTap',
-          'longPress',
-          'swipe',
-          'scroll',
-          'dragAndDrop',
-          'typeText',
-          'key',
-        ],
-        preview: 'mjpeg',
-        inputGuidance:
-          'Input supports ASCII only. For other text, tap the on-screen keyboard and verify the committed text. Avoid starting swipes on the floating AssistiveTouch menu.',
         status: 'available',
+        path: `/devices/${deviceId}`,
       },
     ]);
-    const acquired = await post(`${api}/sessions`, { deviceId }, authorization);
-    assert.equal(acquired.status, 201);
-    const { id: sessionId } = await acquired.json();
-    const session = `${api}/sessions/${sessionId}`;
-    assert.equal(
-      (await fetch(url, { method: 'DELETE', headers: workspaceHeaders }))
-        .status,
-      409,
-    );
-    assert.equal(
-      (await post(`${session}/actions`, { type: 'home' }, authorization))
-        .status,
-      200,
-    );
-    const doubleTap = { type: 'doubleTap', point: { x: 0, y: 0 } };
-    assert.equal(
-      (await post(`${session}/actions`, doubleTap, authorization)).status,
-      200,
-    );
-    assert.deepEqual(actions, [{ type: 'home' }, doubleTap]);
-    const remoteFrame = await (
-      await fetch(`${session}/screenshot`, { headers: authorization })
+    const api = `${origin}/devices/${deviceId}/api`;
+    const info = await (
+      await fetch(`${api}/info`, { headers: authorization })
     ).json();
-    assert.equal(remoteFrame.jpeg, frame.jpeg.toString('base64'));
+    assert.equal(info.name, peer.name);
+    assert.equal(info.pointerType, 'touch');
+    assert.deepEqual(info.primitives, [
+      'tap',
+      'doubleClick',
+      'longPress',
+      'dragAndDrop',
+      'swipe',
+      'typeText',
+      'keyboardPress',
+      'clearInput',
+      'scroll',
+      'backButton',
+      'homeButton',
+    ]);
     assert.equal(
-      (await fetch(session, { method: 'DELETE', headers: authorization }))
-        .status,
+      (await post(`${api}/primitives/homeButton`, {}, authorization)).status,
       200,
     );
+    assert.equal(
+      (
+        await post(
+          `${api}/primitives/doubleClick`,
+          { point: { x: 0, y: 0 } },
+          authorization,
+        )
+      ).status,
+      200,
+    );
+    assert.deepEqual(actions, [
+      { type: 'home' },
+      { type: 'doubleTap', point: { x: 0, y: 0 } },
+    ]);
     assert.equal(
       (await fetch(url, { method: 'DELETE', headers: workspaceHeaders }))
         .status,
@@ -278,7 +259,7 @@ test(
 );
 
 test(
-  'Bluetooth loss cancels control and old sessions cannot follow a workspace to another phone',
+  'Bluetooth loss cancels control and a device URL never follows a workspace to another phone',
   { timeout: 10000 },
   async (t) => {
     const directory = await mkdtemp(join(tmpdir(), 'ios-airlink-lease-'));
@@ -333,7 +314,6 @@ test(
     });
     t.after(() => service.close());
     const base = `http://127.0.0.1:${service.port}`;
-    const sessions = '/api/v1/sessions';
     const auth = { Authorization: 'Bearer test-token' };
     const setup = { 'X-Midscene-Playground': 'setup' };
     const request = (path, headers = auth) => fetch(base + path, { headers });
@@ -351,23 +331,20 @@ test(
       );
       assert.equal(response.status, 200, await response.text());
     };
-    const acquire = async (deviceId) => {
-      const response = await post(sessions, { deviceId });
-      assert.equal(response.status, 201);
-      return `${sessions}/${(await response.json()).id}`;
-    };
+    const primitive = (id, name) =>
+      post(`/devices/${id}/api/primitives/${name}`, {});
     const dropA = () => {
       for (const notify of listeners) notify({ hosts: [peers[1]] });
     };
 
     await connect('a');
-    const old = await acquire('a');
-    const running = post(`${old}/actions`, { type: 'home' });
+    const running = primitive('a', 'homeButton');
     await actionStarted.promise;
     dropA();
-    assert.equal((await running).status, 410);
-    assert.equal((await post(`${old}/heartbeat`, {})).status, 410);
-    assert.equal((await request(`${old}/screenshot`)).status, 410);
+    assert.equal((await running).status, 500);
+    const offline = await primitive('a', 'backButton');
+    assert.equal(offline.status, 500);
+    assert.match((await offline.json()).error, /offline/);
 
     const refresh = await post(
       `${apiBase}/refresh`,
@@ -375,12 +352,7 @@ test(
       { 'X-Midscene-Playground': 'workspace' },
     );
     assert.equal(refresh.status, 200, await refresh.text());
-    assert.equal((await post(`${old}/actions`, { type: 'back' })).status, 410);
-    const restored = await acquire('a');
-    assert.equal(
-      (await post(`${restored}/actions`, { type: 'back' })).status,
-      200,
-    );
+    assert.equal((await primitive('a', 'backButton')).status, 200);
 
     dropA();
     // Refresh the manager snapshot, as the workspace health check also does.
@@ -390,19 +362,12 @@ test(
       200,
     );
     await connect('b');
-    const replacement = await acquire('b');
-    assert.equal(
-      (await post(`${restored}/actions`, { type: 'back' })).status,
-      410,
-    );
+    assert.equal((await primitive('a', 'backButton')).status, 500);
     assert.deepEqual(actions, [
       { id: 'a', action: { type: 'home' } },
       { id: 'a', action: { type: 'back' } },
     ]);
-    assert.equal(
-      (await post(`${replacement}/actions`, { type: 'back' })).status,
-      200,
-    );
+    assert.equal((await primitive('b', 'backButton')).status, 200);
     assert.equal(actions.at(-1).id, 'b');
   },
 );

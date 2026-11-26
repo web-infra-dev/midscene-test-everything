@@ -21,7 +21,6 @@
     "prepare": "husky",
     "commitlint": "commitlint",
     "lint:staged": "lint-staged",
-    "dev:playground": "pnpm --filter @midscene/universal-device-playground start",
     "ios-airlink:release": "node packages/ios-airlink/scripts/package-release.mjs",
     "ios-airlink": "pnpm --filter @midscene/ios-airlink start",
     "release:pr": "node scripts/prepare-release-pr.mjs"

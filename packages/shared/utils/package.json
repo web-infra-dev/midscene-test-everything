@@ -13,7 +13,8 @@
   "type": "module",
   "devDependencies": {
     "@rslib/core": "^0.18.3",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "@types/node": "^22.0.0"
   },
   "scripts": {
     "build": "rslib build",
@@ -62,6 +63,17 @@
     "./marker-contracts": {
       "types": "./dist/marker-contracts.d.ts",
       "import": "./dist/marker-contracts.js"
+    },
+    "./device-protocol": {
+      "types": "./dist/device-protocol.d.ts",
+      "import": "./dist/device-protocol.js"
+    },
+    "./connect-registry": {
+      "types": "./dist/connect-registry.d.ts",
+      "import": "./dist/connect-registry.js"
     }
+  },
+  "dependencies": {
+    "@midscene/connect": "1.18.3-beta-20261124111518.0"
   }
 }

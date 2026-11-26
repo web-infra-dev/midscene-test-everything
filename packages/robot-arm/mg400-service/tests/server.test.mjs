@@ -67,26 +67,6 @@ test('code-configured arm connects, reports its own settings, retries and releas
     const phonePage = await fetch(`${server.url}/s`);
     assert.equal(phonePage.status, 200);
     assert.match(phonePage.headers.get('content-type'), /text\/html/);
-    const docsRedirect = await fetch(`${server.url}/api/docs`, {
-      redirect: 'manual',
-    });
-    assert.equal(docsRedirect.status, 308);
-    assert.equal(docsRedirect.headers.get('location'), '/api/docs/');
-    const docs = await fetch(`${server.url}/api/docs/`);
-    assert.equal(docs.status, 200);
-    assert.match(await docs.text(), /swagger-ui-bundle\.js/);
-    const initializer = await fetch(
-      `${server.url}/api/docs/swagger-initializer.js`,
-    );
-    assert.match(await initializer.text(), /\/api\/openapi\.json/);
-    const bundle = await fetch(`${server.url}/api/docs/swagger-ui-bundle.js`, {
-      method: 'HEAD',
-    });
-    assert.equal(bundle.status, 200);
-    assert.match(bundle.headers.get('content-type'), /javascript/);
-    const api = await fetch(`${server.url}/api/openapi.json`);
-    assert.equal(api.status, 200);
-    assert.ok((await api.json()).paths['/api/v1/devices']);
     const credentialsUrl = `${server.url}/api/arm/open-device`;
     assert.equal((await fetch(credentialsUrl)).status, 403);
     const managerHeaders = { 'X-Midscene-Manager': '1' };
@@ -114,10 +94,10 @@ test('code-configured arm connects, reports its own settings, retries and releas
     });
     assert.equal(credentials.headers.get('cache-control'), 'no-store');
     assert.deepEqual(await credentials.json(), {
-      url: server.url,
       token: 'test-token',
+      devices: [],
     });
-    const devicesUrl = `${server.url}/api/v1/devices`;
+    const devicesUrl = `${server.url}/devices`;
     assert.equal((await fetch(devicesUrl)).status, 401);
     assert.deepEqual(
       await (

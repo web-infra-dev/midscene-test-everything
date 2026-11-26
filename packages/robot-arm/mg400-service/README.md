@@ -6,7 +6,7 @@
 
 English / [简体中文](./README.zh.md)
 
-`@midscene/mg400-service` connects a DOBOT MG400 and an overhead camera to Midscene through Universal Device. The camera captures the screen, and a stylus mounted on the robot arm taps and swipes the physical touchscreen. This lets you test in-car displays and embedded interfaces without changing the device software.
+`@midscene/mg400-service` connects a DOBOT MG400 and an overhead camera to Midscene through [Midscene Connect](https://github.com/web-infra-dev/midscene/tree/main/packages/connect). The camera captures the screen, and a stylus mounted on the robot arm taps and swipes the physical touchscreen. This lets you test in-car displays and embedded interfaces without changing the device software.
 
 ## Run locally
 
@@ -79,8 +79,8 @@ Configure the touch tool once per arm. All screens use the same tool settings.
 ## Run a test
 
 1. Open the calibrated device in the management UI. Check the corrected preview, then try a tap or swipe to confirm the stylus lands where expected.
-2. On the service computer, open the management UI through `localhost`. In settings, under **Universal Device**, select **Show connection details** and copy the service URL and token.
-3. Use those credentials in the [Universal Device Playground](../../universal-device-playground/README.md), or run a Midscene test with `agentFromUniversalDevice({ host, token, deviceId })`. Supply `deviceId` when the service exposes multiple devices, and call `agent.destroy()` when the test finishes to release the session. The [Universal Device example](../../../examples/universal-device.ts) shows how to connect and query what's visible on screen.
+2. On the service computer, open the management UI through `localhost`. In settings, under **Midscene Connect**, select **Show connection details** and copy a screen URL and the token.
+3. Run a Midscene test with `agentOverConnectProtocol({ url, token })` from `@midscene/connect`, or open the Playground with `npx @midscene/connect playground --url <screen URL> --token <token>`. Each calibrated screen has its own URL (`/devices/<screen-id>`). The [connect example](../../../examples/connect.ts) shows how to connect and query what's visible on screen.
 
 ## Tuning tips
 

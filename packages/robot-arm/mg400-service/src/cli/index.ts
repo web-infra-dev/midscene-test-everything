@@ -24,7 +24,9 @@ async function main() {
     closing ??= playground.close();
     return closing;
   });
-  cli.log.info(`Universal Device API docs: ${playground.url}/api/docs/`);
+  cli.log.info(
+    `Midscene Connect: ${playground.url}/devices/<screen-id> (list screens at ${playground.url}/devices)`,
+  );
   cli.outro(`打开 ${playground.url} 查看机械臂管理台。`);
 }
 

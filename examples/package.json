@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "tsx universal-device.ts"
+    "start": "tsx connect.ts"
   },
   "dependencies": {
-    "@midscene/universal-device": "workspace:*"
+    "@midscene/connect": "1.18.3-beta-20261124111518.0"
   }
 }
