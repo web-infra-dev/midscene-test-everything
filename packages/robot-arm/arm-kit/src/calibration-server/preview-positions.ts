@@ -18,6 +18,7 @@ import {
   type CameraCorrection,
   type CartesianPose,
   type InstallationTeaching,
+  type ProfileData,
   type ScreenProfile,
   type Vector3,
   calibrationAccepted,
@@ -102,6 +103,8 @@ export function calibrationPreviewPositions(
     selection?: AssistedCalibrationInput;
     session?: AssistedCalibrationState | null;
     teachingView?: boolean;
+    /** Already-read profile data, so a list of screens does not clone it per screen. */
+    profiles?: ProfileData;
   } = {},
 ): CalibrationPreviewPositions | undefined {
   const correction = camera.getCorrection();
@@ -189,7 +192,7 @@ export function calibrationPreviewPositions(
     draft?.poses.reference ??
     (fit || teaching
       ? savedCalibrationReference(
-          () => store.list(),
+          () => options.profiles ?? store.list(),
           deviceId,
           setup.cameraId,
           fit?.calibration.id,

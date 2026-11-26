@@ -206,6 +206,15 @@ export class ProfileStore {
     sessions: [],
   };
   private serial: Promise<unknown> = Promise.resolve();
+  /**
+   * Read-only snapshot for `list()`. Callers rebuild whole response trees on
+   * every poll, and cloning a multi-megabyte profile each time (several times
+   * per request) blocked the event loop long enough to stall camera frames.
+   * The snapshot is replaced only when a transaction commits.
+   */
+  private snapshot?: ProfileData;
+  private snapshotRevision = 0;
+  private revision = 0;
   constructor(
     private location = path.join(
       robotDataRoot(),
@@ -547,6 +556,7 @@ export class ProfileStore {
         500,
       );
     this.data = parsed;
+    this.revision += 1;
     await this.transaction((d) => {
       for (const s of d.sessions ?? []) {
         if (calibrationSessionStatus(s) === 'active') {
@@ -598,8 +608,16 @@ export class ProfileStore {
         d.pendingOperation = undefined;
     }, guard);
   }
+  /**
+   * The current profile data. Returned by reference and treated as read-only:
+   * writes go through `transaction`, which publishes a fresh snapshot.
+   */
   list(): ProfileData {
-    return structuredClone(this.data);
+    if (!this.snapshot || this.snapshotRevision !== this.revision) {
+      this.snapshot = structuredClone(this.data);
+      this.snapshotRevision = this.revision;
+    }
+    return this.snapshot;
   }
   contextKey(
     binding: ProfileBinding,
@@ -1253,6 +1271,7 @@ export class ProfileStore {
         throw e;
       }
       this.data = draft;
+      this.revision += 1;
       return structuredClone(result);
     });
     this.serial = operation.catch(() => undefined);

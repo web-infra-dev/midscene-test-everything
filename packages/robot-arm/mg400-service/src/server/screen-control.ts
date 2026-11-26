@@ -46,11 +46,11 @@ export class ScreenControl {
   }
 
   /** Per-screen control metadata, joined with the accepted calibration. */
-  screens(): Map<string, ScreenControlInfo> {
+  screens(screens = this.devices.screens()) {
     const profiles = controllerRuntime(this.devices.arm).profileStore;
     const data = profiles.list();
     const result = new Map<string, ScreenControlInfo>();
-    for (const screen of this.devices.screens()) {
+    for (const screen of screens) {
       const binding = profiles.deviceBinding(screen.id);
       const calibration = binding
         ? (data.calibrations ?? []).find(

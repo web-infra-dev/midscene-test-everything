@@ -1178,7 +1178,9 @@ export async function startPlaygroundHost({
         });
         const deviceSession = registry ? setup.session : null;
         const screens = registry?.screens(true);
-        const controlScreens = screenControl?.screens();
+        // Reuse the screen list: rebuilding it here would repeat the profile
+        // read and geometry for every camera poll.
+        const controlScreens = screenControl?.screens(screens);
         const entries = await Promise.all(
           cameras.map(async (camera) => {
             const entry = registry?.entries.get(camera.id);

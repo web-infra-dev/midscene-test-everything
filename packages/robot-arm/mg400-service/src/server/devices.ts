@@ -105,7 +105,8 @@ export class PlaygroundDevices {
     );
   }
   screens(includePreviewPositions = false) {
-    const profiles = controllerRuntime(this.arm).profileStore.list();
+    const runtime = controllerRuntime(this.arm);
+    const profiles = runtime.profileStore.list();
     const saved = profiles.screenTargets ?? [];
     const pageTargetIds = new Set(
       (profiles.screenPages ?? []).flatMap((page) =>
@@ -152,13 +153,11 @@ export class PlaygroundDevices {
               correction,
               previewPositions:
                 includePreviewPositions && camera
-                  ? entry?.host
+                  ? entry.host
                     ? entry.host.previewPositions()
-                    : calibrationPreviewPositions(
-                        controllerRuntime(this.arm),
-                        camera,
-                        target.id,
-                      )
+                    : calibrationPreviewPositions(runtime, camera, target.id, {
+                        profiles,
+                      })
                   : undefined,
               perspectiveTarget: camera?.getRectifiedPreviewTarget(),
             }
