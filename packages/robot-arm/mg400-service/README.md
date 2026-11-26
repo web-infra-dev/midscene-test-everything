@@ -27,12 +27,14 @@ Secure the stylus, screen, and overhead camera with the full touch area in view.
 
 ### 1. Touch Tool
 
+Configure the touch tool once per arm. All screens use the same tool settings.
+
 - **Required** — Enter the combined weight of the stylus, holder, and adapters (0–0.75 kg). The MG400 mounts the tool straight down (`-Z`).
-- **Optional** — For an axial mount, enter the stylus length (mm) from the flange origin to the tip, including the holder and adapters. Leave it blank to use the flange pose at contact.
+- **Mounting** — For a straight-down, coaxial mount, confirm the mounting in the wizard. Calibration uses the flange pose at contact.
+
+  Use **Advanced Tool Settings** to enter a measured stylus length or the X/Y/Z offset and contact direction in the flange frame. For length, measure from the flange origin to the tip, including the holder and adapters. Keep the MG400 contact direction straight down.
 
   ![Measure the stylus from the flange origin to the contact tip](./docs/calibration/touch-tool.en.svg)
-
-  If the tip is off-axis, enter the measured X/Y/Z offset in millimetres and the contact direction in the flange frame under **Advanced Tool Settings**. Keep the contact direction straight down.
 - **Done when** — The wizard opens **Camera Mapping** after you select **Save and Continue**.
 
 ### 2. Camera Mapping

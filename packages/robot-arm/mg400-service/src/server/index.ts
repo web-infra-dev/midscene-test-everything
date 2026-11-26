@@ -1030,6 +1030,34 @@ export async function startPlaygroundHost({
             phase: session?.phase,
           });
         const registry = devices;
+        if (action === 'configuration' && req.method === 'POST') {
+          const assertToolEditable = () => {
+            if (registry !== devices || registry.entries.get(id)?.host !== host)
+              throw new RobotArmError(
+                'STALE_CONTEXT',
+                'Device connection changed',
+                409,
+              );
+            registry.assertBatchIdle();
+            if (registry.hasActiveScreenCalibration)
+              throw new RobotArmError(
+                'BUSY',
+                'Finish the current calibration operation first',
+                409,
+              );
+          };
+          const input = await readBody(req);
+          assertToolEditable();
+          const configuration = await registry.arm.configureForDevice(
+            'calibration-tool',
+            () => {
+              assertToolEditable();
+              return host.configure(input);
+            },
+          );
+          return send(200, configuration);
+        }
+        if (req.method === 'POST') await host.prepare(false);
         if (
           url.pathname.endsWith('/calibration/camera/preview') &&
           req.method === 'GET'

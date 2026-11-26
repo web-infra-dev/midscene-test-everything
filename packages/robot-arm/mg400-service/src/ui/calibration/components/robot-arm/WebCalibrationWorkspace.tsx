@@ -12,6 +12,7 @@ import { SetupNotice } from './SetupNotice';
 
 export function WebCalibrationWorkspace({
   controller,
+  drawLogo,
   result,
   completedAttempt = false,
   readyToCapture = true,
@@ -33,6 +34,7 @@ export function WebCalibrationWorkspace({
   onConnectPhone,
 }: {
   controller: AssistedCalibrationController;
+  drawLogo: boolean;
   result?: CalibrationProfile;
   completedAttempt?: boolean;
   readyToCapture?: boolean;
@@ -326,7 +328,14 @@ export function WebCalibrationWorkspace({
         (!confirmed || !s.phoneConnected || !readyToCapture)
       }
       onClick={() =>
-        start(() => controller.command('start-unattended-slide', true))
+        start(() =>
+          controller.command(
+            'start-unattended-slide',
+            true,
+            undefined,
+            drawLogo,
+          ),
+        )
       }
     >
       {t('Start automatic calibration')}

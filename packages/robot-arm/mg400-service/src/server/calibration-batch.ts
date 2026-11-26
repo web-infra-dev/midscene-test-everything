@@ -182,16 +182,21 @@ export class CalibrationBatch {
         ),
     );
   }
-  private selection(cameraId: string) {
+  private sharedTool() {
+    const { profileStore, id, connectionIdentity } = this.runtime;
+    return profileStore.sharedCalibrationTool(id, connectionIdentity);
+  }
+  private selection(cameraId: string, requireSharedTool = false) {
     const setups = this.cameraSetups(cameraId);
     const input = setups.find((s) => s.deviceId === cameraId) ?? setups.at(-1);
-    if (!input)
-      throw new RobotArmError(
-        'SETUP_REQUIRED',
-        'Save tool configuration first',
-        409,
-      );
-    return input;
+    const shared = this.sharedTool();
+    if (shared) return { ...input, ...shared, cameraId };
+    if (input && !requireSharedTool) return input;
+    throw new RobotArmError(
+      'SETUP_REQUIRED',
+      'Save tool configuration first',
+      409,
+    );
   }
   private contextVersion(cameraId: string) {
     const input = this.selection(cameraId);
@@ -250,6 +255,7 @@ export class CalibrationBatch {
   private async assertResumeContext() {
     this.assertNoScreenCalibration();
     const state = this.state!;
+    this.selection(state.cameraId!, true);
     await this.assertPerspectives(state.cameraId!);
     if (
       !state.contextVersion ||
@@ -639,17 +645,27 @@ export class CalibrationBatch {
   }
   screens(cameraId: string): WorkstationScreenState[] {
     const setups = this.cameraSetups(cameraId);
-    if (!setups.length) return [];
+    const shared = this.sharedTool();
+    if (!setups.length && !shared) return [];
     const entries = this.entries(cameraId);
     const estimates = this.estimates(cameraId);
     return entries.map((e) => {
-      const setup = this.devices.entries
+      const hostSetup = this.devices.entries
         .get(e.target.id)
         ?.host?.service.setup();
+      const setup =
+        shared &&
+        hostSetup?.selection &&
+        (hostSetup.selection.robotProfileId !== shared.robotProfileId ||
+          hostSetup.selection.toolProfileId !== shared.toolProfileId)
+          ? undefined
+          : hostSetup;
       const prepared =
         setup?.prepared ??
         Boolean(
-          e.binding || setups.some((saved) => saved.deviceId === e.target.id),
+          shared ||
+            e.binding ||
+            setups.some((saved) => saved.deviceId === e.target.id),
         );
       const quad =
         e.calibration && e.screen && calibrationQuad(e.calibration, e.screen);
@@ -689,7 +705,7 @@ export class CalibrationBatch {
         'A calibration batch is already active',
         409,
       );
-    const input = this.selection(cameraId);
+    const input = this.selection(cameraId, true);
     await this.assertPerspectives(cameraId);
     const entries = this.entries(cameraId);
     const estimates = this.estimates(cameraId);
@@ -793,6 +809,7 @@ export class CalibrationBatch {
     compliantSetupConfirmed?: boolean;
     samplingMode?: CalibrationBatchSamplingMode;
     acceptance?: 'manual' | 'automatic';
+    drawLogo?: boolean;
   }) {
     if (this.active)
       throw new RobotArmError(
@@ -806,6 +823,11 @@ export class CalibrationBatch {
       const { samplingMode = 'standard' } = input;
       if (samplingMode !== 'standard' && samplingMode !== 'slide')
         throw new RobotArmError('INVALID_ARGUMENT', 'Unknown sampling mode');
+      if (input.drawLogo !== undefined && typeof input.drawLogo !== 'boolean')
+        throw new RobotArmError(
+          'INVALID_ARGUMENT',
+          'drawLogo must be a boolean',
+        );
       this.assertNoScreenCalibration();
       const plan = await this.plan(input.cameraId);
       if (input.planVersion !== plan.version)
@@ -842,6 +864,7 @@ export class CalibrationBatch {
         usesSharedSafePosition: true,
         sharedSafePosition,
         acceptance: input.acceptance ?? 'automatic',
+        drawLogo: input.drawLogo,
         planVersion: plan.version,
         contextVersion,
         items: plan.screens.map((s) => ({
@@ -1169,7 +1192,10 @@ export class CalibrationBatch {
                 );
             }
             this.check(signal);
-            let session = await host.service.create({ batch: true });
+            let session = await host.service.create({
+              batch: true,
+              drawLogo: state.drawLogo,
+            });
             attemptId = session.id;
             this.activeAttempt = { host, id: attemptId };
             const readAttempt = () => {

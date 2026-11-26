@@ -1381,10 +1381,10 @@ export class ScreenCalibration {
       const host = await this.devices.ensureHost(target.id);
       if (!host.service.setup().prepared) {
         if (root.measuredSetup)
-          await host.configure({
-            tool: root.measuredSetup.tool,
-            motion: root.input?.motion,
-          });
+          await host.configure(
+            { tool: root.measuredSetup.tool, motion: root.input?.motion },
+            false,
+          );
       }
       const mappingError = await host.applyMarkerCorrection(
         session.corrections.get(target.id)!,

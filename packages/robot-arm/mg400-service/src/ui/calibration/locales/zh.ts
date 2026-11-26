@@ -868,6 +868,12 @@ const setupZh: Record<string, string> = {
   'A 4-axis arm keeps the stylus pointing straight down. You only need its length.':
     '4 轴机械臂的触控笔保持垂直向下，只需要填写长度。',
   'Stylus Length (mm)': '触控笔长度（mm）',
+  'I confirm the stylus points straight down and is coaxial with the flange.':
+    '我确认触控笔垂直向下，且与法兰同轴。',
+  'Using measured tool geometry': '当前使用实测工具几何',
+  'Coaxial Downward Mounting': '垂直向下同轴安装',
+  'The tip is directly below the centre of the flange.':
+    '笔尖位于法兰中心的正下方。',
   'Advanced Tool Settings': '高级工具设置',
   'Screen Width (mm)': '屏幕宽度（mm）',
   'Screen Height (mm)': '屏幕高度（mm）',

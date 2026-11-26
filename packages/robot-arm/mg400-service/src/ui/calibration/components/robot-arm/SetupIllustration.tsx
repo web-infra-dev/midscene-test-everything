@@ -9,10 +9,12 @@ type Step = 'connection' | 'tool' | 'screen' | 'camera';
 function Drawing({
   id,
   step,
+  showCoaxialMount,
   t,
 }: {
   id: string;
   step: Step;
+  showCoaxialMount: boolean;
   t: (key: string) => string;
 }) {
   switch (step) {
@@ -111,10 +113,18 @@ function Drawing({
             fill="var(--midscene-surface-muted)"
           />
           <text x="32" y="38" className="setup-art-title">
-            {t('Measure Origin to Tip')}
+            {t(
+              showCoaxialMount
+                ? 'Coaxial Downward Mounting'
+                : 'Measure Origin to Tip',
+            )}
           </text>
           <text x="32" y="61" className="setup-art-small">
-            {t('Include the holder and adapters. Downward mounting shown.')}
+            {t(
+              showCoaxialMount
+                ? 'The tip is directly below the centre of the flange.'
+                : 'Include the holder and adapters. Downward mounting shown.',
+            )}
           </text>
           <g filter={`url(#${id}-shadow)`}>
             <path
@@ -150,6 +160,13 @@ function Drawing({
             />
             <path d="M299 310h12l-6 23Z" fill="#40536e" />
           </g>
+          {showCoaxialMount && (
+            <path
+              d="M305 74V348"
+              className="setup-art-dim"
+              strokeDasharray="5 4"
+            />
+          )}
           <circle
             cx="305"
             cy="112"
@@ -166,34 +183,40 @@ function Drawing({
             stroke="white"
             strokeWidth="2"
           />
-          <path d="M305 112H418M305 333H418" className="setup-art-ext" />
-          <path
-            d="M409 117V328"
-            className="setup-art-dim"
-            markerStart={`url(#${id}-arrow)`}
-            markerEnd={`url(#${id}-arrow)`}
-          />
-          <rect
-            x="386"
-            y="197"
-            width="111"
-            height="49"
-            rx="8"
-            fill="var(--midscene-surface-muted)"
-          />
-          <text x="400" y="218" className="setup-art-label setup-art-blue">
-            {t('Stylus Length')}
-          </text>
-          <text x="400" y="236" className="setup-art-small">
-            {t('Measured \u00b7 mm')}
-          </text>
+          {!showCoaxialMount && (
+            <>
+              <path d="M305 112H418M305 333H418" className="setup-art-ext" />
+              <path
+                d="M409 117V328"
+                className="setup-art-dim"
+                markerStart={`url(#${id}-arrow)`}
+                markerEnd={`url(#${id}-arrow)`}
+              />
+              <rect
+                x="386"
+                y="197"
+                width="111"
+                height="49"
+                rx="8"
+                fill="var(--midscene-surface-muted)"
+              />
+              <text x="400" y="218" className="setup-art-label setup-art-blue">
+                {t('Stylus Length')}
+              </text>
+              <text x="400" y="236" className="setup-art-small">
+                {t('Measured \u00b7 mm')}
+              </text>
+            </>
+          )}
           <path d="M300 112H186" className="setup-art-ext" />
           <text x="52" y="108" className="setup-art-label">
             {t('Flange Origin')}
           </text>
-          <text x="65" y="128" className="setup-art-small">
-            {t('Measure from here')}
-          </text>
+          {!showCoaxialMount && (
+            <text x="65" y="128" className="setup-art-small">
+              {t('Measure from here')}
+            </text>
+          )}
           <path d="M282 157H186" className="setup-art-ext" />
           <text x="100" y="163">
             {t('Holder / Adapter')}
@@ -416,9 +439,11 @@ function Drawing({
 export function SetupIllustration({
   step,
   language,
+  showCoaxialMount = false,
 }: {
   step: Step;
   language?: Language;
+  showCoaxialMount?: boolean;
 }) {
   const preference = useCalibrationLanguage((state) => state.language);
   const t = (key: string) => translate(key, [], language ?? preference);
@@ -468,7 +493,7 @@ export function SetupIllustration({
           />
         </filter>
       </defs>
-      <Drawing id={id} step={step} t={t} />
+      <Drawing id={id} step={step} showCoaxialMount={showCoaxialMount} t={t} />
     </svg>
   );
 }

@@ -14,6 +14,9 @@ const teachingBoundaryZh: Record<string, string> = {
   'Finish calibration and return': '完成标定并返回',
   'Shared Safe Position pending': '共用安全位待确认',
   'Advanced debugging': '高级调试',
+  'Draw logo after calibration': '标定后绘制 Logo',
+  'Recalibrate this screen for the current touch tool':
+    '请用当前触控工具重新标定此屏幕',
   'Debug drawing': '调试绘制',
   'Start drawing': '开始绘制',
   'Stop drawing': '停止绘制',

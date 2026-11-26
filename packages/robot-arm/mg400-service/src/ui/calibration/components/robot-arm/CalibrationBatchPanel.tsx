@@ -172,13 +172,23 @@ export const CalibrationBatchPanel = forwardRef<
     cameraId?: string;
     /** Screens of the selected camera, already fetched by the workspace. */
     screens: readonly WorkstationScreenState[];
+    drawLogo: boolean;
     disabled: boolean;
     onChanged?: () => void | Promise<void>;
     onActiveChange?: (active: boolean) => void;
     debugDrawing?: ReactNode;
   }
 >(function CalibrationBatchPanel(
-  { api, cameraId, screens, disabled, onChanged, onActiveChange, debugDrawing },
+  {
+    api,
+    cameraId,
+    screens,
+    drawLogo,
+    disabled,
+    onChanged,
+    onActiveChange,
+    debugDrawing,
+  },
   ref,
 ) {
   const [batch, setBatch] = useState<CalibrationBatchState | null>();
@@ -312,6 +322,7 @@ export const CalibrationBatchPanel = forwardRef<
         horizontalConfirmed: true,
         compliantSetupConfirmed: true,
         samplingMode: 'slide',
+        drawLogo,
         ...(manualAcceptance ? { acceptance: 'manual' as const } : {}),
       });
       setPlan(undefined);

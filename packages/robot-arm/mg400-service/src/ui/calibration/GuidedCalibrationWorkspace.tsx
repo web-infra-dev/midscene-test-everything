@@ -17,6 +17,7 @@ import type {
   MarkerCalibrationDetectionResponse,
   MarkerCalibrationTarget,
 } from '@midscene/robotics-shared/marker-contracts';
+import { supportsFlangeContact } from '@midscene/robotics-shared/setup-contracts';
 import {
   Alert,
   App,
@@ -28,6 +29,7 @@ import {
   Select,
   Space,
   Spin,
+  Switch,
   Tabs,
   Typography,
 } from 'antd';
@@ -259,6 +261,7 @@ function GuidedContent({
     lease?.phase === 'queued' ||
     lease?.phase === 'cancelling';
   const singleBusy = singleQueued || lease?.phase === 'running';
+  const [drawLogo, setDrawLogo] = useState(false);
   const [logoDrawing, setLogoDrawing] = useState<DebugLogoDrawingStatus | null>(
     null,
   );
@@ -1671,6 +1674,22 @@ function GuidedContent({
                 }}
               />
             )}
+            {step === 3 &&
+              config &&
+              !batchActive &&
+              (!singleBusy || controller.session?.stage === 'ready') && (
+                <Space>
+                  <span>{t('Draw logo after calibration')}</span>
+                  <Switch
+                    aria-label={t('Draw logo after calibration')}
+                    checked={drawLogo}
+                    disabled={
+                      closing || switching || controller.busy || logoDrawingBusy
+                    }
+                    onChange={setDrawLogo}
+                  />
+                </Space>
+              )}
             {step === 3 && camera && (!soleScreen || batchActive) && (
               <div {...(switching ? { inert: '' } : {})}>
                 <CalibrationBatchPanel
@@ -1678,6 +1697,7 @@ function GuidedContent({
                   api={batchClient}
                   cameraId={cameraId}
                   screens={states}
+                  drawLogo={drawLogo}
                   debugDrawing={debugDrawing}
                   disabled={
                     closing ||
@@ -1990,6 +2010,7 @@ function GuidedContent({
                       <WebCalibrationWorkspace
                         key={JSON.stringify([selectedId, lease?.attemptId])}
                         controller={controller}
+                        drawLogo={drawLogo}
                         footer={footer}
                         result={config.result}
                         completedAttempt={lease?.phase === 'completed'}
@@ -2152,6 +2173,9 @@ function GuidedContent({
                       ) : (
                         <SetupIllustration
                           step={step === 0 ? 'tool' : 'camera'}
+                          showCoaxialMount={supportsFlangeContact(
+                            config?.capabilities,
+                          )}
                         />
                       ),
                   },

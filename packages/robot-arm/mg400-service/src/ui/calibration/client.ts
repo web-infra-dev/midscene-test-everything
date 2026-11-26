@@ -137,6 +137,7 @@ export class CalibrationClient {
     action: AssistedCalibrationAction,
     confirmed = false,
     attemptId?: string,
+    drawLogo?: boolean,
   ): Promise<AssistedCalibrationState> {
     return (
       await this.request<{
@@ -145,6 +146,7 @@ export class CalibrationClient {
         action,
         confirmed,
         attemptId,
+        drawLogo,
       })
     ).session;
   }

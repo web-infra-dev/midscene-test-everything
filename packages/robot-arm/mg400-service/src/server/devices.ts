@@ -391,7 +391,10 @@ export class PlaygroundDevices {
         'Camera is not running',
         409,
       );
-    if (entry.host) return entry.host;
+    if (entry.host) {
+      await entry.host.prepare(false);
+      return entry.host;
+    }
     entry.hostOpening ??= (async () => {
       const token = (await this.pairings?.token(id)) ?? randomUUID();
       const store = controllerRuntime(this.arm).profileStore;
@@ -402,6 +405,7 @@ export class PlaygroundDevices {
         arm: this.arm,
         camera: entry.camera,
         deviceId: id,
+        sharedTool: true,
         markerCodes: this.markerCodes(id),
         onImagingPattern: (request) =>
           this.setCameraImagingPattern(entry.cameraId, request, [id]),
@@ -538,6 +542,7 @@ export class PlaygroundDevices {
         camera: cameraId,
         id,
         screenId,
+        sharedTool: true,
         cameraManager: this.cameras,
       });
       try {
@@ -692,6 +697,17 @@ export class PlaygroundDevices {
   >();
   startCalibration(id: string): Promise<unknown> {
     this.assertBatchIdle();
+    if (
+      !this.store.sharedCalibrationTool(
+        this.arm.id,
+        this.arm.connectionIdentity,
+      )
+    )
+      throw new RobotArmError(
+        'SETUP_REQUIRED',
+        'Save tool configuration first',
+        409,
+      );
     const opening = this.calibrationOpening.get(id);
     if (opening) return opening.pending;
     const existing = this.entries.get(id)?.calibration;

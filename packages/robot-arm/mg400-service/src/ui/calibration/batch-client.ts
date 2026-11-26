@@ -40,6 +40,7 @@ export class BatchClient {
     compliantSetupConfirmed?: true;
     samplingMode?: CalibrationBatchSamplingMode;
     acceptance?: 'manual';
+    drawLogo?: boolean;
   }) {
     return this.request<CalibrationBatchState>('start', input);
   }

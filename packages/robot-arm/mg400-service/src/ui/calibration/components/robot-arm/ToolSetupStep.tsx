@@ -31,7 +31,7 @@ export function ToolSetupStep({
   capabilities,
   axis,
   length,
-  optionalLength,
+  mountingConfirmation,
   disabled,
   fieldError,
   onAxisChange,
@@ -45,7 +45,7 @@ export function ToolSetupStep({
   capabilities?: EffectiveCapabilities;
   axis?: ToolAxis;
   length: number | null;
-  optionalLength: boolean;
+  mountingConfirmation?: ReactNode;
   disabled: boolean;
   fieldError?: SetupFieldError;
   onAxisChange: (axis: ToolAxis) => void;
@@ -68,6 +68,33 @@ export function ToolSetupStep({
     fieldError?.kind === 'tool' && fieldError.path.startsWith('payload.')
       ? fieldError
       : undefined;
+  const payloadFields = capabilities?.payload && (
+    <ToolPayloadFields
+      value={tool.payload}
+      constraints={capabilities.payload}
+      disabled={disabled}
+      error={payloadError}
+      onChange={onPayloadChange}
+      showInertia={false}
+    />
+  );
+  const advancedAction = (
+    <Space wrap>
+      <Button type="link" disabled={disabled} onClick={onOpenAdvanced}>
+        {t('Advanced Tool Settings')}
+      </Button>
+    </Space>
+  );
+  if (mountingConfirmation) {
+    return (
+      <div className="robot-setup-step-panel">
+        {mountingConfirmation}
+        {payloadFields}
+        {extra}
+        {advancedAction}
+      </div>
+    );
+  }
   if (custom) {
     const geometry = customGeometry(tool);
     return (
@@ -92,16 +119,7 @@ export function ToolSetupStep({
             {t('Edit Custom Mounting')}
           </Button>
         </div>
-        {capabilities?.payload && (
-          <ToolPayloadFields
-            value={tool.payload}
-            constraints={capabilities.payload}
-            disabled={disabled}
-            error={payloadError}
-            onChange={onPayloadChange}
-            showInertia={false}
-          />
-        )}
+        {payloadFields}
         {extra}
       </div>
     );
@@ -147,9 +165,7 @@ export function ToolSetupStep({
         />
         <span className="robot-field-help">
           {t(
-            optionalLength
-              ? 'Leave blank to calibrate using the flange pose at contact.'
-              : 'Measure from the flange origin to the contact tip, including the holder.',
+            'Measure from the flange origin to the contact tip, including the holder.',
           )}
         </span>
         {lengthError && (
@@ -158,22 +174,9 @@ export function ToolSetupStep({
           </span>
         )}
       </label>
-      {capabilities?.payload && (
-        <ToolPayloadFields
-          value={tool.payload}
-          constraints={capabilities.payload}
-          disabled={disabled}
-          error={payloadError}
-          onChange={onPayloadChange}
-          showInertia={false}
-        />
-      )}
+      {payloadFields}
       {extra}
-      <Space wrap>
-        <Button type="link" disabled={disabled} onClick={onOpenAdvanced}>
-          {t('Advanced Tool Settings')}
-        </Button>
-      </Space>
+      {advancedAction}
     </div>
   );
 }

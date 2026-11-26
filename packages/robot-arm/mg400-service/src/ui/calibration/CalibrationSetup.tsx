@@ -1,5 +1,13 @@
 import { supportsFlangeContact } from '@midscene/robotics-shared/setup-contracts';
-import { Button, InputNumber, Modal, Space, Typography } from 'antd';
+import {
+  Button,
+  Checkbox,
+  InputNumber,
+  Modal,
+  Segmented,
+  Space,
+  Typography,
+} from 'antd';
 import { useEffect, useId, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { SetupIllustration } from './components/robot-arm/SetupIllustration';
@@ -21,6 +29,17 @@ export interface MeasuredCalibrationSetup {
     'offsetMm' | 'contactDirection' | 'payload' | 'contactFrame'
   >;
 }
+type ToolGeometry = Pick<ToolProfile, 'offsetMm' | 'contactDirection'>;
+type ToolOffsetDraft = {
+  offsetMm: { x: number; y: number; z: number | null };
+  contactDirection: ToolGeometry['contactDirection'];
+};
+type MeasuredGeometryDraft = {
+  mode: 'length' | 'offset';
+  length: number | null;
+  custom: ToolOffsetDraft | undefined;
+};
+
 /** Original tool setup controls, shared by standalone and embedded hosts. */
 export function CalibrationSetup({
   capabilities,
@@ -52,23 +71,72 @@ export function CalibrationSetup({
       }
     | undefined
   >(initial?.tool.payload);
-  const [custom, setCustom] = useState<
-    Pick<ToolProfile, 'offsetMm' | 'contactDirection'> | undefined
-  >(initial && !inferred ? initial.tool : undefined);
-  const [advanced, setAdvanced] = useState(false);
+  const [custom, setCustom] = useState<ToolGeometry | undefined>(
+    initial && !inferred ? initial.tool : undefined,
+  );
+  const [coaxialConfirmed, setCoaxialConfirmed] = useState(
+    initial?.tool.contactFrame === 'flange',
+  );
+  const [advanced, setAdvanced] = useState<MeasuredGeometryDraft>();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
   // InputNumber can emit an out-of-range value while the user is typing.
   // Keep the form renderable; reject invalid measurements on submission.
   const validLength = length !== null && Number.isFinite(length) && length >= 0;
-  const optionalLength =
-    !custom && axis === '-Z' && supportsFlangeContact(capabilities);
-  const geometry = custom ?? axialTool(axis, validLength ? length : 0);
+  const flangeSupported = supportsFlangeContact(capabilities);
+  const hasMeasuredGeometry = Boolean(custom) || validLength;
+  const axialGeometry = axialTool(axis, validLength ? length : 0);
+  const geometry = custom ?? axialGeometry;
+  const advancedGeometry = advanced?.custom ?? {
+    offsetMm: {
+      ...axialGeometry.offsetMm,
+      z: flangeSupported && !validLength ? null : axialGeometry.offsetMm.z,
+    },
+    contactDirection: axialGeometry.contactDirection,
+  };
+  const openAdvanced = () => {
+    setAdvanced({
+      mode:
+        flangeSupported && !custom && axis === '-Z' && validLength
+          ? 'length'
+          : 'offset',
+      length,
+      custom,
+    });
+  };
+  const canApplyAdvanced =
+    advanced?.mode === 'length'
+      ? advanced.length !== null &&
+        Number.isFinite(advanced.length) &&
+        advanced.length >= 0
+      : advancedGeometry.offsetMm.z !== null;
+  const applyAdvanced = () => {
+    if (!advanced || !canApplyAdvanced) return;
+    if (advanced.mode === 'length') {
+      setAxis('-Z');
+      setLength(advanced.length);
+      setCustom(undefined);
+    } else if (advanced.custom) {
+      const { offsetMm, contactDirection } = advanced.custom;
+      if (offsetMm.z === null) return;
+      setCustom({
+        offsetMm: { ...offsetMm, z: offsetMm.z },
+        contactDirection,
+      });
+    } else {
+      setCustom(undefined);
+    }
+    setCoaxialConfirmed(false);
+    setAdvanced(undefined);
+  };
   const save = async () => {
     setPending(true);
     setError(undefined);
     try {
-      const savedGeometry = custom ?? axialTool(axis, length, capabilities);
+      const savedGeometry =
+        flangeSupported && coaxialConfirmed
+          ? axialTool('-Z', null, capabilities)
+          : (custom ?? axialTool(axis, length));
       if (capabilities?.payload && payload?.massKg == null)
         throw new Error(t('Tool Weight (kg)'));
       await onSave({
@@ -99,7 +167,12 @@ export function CalibrationSetup({
           {t('Cancel')}
         </Button>
       )}
-      <Button type="primary" loading={pending} onClick={() => void save()}>
+      <Button
+        type="primary"
+        disabled={flangeSupported && !coaxialConfirmed && !hasMeasuredGeometry}
+        loading={pending}
+        onClick={() => void save()}
+      >
         {t('Save and Continue')}
       </Button>
     </Space>
@@ -113,12 +186,33 @@ export function CalibrationSetup({
           capabilities={capabilities}
           axis={axis}
           length={length}
-          optionalLength={optionalLength}
+          mountingConfirmation={
+            flangeSupported && (
+              <div className="robot-form-field">
+                <Checkbox
+                  checked={coaxialConfirmed}
+                  disabled={pending}
+                  onChange={(event) =>
+                    setCoaxialConfirmed(event.target.checked)
+                  }
+                >
+                  {t(
+                    'I confirm the stylus points straight down and is coaxial with the flange.',
+                  )}
+                </Checkbox>
+                {!coaxialConfirmed && hasMeasuredGeometry && (
+                  <Typography.Text type="secondary">
+                    {t('Using measured tool geometry')}
+                  </Typography.Text>
+                )}
+              </div>
+            )
+          }
           disabled={pending}
           onAxisChange={setAxis}
           onLengthChange={setLength}
           onPayloadChange={setPayload}
-          onOpenAdvanced={() => setAdvanced(true)}
+          onOpenAdvanced={openAdvanced}
         />
         {error && (
           <Typography.Paragraph type="danger" role="alert">
@@ -130,56 +224,109 @@ export function CalibrationSetup({
       {showIllustration && (
         <aside className="robot-setup-guide-card">
           <figure className="robot-setup-media-slot">
-            <SetupIllustration step="tool" />
+            <SetupIllustration step="tool" showCoaxialMount={flangeSupported} />
             <figcaption className="robot-setup-reference-toolbar">
               {t('Setup illustration')}
             </figcaption>
           </figure>
-          <Typography.Paragraph>
-            {t(
-              optionalLength
-                ? 'Leave blank to calibrate using the flange pose at contact.'
-                : 'Measure from the flange origin to the contact tip, including the holder.',
-            )}
-          </Typography.Paragraph>
+          {!flangeSupported && (
+            <Typography.Paragraph>
+              {t(
+                'Measure from the flange origin to the contact tip, including the holder.',
+              )}
+            </Typography.Paragraph>
+          )}
         </aside>
       )}
       <Modal
-        open={advanced}
+        open={Boolean(advanced)}
         title={t('Advanced Tool Settings')}
-        onCancel={() => setAdvanced(false)}
-        onOk={() => setAdvanced(false)}
+        okText={t('Apply')}
+        okButtonProps={{ disabled: !canApplyAdvanced }}
+        onCancel={() => setAdvanced(undefined)}
+        onOk={applyAdvanced}
       >
-        {(['offsetMm', 'contactDirection'] as const).map((field) => (
-          <div key={field}>
-            <Typography.Text>
-              {t(
-                field === 'offsetMm'
-                  ? 'Measured Tool Offset (mm)'
-                  : 'Tool Contact Direction',
-              )}
-            </Typography.Text>
-            <Space>
-              {(['x', 'y', 'z'] as const).map((key) => (
-                <label key={key} htmlFor={`${id}-${field}-${key}`}>
-                  {key.toUpperCase()}
-                  <InputNumber
-                    id={`${id}-${field}-${key}`}
-                    value={geometry[field][key]}
-                    onChange={(value) => {
-                      if (value !== null)
-                        setCustom({
-                          ...geometry,
-                          [field]: { ...geometry[field], [key]: value },
-                        });
-                    }}
-                  />
-                </label>
-              ))}
-            </Space>
+        {advanced && (
+          <div className="robot-setup-step-panel">
+            {flangeSupported && (
+              <Segmented<MeasuredGeometryDraft['mode']>
+                value={advanced.mode}
+                options={[
+                  { value: 'length', label: t('Stylus Length') },
+                  { value: 'offset', label: t('Custom Mounting') },
+                ]}
+                onChange={(mode) => setAdvanced({ ...advanced, mode })}
+              />
+            )}
+            {advanced.mode === 'length' ? (
+              <label className="robot-form-field" htmlFor={`${id}-length`}>
+                <span>{t('Stylus Length (mm)')}</span>
+                <InputNumber
+                  id={`${id}-length`}
+                  min={0}
+                  value={advanced.length}
+                  onChange={(length) => setAdvanced({ ...advanced, length })}
+                />
+                <span className="robot-field-help">
+                  {t(
+                    'Measure from the flange origin to the contact tip, including the holder.',
+                  )}
+                </span>
+              </label>
+            ) : (
+              <>
+                {(['offsetMm', 'contactDirection'] as const).map((field) => (
+                  <div key={field} className="robot-form-field">
+                    <Typography.Text>
+                      {t(
+                        field === 'offsetMm'
+                          ? 'Measured Tool Offset (mm)'
+                          : 'Tool Contact Direction',
+                      )}
+                    </Typography.Text>
+                    <Space wrap>
+                      {(['x', 'y', 'z'] as const).map((key) => (
+                        <label key={key} htmlFor={`${id}-${field}-${key}`}>
+                          {key.toUpperCase()}
+                          <InputNumber
+                            id={`${id}-${field}-${key}`}
+                            value={advancedGeometry[field][key]}
+                            onChange={(value) => {
+                              if (
+                                value === null &&
+                                (field !== 'offsetMm' ||
+                                  key !== 'z' ||
+                                  !flangeSupported)
+                              )
+                                return;
+                              setAdvanced({
+                                ...advanced,
+                                custom: {
+                                  ...advancedGeometry,
+                                  [field]: {
+                                    ...advancedGeometry[field],
+                                    [key]: value,
+                                  },
+                                },
+                              });
+                            }}
+                          />
+                        </label>
+                      ))}
+                    </Space>
+                  </div>
+                ))}
+                <Button
+                  onClick={() =>
+                    setAdvanced({ ...advanced, custom: undefined })
+                  }
+                >
+                  {t('Reset')}
+                </Button>
+              </>
+            )}
           </div>
-        ))}
-        <Button onClick={() => setCustom(undefined)}>{t('Reset')}</Button>
+        )}
       </Modal>
     </section>
   );

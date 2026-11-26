@@ -125,6 +125,7 @@ export function useAssistedCalibration(
     action: AssistedCalibrationAction,
     confirmed = false,
     attemptId?: string,
+    drawLogo?: boolean,
   ) =>
     run(() => {
       if (!session)
@@ -156,6 +157,7 @@ export function useAssistedCalibration(
         action,
         confirmed,
         attemptId,
+        drawLogo,
       );
     }, action === 'cancel');
   const safety = (type: CalibrationCommand['type'], accepted?: boolean) =>

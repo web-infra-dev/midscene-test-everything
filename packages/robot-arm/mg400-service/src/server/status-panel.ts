@@ -59,9 +59,9 @@ export class StatusPanel {
     );
     const binding =
       calibration ??
+      sharedCalibrationTool(profiles, arm.id, arm.connectionIdentity) ??
       measured ??
       profiles.devices?.find((item) => item.deviceId === cameraId) ??
-      sharedCalibrationTool(profiles, arm.id, arm.connectionIdentity) ??
       profiles.devices?.find((item) => item.cameraId === cameraId) ??
       (profiles.workstation?.cameraId === cameraId
         ? profiles.workstation
