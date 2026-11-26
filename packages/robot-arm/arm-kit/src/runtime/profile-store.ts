@@ -811,7 +811,6 @@ export class ProfileStore {
       draft.devices = draft.devices?.filter(
         (d) => d.calibrationProfileId !== id,
       );
-      this.removeUnreferencedScreens(draft);
     });
   }
   /**
@@ -820,32 +819,42 @@ export class ProfileStore {
    * while a device, the workstation, an unfinished session, a teaching draft or
    * a calibration batch still points at it; everything else is history, and its
    * calibrations and sessions go with it.
+   *
+   * Only the profiles named in `ids` are considered, so a caller can retire the
+   * screen a device just left without touching calibrated screens that are
+   * waiting for their first acceptance.
    */
-  private removeUnreferencedScreens(draft: ProfileData) {
+  private removeScreenProfiles(draft: ProfileData, ids: Iterable<string>) {
     const referenced = referencedScreenIds(draft);
-    const removed = draft.screens.filter(
-      (screen) => !referenced.has(screen.id),
+    const known = new Set(draft.screens.map((screen) => screen.id));
+    const removed = new Set(
+      [...ids].filter((id) => known.has(id) && !referenced.has(id)),
     );
-    if (!removed.length) return { screens: 0, calibrations: 0, sessions: 0 };
-    const ids = new Set(removed.map((screen) => screen.id));
+    if (!removed.size) return { screens: 0, calibrations: 0, sessions: 0 };
     const calibrations = draft.calibrations.filter((calibration) =>
-      ids.has(calibration.screenProfileId),
+      removed.has(calibration.screenProfileId),
     );
     const sessions = (draft.sessions ?? []).filter((session) =>
-      ids.has(session.screenProfileId),
+      removed.has(session.screenProfileId),
     );
-    draft.screens = draft.screens.filter((screen) => !ids.has(screen.id));
+    draft.screens = draft.screens.filter((screen) => !removed.has(screen.id));
     draft.calibrations = draft.calibrations.filter(
-      (calibration) => !ids.has(calibration.screenProfileId),
+      (calibration) => !removed.has(calibration.screenProfileId),
     );
     draft.sessions = (draft.sessions ?? []).filter(
-      (session) => !ids.has(session.screenProfileId),
+      (session) => !removed.has(session.screenProfileId),
     );
     return {
-      screens: removed.length,
+      screens: removed.size,
       calibrations: calibrations.length,
       sessions: sessions.length,
     };
+  }
+  private removeUnreferencedScreens(draft: ProfileData) {
+    return this.removeScreenProfiles(
+      draft,
+      draft.screens.map((screen) => screen.id),
+    );
   }
   /** Keep only the screen profiles that are still in use. */
   pruneUnreferencedScreens() {
@@ -1174,6 +1183,7 @@ export class ProfileStore {
         'VISION_BINDING_CHANGED',
         'Camera confirmation does not match the calibrated screen',
       );
+    const previousScreen = current?.screenProfileId;
     const value = { ...candidate, revision: (current?.revision ?? 0) + 1 };
     draft.devices ??= [];
     const index = draft.devices.findIndex(
@@ -1181,10 +1191,11 @@ export class ProfileStore {
     );
     if (index < 0) draft.devices.push(value);
     else draft.devices[index] = value;
-    // Acceptance is where a Device moves to a new screen profile. The profile
-    // it just left is no longer referenced by anything, so its calibrations and
-    // sessions are history that would otherwise accumulate per calibration.
-    this.removeUnreferencedScreens(draft);
+    // Acceptance is where a Device moves to a new screen profile. Retire the
+    // profile it left; screens whose calibration is still waiting for a first
+    // acceptance must stay, so this never sweeps every unreferenced profile.
+    if (previousScreen && previousScreen !== candidate.screenProfileId)
+      this.removeScreenProfiles(draft, [previousScreen]);
     return structuredClone(value);
   }
   putWorkstation(input: WorkstationBinding): Promise<WorkstationBinding> {
