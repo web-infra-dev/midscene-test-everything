@@ -60,8 +60,14 @@ if (!existsSync(file)) {
   process.exit(1);
 }
 
+const configuredPort = Number(process.env.ARM_PLAYGROUND_PORT ?? 5173);
+const playgroundPort =
+  Number.isInteger(configuredPort) && configuredPort > 0
+    ? configuredPort
+    : 5173;
+
 const serviceListening = await new Promise((resolve) => {
-  const socket = net.connect({ port: 5173, host: '127.0.0.1' });
+  const socket = net.connect({ port: playgroundPort, host: '127.0.0.1' });
   const done = (value) => {
     socket.destroy();
     resolve(value);
@@ -73,7 +79,7 @@ const serviceListening = await new Promise((resolve) => {
 
 if (apply && serviceListening && !force) {
   console.error(
-    'The playground is still listening on 5173. Stop it before --apply, or pass --force if you know it is not using this profile.',
+    `The playground is still listening on ${playgroundPort}. Stop it before --apply, or pass --force if you know it is not using this profile.`,
   );
   process.exit(1);
 }
