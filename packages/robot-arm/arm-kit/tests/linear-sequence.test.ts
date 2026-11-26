@@ -28,6 +28,7 @@ function fixture() {
   let stopped = false;
   let repeat = false;
   let available = true;
+  let paused = false;
   let sample: SequenceFeedback = {
     sampleId: '0',
     connectionGeneration: generation,
@@ -35,6 +36,7 @@ function fixture() {
     pose: actual,
   };
   const timer = setInterval(() => {
+    if (paused) return;
     sample = {
       sampleId: repeat ? '0' : String(++frameId),
       connectionGeneration: generation,
@@ -108,6 +110,9 @@ function fixture() {
     stop: () => {
       stopped = true;
     },
+    pause: () => {
+      paused = true;
+    },
   };
 }
 
@@ -130,6 +135,18 @@ describe('ordered linear sequence', () => {
     expect((await finishing).status).toBe('completed');
     expect(f.terminal).toHaveBeenCalledTimes(1);
     expect(f.release).toHaveBeenCalledTimes(1);
+  });
+  it('tolerates a 300 ms scheduling gap but rejects a sample older than 500 ms', async () => {
+    const f = fixture();
+    f.pause();
+    await rstest.advanceTimersByTimeAsync(300);
+    await expect(f.sequence.submit(0)).resolves.toMatchObject({
+      id: 'receipt',
+    });
+    await rstest.advanceTimersByTimeAsync(300);
+    await expect(f.sequence.submit(1)).rejects.toMatchObject({
+      code: 'SEQUENCE_FEEDBACK_UNAVAILABLE',
+    });
   });
   it('queues intermediate targets after arrival and confirms the tail before the lift', async () => {
     const f = fixture();
@@ -170,7 +187,7 @@ describe('ordered linear sequence', () => {
     const rejected = expect(f.sequence.waitForHandoff()).rejects.toMatchObject({
       code: 'SEQUENCE_FEEDBACK_LOST',
     });
-    await rstest.advanceTimersByTimeAsync(250);
+    await rstest.advanceTimersByTimeAsync(550);
     await rejected;
     f.stop();
     f.sequence.dispose();

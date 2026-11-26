@@ -18,6 +18,13 @@ export interface SequenceFeedback {
   readonly receivedAt: number;
   readonly pose: LinearSequenceTarget['pose'];
 }
+/**
+ * A pose sample older than this cannot gate the next motion. The dashboard is
+ * serial and can be busy for a few hundred milliseconds while the controller
+ * ingests a queued path; command acknowledgements still report real faults, so
+ * a scheduling gap must not abort an otherwise healthy sequence.
+ */
+const SEQUENCE_POSE_MAX_AGE_MS = 500;
 export interface LinearSequencePort {
   /** Check control generation and safety, without controller I/O. */
   check(controlOnly?: boolean): void;
@@ -80,7 +87,7 @@ export function createLinearMotionSequence(
   });
   const initial = port.feedback();
   const startedAt = Date.now();
-  if (!initial || startedAt - initial.receivedAt > 200)
+  if (!initial || startedAt - initial.receivedAt > SEQUENCE_POSE_MAX_AGE_MS)
     throw new RobotArmError(
       'SEQUENCE_FEEDBACK_UNAVAILABLE',
       'Fresh Cartesian feedback is unavailable',
@@ -122,7 +129,7 @@ export function createLinearMotionSequence(
     control();
     const sample = feedback();
     const checkedAt = Date.now();
-    if (!sample || checkedAt - sample.receivedAt > 200)
+    if (!sample || checkedAt - sample.receivedAt > SEQUENCE_POSE_MAX_AGE_MS)
       throw new RobotArmError(
         'SEQUENCE_FEEDBACK_UNAVAILABLE',
         'Cartesian feedback is missing or stale',
@@ -313,10 +320,10 @@ export function createLinearMotionSequence(
             } else window = [];
           }
           const checkedAt = Date.now();
-          if (checkedAt - lastAt > 200)
+          if (checkedAt - lastAt > SEQUENCE_POSE_MAX_AGE_MS)
             throw new RobotArmError(
               'SEQUENCE_FEEDBACK_LOST',
-              'Cartesian feedback stalled for 200 ms',
+              `Cartesian feedback stalled for ${SEQUENCE_POSE_MAX_AGE_MS} ms`,
               504,
               feedbackDetails(checkedAt, sample),
             );
