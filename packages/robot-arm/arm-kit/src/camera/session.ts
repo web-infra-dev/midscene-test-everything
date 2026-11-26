@@ -141,6 +141,14 @@ export class CameraSession implements CalibrationVision {
   private target?: PerspectiveTarget;
   private writeChain = Promise.resolve();
   private readonly transformer = new PerspectiveTransformer();
+  /**
+   * One in-flight rectification per (frame buffer, output). A new frame brings
+   * new buffers, so this never grows beyond the frames still held by the stream.
+   */
+  private readonly rectifiedFrames = new WeakMap<
+    Buffer,
+    Map<string, Promise<Buffer>>
+  >();
   /** Supplied by the calibration host for this screen while its phone is paired. */
   referenceFrame?: () => PerspectiveReferenceFrame | undefined;
   private readonly perspective = new PerspectiveMonitor({
@@ -504,15 +512,40 @@ export class CameraSession implements CalibrationVision {
     const request = this.rectifiedPreviewRequest(options);
     return transformRectifiedPreview(jpeg, request, this.transformer);
   }
-  /** Move CPU-bound live preview rectification off the HTTP event-loop thread. */
+  /**
+   * Move CPU-bound live preview rectification off the HTTP event-loop thread.
+   *
+   * Several consumers (stage preview, calibration preview, 3D twin) rectify the
+   * same frame for the same screen. They share one in-flight job per
+   * (frame, output) pair: the cache is keyed by the JPEG buffer itself, so it
+   * follows the frame through the stream and is released with it.
+   */
   async rectifiedPreviewFrame(
     jpeg: Buffer,
     options: RectifiedPreviewOptions = {},
   ): Promise<Buffer> {
-    return rectifiedPreviewPool.transform(
-      jpeg,
-      this.rectifiedPreviewRequest(options),
-    );
+    const request = this.rectifiedPreviewRequest(options);
+    const key = [
+      request.target.width,
+      request.target.height,
+      request.target.rotation,
+      options.maxSide ?? '',
+      options.maxPixels ?? '',
+      options.sampling ?? '',
+    ].join(':');
+    let byKey = this.rectifiedFrames.get(jpeg);
+    if (!byKey) {
+      byKey = new Map();
+      this.rectifiedFrames.set(jpeg, byKey);
+    }
+    const pending = byKey.get(key);
+    if (pending) return pending;
+    const job = rectifiedPreviewPool.transform(jpeg, request);
+    byKey.set(key, job);
+    job.catch(() => {
+      if (byKey.get(key) === job) byKey.delete(key);
+    });
+    return job;
   }
   private rectifiedPreviewRequest(options: RectifiedPreviewOptions = {}) {
     const correction = this.correction;

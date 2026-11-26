@@ -20,8 +20,23 @@ export const CORRECTED_PREVIEW_OPTIONS = {
   maxPixels: 1_440_000,
   sampling: 'bilinear',
 } as const;
-const CORRECTED_PREVIEW_INTERVAL_MS = 0;
-const PREVIEW_TRANSFORM_CONCURRENCY = 4;
+const CORRECTED_PREVIEW_INTERVAL_MS = correctedPreviewIntervalMs();
+
+/**
+ * Corrected previews cost a decode, a homography warp and a re-encode per
+ * frame. Two cameras at 30 fps ask for more throughput than the worker pool
+ * has, so each transformed preview keeps at most two frames in flight (see
+ * `streamFrames`) and drops whatever it cannot show. That is enough to keep a
+ * two-camera session stable without an artificial frame-rate cap; set
+ * ROBOT_VISION_CORRECTED_PREVIEW_FPS to add one when a machine needs it.
+ */
+function correctedPreviewIntervalMs() {
+  const configured = Number(
+    process.env.ROBOT_VISION_CORRECTED_PREVIEW_FPS ?? 0,
+  );
+  if (!Number.isFinite(configured) || configured <= 0) return 0;
+  return Math.max(1, Math.round(1000 / Math.min(configured, 60)));
+}
 /**
  * Calibration keeps the right-hand preview mounted while the perspective
  * editor opens live and corrected previews. Four streams leave two of the
@@ -151,8 +166,11 @@ async function streamFrames(
   let nextFrame = 0;
   let nextWrite = 0;
   const completed = new Map<number, Buffer>();
-  const maxInFlight =
-    transform && !minIntervalMs ? PREVIEW_TRANSFORM_CONCURRENCY : 1;
+  // At most two transformed frames in flight per viewer: enough to overlap the
+  // transform with the next capture without letting a backlog turn into
+  // latency. Frames that still cannot be shown are dropped rather than queued;
+  // raw previews are a straight copy and stay uncapped.
+  const maxInFlight = 2;
   const flush = () => {
     while (
       !res.destroyed &&

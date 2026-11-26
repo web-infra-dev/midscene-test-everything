@@ -1492,12 +1492,18 @@ export async function startPlaygroundHost({
           if (!entry || (screen && entry.cameraId !== id))
             return send(404, { error: 'Camera or screen is not running' });
           const frame = await entry.camera.rawFrame();
+          // Twin textures used to be rectified on the main thread, which
+          // stalled camera frames while the 3D view was open. Use the worker
+          // pool (and its per-frame cache) when the session supports it.
+          const previewOptions = { maxSide: 480, sampling: 'nearest' as const };
           jpeg =
             view === 'corrected'
-              ? await entry.camera.rectifiedFrame(frame, {
-                  maxSide: 480,
-                  sampling: 'nearest',
-                })
+              ? typeof entry.camera.rectifiedPreviewFrame === 'function'
+                ? await entry.camera.rectifiedPreviewFrame(
+                    frame,
+                    previewOptions,
+                  )
+                : await entry.camera.rectifiedFrame(frame, previewOptions)
               : frame;
         } else {
           if (view === 'corrected')
